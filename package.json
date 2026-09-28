@@ -1,0 +1,29 @@
+{
+  "name": "easper-web",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@fortawesome/fontawesome-free": "^7.3.1",
+    "@huggingface/transformers": "^3.8.1",
+    "jszip": "^3.10.2",
+    "onnxruntime-web": "1.30.0"
+  },
+  "devDependencies": {
+    "@sveltejs/vite-plugin-svelte": "^5.0.3",
+    "svelte": "^5.20.2",
+    "vite": "^6.2.0"
+  },
+  "overrides": {
+    "onnxruntime-web": "1.30.0"
+  },
+  "resolutions": {
+    "onnxruntime-web": "1.30.0"
+  }
+}

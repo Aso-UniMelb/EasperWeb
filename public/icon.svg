@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="100%" height="100%">
+  <defs>
+    <linearGradient id="bg-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0284c7" />
+      <stop offset="100%" stop-color="#0369a1" />
+    </linearGradient>
+    <linearGradient id="wave-grad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff" />
+      <stop offset="100%" stop-color="#e0f2fe" />
+    </linearGradient>
+    <filter id="drop-shadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="8" stdDeviation="12" flood-color="#0c4a6e" flood-opacity="0.35" />
+    </filter>
+  </defs>
+
+  <!-- Background rounded squircle -->
+  <rect x="24" y="24" width="464" height="464" rx="108" fill="url(#bg-grad)" filter="url(#drop-shadow)" />
+
+  <!-- Speech bubble backdrop silhouette -->
+  <path d="M 120 150 C 120 120, 144 96, 174 96 L 338 96 C 368 96, 392 120, 392 150 L 392 280 C 392 310, 368 334, 338 334 L 220 334 L 160 384 L 170 334 L 174 334 C 144 334, 120 310, 120 280 Z" fill="#ffffff" fill-opacity="0.12" />
+
+  <!-- Sound waveform bars (audio speech recognition) -->
+  <!-- Bar 1 -->
+  <rect x="156" y="200" width="18" height="80" rx="9" fill="url(#wave-grad)" />
+  <!-- Bar 2 -->
+  <rect x="188" y="160" width="18" height="160" rx="9" fill="url(#wave-grad)" />
+  <!-- Bar 3 -->
+  <rect x="220" y="130" width="18" height="220" rx="9" fill="url(#wave-grad)" />
+  <!-- Bar 4 (Center peak) -->
+  <rect x="252" y="110" width="18" height="260" rx="9" fill="url(#wave-grad)" />
+  <!-- Bar 5 -->
+  <rect x="284" y="140" width="18" height="200" rx="9" fill="url(#wave-grad)" />
+  <!-- Bar 6 -->
+  <rect x="316" y="170" width="18" height="140" rx="9" fill="url(#wave-grad)" />
+  <!-- Bar 7 -->
+  <rect x="348" y="210" width="18" height="60" rx="9" fill="url(#wave-grad)" />
+
+  <!-- Sparkle / Transcription indicator badge in bottom right -->
+  <circle cx="370" cy="370" r="42" fill="#0284c7" stroke="#ffffff" stroke-width="8" />
+  <path d="M 370 348 L 374 364 L 390 368 L 374 372 L 370 388 L 366 372 L 350 368 L 366 364 Z" fill="#ffffff" />
+</svg>
+
