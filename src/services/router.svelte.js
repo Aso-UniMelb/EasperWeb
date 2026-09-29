@@ -9,6 +9,13 @@
  *   '/guide' -> 'guide'
  */
 
+const BASE =
+  (typeof import.meta !== 'undefined' &&
+    import.meta.env &&
+    import.meta.env.BASE_URL) ||
+  '/';
+const NORMALIZED_BASE = BASE.replace(/\/+$/, '');
+
 class Router {
   currentRoute = $state('home'); // 'home' | 'transcriber' | 'dataset-builder' | 'guide' | '404'
   params = $state({});
@@ -40,7 +47,12 @@ class Router {
       return '/' + hash.slice(1);
     }
 
-    return window.location.pathname || '/';
+    let pathname = window.location.pathname || '/';
+    if (NORMALIZED_BASE && pathname.startsWith(NORMALIZED_BASE)) {
+      pathname = pathname.slice(NORMALIZED_BASE.length) || '/';
+    }
+
+    return pathname;
   }
 
   /**
@@ -127,10 +139,13 @@ class Router {
         window.location.hash = targetPath;
       }
     } else {
+      const fullPath = NORMALIZED_BASE
+        ? `${NORMALIZED_BASE}${targetPath}`
+        : targetPath;
       if (replace) {
-        window.history.replaceState(null, '', targetPath);
+        window.history.replaceState(null, '', fullPath);
       } else {
-        window.history.pushState(null, '', targetPath);
+        window.history.pushState(null, '', fullPath);
       }
       this.handleLocationChange();
     }

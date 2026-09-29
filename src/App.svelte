@@ -160,9 +160,9 @@
             }
           });
         }
-      } else {
+        const swUrl = `${import.meta.env.BASE_URL}sw.js`;
         navigator.serviceWorker
-          .register('/sw.js')
+          .register(swUrl)
           .then((reg) => {
             console.log(
               '[Main UI] Service Worker registered with scope:',
