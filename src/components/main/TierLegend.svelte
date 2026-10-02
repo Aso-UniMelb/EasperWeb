@@ -97,6 +97,13 @@
         `\nDrag, or Alt+← / Alt+→, to move it (position ${i + 1} of ${columns.length})`}
     >
       <i class="fa-solid fa-grip-vertical grip"></i>
+      {#if col.type === 'word'}
+        <i
+          class="fa-solid fa-tags"
+          style="font-size: 0.6rem; opacity: 0.7;"
+          title="Word/Morpheme tier"
+        ></i>
+      {/if}
       <span class="chip-name">{col.name}</span>
       {#if col.hidden}
         <i class="fa-solid fa-eye-slash chip-eye"></i>

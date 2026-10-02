@@ -1741,6 +1741,40 @@ progress {
   border-color: #0284c7;
 }
 
+.btn-segment-loop {
+  width: 24px;
+  height: 24px;
+  min-width: 24px;
+  max-width: 24px;
+  border-radius: 50%;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  background: #f8fafc;
+  color: #64748b;
+  border: 1px solid #cbd5e1;
+  font-size: 0.65rem;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.btn-segment-loop:hover {
+  background: #f0f9ff;
+  color: #0284c7;
+  border-color: #7dd3fc;
+  transform: scale(1.08);
+  box-shadow: 0 2px 5px rgba(2, 132, 199, 0.2);
+}
+
+.btn-segment-loop.looping {
+  background-color: #0284c7;
+  color: #ffffff;
+  border-color: #0284c7;
+  box-shadow: 0 0 0 2px rgba(2, 132, 199, 0.28);
+}
+
 .segment-content {
   flex: 1;
   min-width: 0;
@@ -2596,6 +2630,7 @@ progress {
 }
 
 .segment-card .btn-segment-play,
+.segment-card .btn-segment-loop,
 .segment-card .btn-segment-delete {
   margin-top: 1px;
 }
@@ -3007,7 +3042,8 @@ progress {
     width: 8px;
   }
 
-  .segment-card .btn-segment-play {
+  .segment-card .btn-segment-play,
+  .segment-card .btn-segment-loop {
     width: 22px;
     height: 22px;
     min-width: 22px;
@@ -3122,7 +3158,8 @@ progress {
     width: 6px;
   }
 
-  .segment-card .btn-segment-play {
+  .segment-card .btn-segment-play,
+  .segment-card .btn-segment-loop {
     width: 20px;
     height: 20px;
     min-width: 20px;
@@ -6018,6 +6055,25 @@ code {
   background: rgba(56, 189, 248, 0.12);
   border-color: rgba(56, 189, 248, 0.25);
   color: #38bdf8;
+}
+
+[data-theme='dark'] .btn-segment-loop {
+  background: rgba(148, 163, 184, 0.12);
+  border-color: rgba(148, 163, 184, 0.25);
+  color: #94a3b8;
+}
+
+[data-theme='dark'] .btn-segment-loop:hover {
+  background: rgba(56, 189, 248, 0.18);
+  border-color: rgba(56, 189, 248, 0.4);
+  color: #38bdf8;
+}
+
+[data-theme='dark'] .btn-segment-loop.looping {
+  background-color: #0284c7;
+  border-color: #38bdf8;
+  color: #ffffff;
+  box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.35);
 }
 
 [data-theme='dark'] .status-label {

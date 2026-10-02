@@ -8,15 +8,25 @@
     getSpeakerColor,
     getSpeakerInitials,
   } from '../../utils/speakers.js';
-  import { buildColumns, getSubText } from '../../utils/subTiers.js';
+  import {
+    buildColumns,
+    getSubText,
+    SUB_TIER_TYPE_WORD,
+  } from '../../utils/subTiers.js';
+  import WordSubTierEditor from './WordSubTierEditor.svelte';
 
   let { seg } = $props();
 
   let isSelected = $derived(transcriptState.selectedSegmentId === seg.id);
   let isPlaying = $derived(
-    transcriptState.activePlayingSegmentId === seg.id &&
+    (transcriptState.activePlayingSegmentId === seg.id ||
+      transcriptState.activeSnippetPlayId === seg.id) &&
       transcriptState.isAudioPlaying,
   );
+  let isLooping = $derived(
+    isPlaying && transcriptState.activeLoopSegmentId === seg.id,
+  );
+  let isPlayingOnce = $derived(isPlaying && !isLooping);
   let isHovered = $derived(transcriptState.activeHoverSegmentId === seg.id);
   let isTranscribing = $derived(
     transcriptState.currentTranscribingSegment &&
@@ -195,23 +205,38 @@
 
   <button
     type="button"
-    class="btn-segment-play {isPlaying ? 'playing' : ''}"
+    class="btn-segment-play {isPlayingOnce ? 'playing' : ''}"
     onclick={(e) => {
       e.stopPropagation();
-      transcriptState.playSegmentAudio(seg);
+      transcriptState.playSegmentAudio(seg, false);
     }}
-    title={isPlaying
+    title={isPlayingOnce
       ? 'Pause segment'
       : `Play segment (${formatTimeSec(seg.start)} - ${formatTimeSec(seg.end)})`}
-    aria-label={isPlaying ? 'Pause segment' : 'Play segment'}
+    aria-label={isPlayingOnce ? 'Pause segment' : 'Play segment'}
   >
     <i
       class="fa-solid {isTranscribing
         ? 'fa-circle-notch fa-spin'
-        : isPlaying
+        : isPlayingOnce
           ? 'fa-pause'
           : 'fa-play'}"
     ></i>
+  </button>
+
+  <button
+    type="button"
+    class="btn-segment-loop {isLooping ? 'looping' : ''}"
+    onclick={(e) => {
+      e.stopPropagation();
+      transcriptState.playSegmentAudio(seg, true);
+    }}
+    title={isLooping
+      ? 'Stop loop playback'
+      : `Loop segment (${formatTimeSec(seg.start)} - ${formatTimeSec(seg.end)})`}
+    aria-label={isLooping ? 'Stop loop playback' : 'Loop segment'}
+  >
+    <i class="fa-solid fa-repeat"></i>
   </button>
 
   <div class="segment-content" style="grid-template-columns: {columnTemplate};">
@@ -233,6 +258,12 @@
           aria-label="Transcribed utterance text"
           title="Transcription (Tab: next segment & play, Shift+Tab: previous)"
         ></textarea>
+      {:else if col.type === SUB_TIER_TYPE_WORD}
+        <WordSubTierEditor
+          {seg}
+          {col}
+          textDirection={transcriptState.textDirection}
+        />
       {:else}
         <textarea
           use:autoResize

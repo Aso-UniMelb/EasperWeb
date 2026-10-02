@@ -155,6 +155,7 @@ class TranscriptState {
   // Audio playback tracking
   isAudioPlaying = $state(false);
   activeSnippetPlayId = $state(null);
+  activeLoopSegmentId = $state(null);
   activeSegmentPlayCleanup = null;
 
   // Vertical Waveform visualization state
@@ -444,7 +445,7 @@ class TranscriptState {
     requestAnimationFrame(() => this.drawVerticalWaveform());
   }
 
-  playSegmentAudio(segment) {
+  playSegmentAudio(segment, loop = false) {
     const audioEl = audioState.audioElement;
     if (!audioEl || !segment) return;
     this.selectSegment(segment.id, false);
@@ -454,20 +455,31 @@ class TranscriptState {
         this.activeSnippetPlayId === segment.id) &&
       (this.isAudioPlaying || !audioEl.paused);
 
+    const isCurrentlyLoopingThis =
+      isCurrentlyPlayingThis && this.activeLoopSegmentId === segment.id;
+
     if (this.activeSegmentPlayCleanup) {
       this.activeSegmentPlayCleanup();
       this.activeSegmentPlayCleanup = null;
     }
 
     if (isCurrentlyPlayingThis) {
-      audioEl.pause();
-      this.activeSnippetPlayId = null;
-      this.isAudioPlaying = false;
-      requestAnimationFrame(() => this.drawVerticalWaveform());
-      return;
+      // If clicking Loop while already looping, or clicking Play-once while playing-once: stop
+      if (
+        (loop && isCurrentlyLoopingThis) ||
+        (!loop && !isCurrentlyLoopingThis)
+      ) {
+        audioEl.pause();
+        this.activeSnippetPlayId = null;
+        this.activeLoopSegmentId = null;
+        this.isAudioPlaying = false;
+        requestAnimationFrame(() => this.drawVerticalWaveform());
+        return;
+      }
     }
 
     this.activeSnippetPlayId = segment.id;
+    this.activeLoopSegmentId = loop ? segment.id : null;
     this.isAudioPlaying = true;
     const start = Math.max(0, segment.start ?? 0);
     const end = Math.max(start + 0.05, segment.end ?? (start + 1));
@@ -504,7 +516,22 @@ class TranscriptState {
         audioState.playerCurrentTime = end;
       }
       this.activeSnippetPlayId = null;
+      this.activeLoopSegmentId = null;
       this.isAudioPlaying = false;
+      requestAnimationFrame(() => this.drawVerticalWaveform());
+    };
+
+    const restartLoop = () => {
+      if (stopped || !audioEl) return;
+      if (stopTimer) {
+        clearTimeout(stopTimer);
+        stopTimer = null;
+      }
+      audioEl.currentTime = start;
+      audioState.playerCurrentTime = start;
+      if (audioEl.paused) {
+        audioEl.play().catch(() => stopPlayback());
+      }
       requestAnimationFrame(() => this.drawVerticalWaveform());
     };
 
@@ -525,6 +552,7 @@ class TranscriptState {
       }
       this.activeSegmentPlayCleanup = null;
       this.activeSnippetPlayId = null;
+      this.activeLoopSegmentId = null;
       this.isAudioPlaying = false;
       requestAnimationFrame(() => this.drawVerticalWaveform());
     };
@@ -535,18 +563,24 @@ class TranscriptState {
 
       const cur = audioEl.currentTime;
       if (cur >= end) {
-        stopPlayback();
-        return;
+        if (loop) {
+          restartLoop();
+        } else {
+          stopPlayback();
+          return;
+        }
       }
 
       const rate = audioEl.playbackRate || 1;
       const remainingMs = ((end - cur) / rate) * 1000;
 
       // When within 35ms of the segment end, schedule a micro-timeout
-      // for exact millisecond cut-off right at segment end
-      if (remainingMs <= 35) {
+      if (remainingMs <= 35 && remainingMs >= 0) {
         if (stopTimer) clearTimeout(stopTimer);
-        stopTimer = setTimeout(stopPlayback, Math.max(0, remainingMs));
+        stopTimer = setTimeout(
+          loop ? restartLoop : stopPlayback,
+          Math.max(0, remainingMs),
+        );
       }
 
       rafId = requestAnimationFrame(checkFrame);
@@ -556,16 +590,21 @@ class TranscriptState {
       if (stopped || !audioEl) return;
       const cur = audioEl.currentTime;
       if (cur >= end) {
-        stopPlayback();
-        return;
+        if (loop) {
+          restartLoop();
+        } else {
+          stopPlayback();
+          return;
+        }
       }
       const rate = audioEl.playbackRate || 1;
       const remainingMs = ((end - cur) / rate) * 1000;
-      // In background tabs where requestAnimationFrame is throttled or suspended,
-      // schedule the stop timer when within 250ms of the end
-      if (remainingMs <= 250) {
+      if (remainingMs <= 250 && remainingMs >= 0) {
         if (stopTimer) clearTimeout(stopTimer);
-        stopTimer = setTimeout(stopPlayback, Math.max(0, remainingMs));
+        stopTimer = setTimeout(
+          loop ? restartLoop : stopPlayback,
+          Math.max(0, remainingMs),
+        );
       }
     };
 
@@ -583,6 +622,7 @@ class TranscriptState {
         audioEl.removeEventListener('pause', onPause);
       }
       this.activeSnippetPlayId = null;
+      this.activeLoopSegmentId = null;
       this.isAudioPlaying = false;
       requestAnimationFrame(() => this.drawVerticalWaveform());
     };
@@ -844,6 +884,40 @@ class TranscriptState {
     if (!seg) return;
     if (!seg.subTexts) seg.subTexts = {};
     seg.subTexts[String(tierId)] = newText;
+    if (this.fullResult) {
+      this.fullResult.segments = this.segments;
+      if (this.fullResult.output) {
+        this.fullResult.output.segments = this.segments;
+      }
+    }
+    this.notifySegmentsChange();
+  }
+
+  /**
+   * Updates an annotation for a single word/morpheme in a word-level sub-tier.
+   *
+   * @param {string} segmentId
+   * @param {number|string} tierId
+   * @param {number} wordIndex
+   * @param {string} annotationText
+   */
+  updateSegmentWordAnnotation(segmentId, tierId, wordIndex, annotationText) {
+    const seg = this.segments.find((s) => s.id === segmentId);
+    if (!seg) return;
+    if (!seg.subTexts) seg.subTexts = {};
+    const key = String(tierId);
+    const current = seg.subTexts[key];
+    let arr = [];
+    if (Array.isArray(current)) {
+      arr = [...current];
+    } else if (typeof current === 'string' && current.trim()) {
+      arr = current.trim().split(/\s+/);
+    }
+    while (arr.length <= wordIndex) {
+      arr.push('');
+    }
+    arr[wordIndex] = annotationText;
+    seg.subTexts[key] = arr;
     if (this.fullResult) {
       this.fullResult.segments = this.segments;
       if (this.fullResult.output) {
@@ -2599,7 +2673,12 @@ class TranscriptState {
         columnOrder: projectState.activeProject?.columnOrder,
       })
         .filter((c) => !c.isMain)
-        .map((c) => ({ id: Number(c.key), name: c.name })),
+        .map((c) => ({
+          id: Number(c.key),
+          name: c.name,
+          type: c.type,
+          lexicon: c.lexicon,
+        })),
       author: projectState.activeProject?.transcriber || 'Easper',
     });
 

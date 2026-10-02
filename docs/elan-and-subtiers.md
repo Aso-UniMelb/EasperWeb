@@ -29,18 +29,18 @@ Linguists can import existing `.eaf` files alongside paired audio directly into 
 Field recordings rarely consist of a single layer of transcription. Linguists typically annotate utterances across multiple parallel layers—such as free translation, morphological breakdown, and linguistic glossing.
 
 ### The Sub-Tier System (`src/utils/subTiers.js`)
-In EasperWeb, each project can define up to **3 dependent sub-tiers** that align one-to-one with parent utterance segments:
+In EasperWeb, each project can define up to **3 dependent sub-tiers** that align one-to-one with parent utterance segments. Two distinct sub-tier types are supported:
 
-- **Configurable Names & Presets**:
-  - `Translation`
-  - `Morphology`
-  - `Gloss`
-  - `Notes`
-  - `Phonetic`
+1. **Sentence-level Sub-Tiers (`type: 'sentence'`)**:
+   - Straightforward, single-field text per segment (e.g., free translation, phonetic transcription, or general notes).
+2. **Word / Morpheme-level Sub-Tiers (`type: 'word'`)**:
+   - Token-level annotations where for each segment containing $N$ words/morphemes (split by whitespace, dashes, equal signs, or punctuation marks), $N$ spaces are provided for annotations.
+   - For each word or morpheme, annotators have a label and an annotation input/textarea (e.g., POS tags, morphological glosses, or etymology).
+   - Configurable **Lexicon / Valid Values** list with auto-complete suggestions and presets (Common POS, Universal POS, Leipzig Glossing).
 - **UI Editing**:
-  In each Segment card, input fields are provided for the primary orthographic transcription as well as each active sub-tier.
+  In each Segment card, input fields are provided for the primary orthographic transcription as well as each active sub-tier (either sentence textarea or per-word/morpheme annotation stack with auto-complete).
 - **Data Model**:
-  Each segment object maintains a `subTexts` dictionary keyed by the stable numeric sub-tier ID (`1`, `2`, `3`), preserving independent revisions.
+  Each segment object maintains a `subTexts` dictionary keyed by the stable numeric sub-tier ID (`1`, `2`, `3`), storing either string values or token annotation arrays.
 
 ---
 
@@ -65,7 +65,9 @@ EasperWeb provides a comprehensive suite of export formats tailored for linguist
 - **Specification**: Fully compliant with ELAN 2.8 / 3.0 XML schema and compatible with python libraries like `pympi-ling`.
 - **Hierarchical Tier Preservation**:
   - Primary speech annotations are written as `ALIGNABLE_ANNOTATION` entries linked to time slots on `default-lt` linguistic type tiers.
-  - Dependent sub-tiers (Translation, Gloss, etc.) are written as `REF_ANNOTATION` entries linked to their parent annotation ID on `dependent-lt` tiers.
+  - When word/morpheme sub-tiers are configured, an additional dependent tier `morphs@<speaker>` (`Time_Subdivision` constraint, `words-lt` type) is automatically generated containing equal-duration time-subdivided morphemes partitioned across the utterance interval.
+  - Word/morpheme sub-tier annotations (e.g. `POS@<speaker>`) are exported as `REF_ANNOTATION` entries on `dependent-lt` tiers (`Symbolic_Association`) tied 1:1 to each split morpheme.
+  - Sentence-level dependent sub-tiers (e.g. `Translation@<speaker>`) are exported as `REF_ANNOTATION` entries on `dependent-lt` tiers tied directly to the parent utterance.
 - **Media Linking**: Automatically incorporates the relative path and MIME type of the associated audio recording.
 
 ### 2. SubRip Subtitles (`.srt`)

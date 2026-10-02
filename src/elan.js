@@ -13,7 +13,15 @@ function escapeXml(str) {
     .replace(/'/g, '&apos;');
 }
 
-import { normalizeSubTiers, getSubText } from './utils/subTiers.js';
+import {
+  normalizeSubTiers,
+  getSubText,
+  getWordAnnotations,
+  tokenizeWords,
+  SUB_TIER_TYPE_WORD,
+  SUB_TIER_TYPE_SENTENCE,
+  DEFAULT_SPLITTERS,
+} from './utils/subTiers.js';
 
 function cleanSpeechText(str) {
   if (!str) return '';
@@ -24,6 +32,7 @@ function cleanSpeechText(str) {
 
 export const ALIGNED_TYPE = 'default-lt';
 export const DEPENDENT_TYPE = 'dependent-lt';
+export const SUBDIVISION_TYPE = 'words-lt';
 
 export class ElanEaf {
   constructor({ author = 'EasperWeb' } = {}) {
@@ -62,6 +71,9 @@ export class ElanEaf {
     const tier = this.tiers.get(tierId);
     if (participant && !tier.participant) tier.participant = participant;
     if (parentRef && !tier.parentRef) tier.parentRef = parentRef;
+    if (typeRef && tier.typeRef === ALIGNED_TYPE && typeRef !== ALIGNED_TYPE) {
+      tier.typeRef = typeRef;
+    }
   }
 
   /**
@@ -88,19 +100,68 @@ export class ElanEaf {
   }
 
   /**
+   * Adds a series of subdivided time-aligned annotations (e.g. morphemes)
+   * under a parent time-aligned annotation. The subdivisions strictly
+   * partition the parent's duration with no gaps.
+   *
+   * @param {string} tierId Child subdivision tier ID (e.g. morphs@Speaker1)
+   * @param {string} parentTierId Parent tier ID
+   * @param {string} parentLocalId Parent annotation handle
+   * @param {Array<{ value: string, startMs: number, endMs: number }>} items
+   * @returns {Array<string>} Array of local handles for each subdivided annotation
+   */
+  addSubdividedAnnotations(tierId, parentTierId, parentLocalId, items = []) {
+    if (!parentLocalId || !Array.isArray(items) || items.length === 0) return [];
+
+    this.addTier(tierId, '', {
+      parentRef: parentTierId,
+      typeRef: SUBDIVISION_TYPE,
+    });
+
+    const tier = this.tiers.get(tierId);
+    const localIds = [];
+
+    for (const item of items) {
+      const textVal = cleanSpeechText(item.value || '');
+      const s = Math.round(Number(item.startMs));
+      const e = Math.round(Number(item.endMs));
+      const localId = `n${++this.localIdCounter}`;
+      localIds.push(localId);
+
+      tier.annotations.push({
+        localId,
+        parentLocalId,
+        startMs: s,
+        endMs: e,
+        value: textVal,
+      });
+    }
+
+    return localIds;
+  }
+
+  /**
    * Adds a dependent (ELAN "referring") annotation on a child tier, tied one-to-one
    * to a parent annotation. This is what makes a translation or gloss line show up
    * underneath its utterance in ELAN rather than as an unrelated tier.
    *
    * @param {string} tierId Child tier id
    * @param {string} parentTierId Tier the child hangs off
-   * @param {string|null} parentLocalId Handle returned by addAnnotation
+   * @param {string|null} parentLocalId Handle returned by addAnnotation or addSubdividedAnnotations
    * @param {string} value
+   * @param {Object} [options]
+   * @param {boolean} [options.allowEmpty=false] Whether to preserve empty annotations
    */
-  addRefAnnotation(tierId, parentTierId, parentLocalId, value = '') {
+  addRefAnnotation(
+    tierId,
+    parentTierId,
+    parentLocalId,
+    value = '',
+    { allowEmpty = false } = {},
+  ) {
     if (!parentLocalId) return null;
     const textVal = cleanSpeechText(value || '');
-    if (!textVal) return null; // An empty dependent annotation carries no information
+    if (!textVal && !allowEmpty) return null;
     this.addTier(tierId, '', {
       parentRef: parentTierId,
       typeRef: DEPENDENT_TYPE,
@@ -119,12 +180,11 @@ export class ElanEaf {
     let aidCounter = 1;
 
     const timeSlots = [];
-    const alignedOut = new Map(); // tierId -> { participant, annotations: [{aid, ts1, ts2, value}] }
-    const dependentOut = new Map(); // tierId -> { parentRef, annotations: [{aid, refAid, value}] }
     const localToAid = new Map();
+    const parentSlots = new Map(); // localId -> { startTs, endTs }
+    const tierOutput = new Map();
 
-    // Pass 1 — time-aligned tiers. Annotation ids must exist before any dependent
-    // annotation can point at them, so these are always resolved first.
+    // Pass 1 — Root time-aligned tiers (no parentRef).
     for (const [tierId, tierData] of this.tiers.entries()) {
       if (tierData.parentRef) continue;
       const sorted = [...tierData.annotations].sort(
@@ -140,28 +200,97 @@ export class ElanEaf {
 
         const aid = `a${aidCounter++}`;
         localToAid.set(ann.localId, aid);
+        parentSlots.set(ann.localId, { startTs: ts1, endTs: ts2 });
         mapped.push({ aid, ts1, ts2, value: ann.value });
       }
 
-      alignedOut.set(tierId, {
+      tierOutput.set(tierId, {
+        tierId,
         participant: tierData.participant,
+        parentRef: null,
+        typeRef: tierData.typeRef || ALIGNED_TYPE,
+        isAlignable: true,
         annotations: mapped,
       });
     }
 
-    // Pass 2 — dependent tiers, resolved against the ids just assigned. A child whose
-    // parent annotation was dropped (zero-length interval) is dropped with it, rather
-    // than written as a dangling ANNOTATION_REF that ELAN would refuse to open.
+    // Pass 2 — Subdivided time-aligned tiers (typeRef === SUBDIVISION_TYPE).
     for (const [tierId, tierData] of this.tiers.entries()) {
-      if (!tierData.parentRef) continue;
+      if (tierData.typeRef !== SUBDIVISION_TYPE) continue;
+
+      // Group annotations by parentLocalId to preserve subdivision chaining
+      const groups = new Map();
+      for (const ann of tierData.annotations) {
+        if (!groups.has(ann.parentLocalId)) {
+          groups.set(ann.parentLocalId, []);
+        }
+        groups.get(ann.parentLocalId).push(ann);
+      }
+
+      const mapped = [];
+      for (const [parentLocalId, group] of groups.entries()) {
+        const pSlot = parentSlots.get(parentLocalId);
+        group.sort((a, b) => a.startMs - b.startMs);
+
+        const count = group.length;
+        if (count === 0) continue;
+
+        let prevTs = pSlot ? pSlot.startTs : null;
+        if (!prevTs) {
+          prevTs = `ts${tsCounter++}`;
+          timeSlots.push({ id: prevTs, time: group[0].startMs });
+        }
+
+        for (let i = 0; i < count; i++) {
+          const ann = group[i];
+          const isLast = i === count - 1;
+
+          let endTs;
+          if (isLast && pSlot) {
+            endTs = pSlot.endTs;
+          } else {
+            endTs = `ts${tsCounter++}`;
+            timeSlots.push({ id: endTs, time: ann.endMs });
+          }
+
+          const aid = `a${aidCounter++}`;
+          localToAid.set(ann.localId, aid);
+          parentSlots.set(ann.localId, { startTs: prevTs, endTs });
+          mapped.push({ aid, ts1: prevTs, ts2: endTs, value: ann.value });
+
+          prevTs = endTs;
+        }
+      }
+
+      tierOutput.set(tierId, {
+        tierId,
+        participant: tierData.participant,
+        parentRef: tierData.parentRef,
+        typeRef: SUBDIVISION_TYPE,
+        isAlignable: true,
+        annotations: mapped,
+      });
+    }
+
+    // Pass 3 — Dependent reference tiers (typeRef === DEPENDENT_TYPE).
+    for (const [tierId, tierData] of this.tiers.entries()) {
+      if (tierData.typeRef === SUBDIVISION_TYPE || !tierData.parentRef) continue;
+
       const mapped = [];
       for (const ann of tierData.annotations) {
         const refAid = localToAid.get(ann.parentLocalId);
         if (!refAid) continue;
-        mapped.push({ aid: `a${aidCounter++}`, refAid, value: ann.value });
+        const aid = `a${aidCounter++}`;
+        localToAid.set(ann.localId, aid);
+        mapped.push({ aid, refAid, value: ann.value });
       }
-      dependentOut.set(tierId, {
+
+      tierOutput.set(tierId, {
+        tierId,
+        participant: tierData.participant,
         parentRef: tierData.parentRef,
+        typeRef: DEPENDENT_TYPE,
+        isAlignable: false,
         annotations: mapped,
       });
     }
@@ -169,7 +298,12 @@ export class ElanEaf {
     // Ensure timeslots are in non-decreasing order
     timeSlots.sort((a, b) => a.time - b.time);
 
-    const hasDependentTiers = dependentOut.size > 0;
+    const hasSubdivisionTiers = Array.from(this.tiers.values()).some(
+      (t) => t.typeRef === SUBDIVISION_TYPE,
+    );
+    const hasDependentTiers = Array.from(this.tiers.values()).some(
+      (t) => t.typeRef === DEPENDENT_TYPE,
+    );
 
     let xml = `<?xml version="1.0" encoding="UTF-8"?>
 `;
@@ -204,43 +338,51 @@ export class ElanEaf {
 `;
     }
 
-    for (const [tierId, data] of alignedOut.entries()) {
+    for (const tierId of this.tiers.keys()) {
+      const data = tierOutput.get(tierId);
+      if (!data) continue;
+
       const partAttr = data.participant
         ? ` PARTICIPANT="${escapeXml(data.participant)}"`
         : '';
-      xml += `	<TIER TIER_ID="${escapeXml(tierId)}"${partAttr} LINGUISTIC_TYPE_REF="${ALIGNED_TYPE}">
-`;
-      for (const ann of data.annotations) {
-        xml += `		<ANNOTATION>
-`;
-        xml += `			<ALIGNABLE_ANNOTATION ANNOTATION_ID="${ann.aid}" TIME_SLOT_REF1="${ann.ts1}" TIME_SLOT_REF2="${ann.ts2}">
-`;
-        xml += `				<ANNOTATION_VALUE>${escapeXml(ann.value)}</ANNOTATION_VALUE>
-`;
-        xml += `			</ALIGNABLE_ANNOTATION>
-`;
-        xml += `		</ANNOTATION>
-`;
-      }
-      xml += `	</TIER>
-`;
-    }
+      const parentAttr = data.parentRef
+        ? ` PARENT_REF="${escapeXml(data.parentRef)}"`
+        : '';
 
-    // Dependent tiers come after their parents so that PARENT_REF always resolves
-    for (const [tierId, data] of dependentOut.entries()) {
-      xml += `	<TIER TIER_ID="${escapeXml(tierId)}" PARENT_REF="${escapeXml(data.parentRef)}" LINGUISTIC_TYPE_REF="${DEPENDENT_TYPE}">
+      if (data.annotations.length === 0) {
+        xml += `	<TIER TIER_ID="${escapeXml(tierId)}"${parentAttr}${partAttr} LINGUISTIC_TYPE_REF="${data.typeRef}" />
 `;
-      for (const ann of data.annotations) {
-        xml += `		<ANNOTATION>
+        continue;
+      }
+
+      xml += `	<TIER TIER_ID="${escapeXml(tierId)}"${parentAttr}${partAttr} LINGUISTIC_TYPE_REF="${data.typeRef}">
 `;
-        xml += `			<REF_ANNOTATION ANNOTATION_ID="${ann.aid}" ANNOTATION_REF="${ann.refAid}">
+      if (data.isAlignable) {
+        for (const ann of data.annotations) {
+          xml += `		<ANNOTATION>
 `;
-        xml += `				<ANNOTATION_VALUE>${escapeXml(ann.value)}</ANNOTATION_VALUE>
+          xml += `			<ALIGNABLE_ANNOTATION ANNOTATION_ID="${ann.aid}" TIME_SLOT_REF1="${ann.ts1}" TIME_SLOT_REF2="${ann.ts2}">
 `;
-        xml += `			</REF_ANNOTATION>
+          xml += `				<ANNOTATION_VALUE>${escapeXml(ann.value)}</ANNOTATION_VALUE>
 `;
-        xml += `		</ANNOTATION>
+          xml += `			</ALIGNABLE_ANNOTATION>
 `;
+          xml += `		</ANNOTATION>
+`;
+        }
+      } else {
+        for (const ann of data.annotations) {
+          xml += `		<ANNOTATION>
+`;
+          xml += `			<REF_ANNOTATION ANNOTATION_ID="${ann.aid}" ANNOTATION_REF="${ann.refAid}">
+`;
+          xml += `				<ANNOTATION_VALUE>${escapeXml(ann.value)}</ANNOTATION_VALUE>
+`;
+          xml += `			</REF_ANNOTATION>
+`;
+          xml += `		</ANNOTATION>
+`;
+        }
       }
       xml += `	</TIER>
 `;
@@ -249,9 +391,11 @@ export class ElanEaf {
     // LINGUISTIC_TYPE & CONSTRAINTS
     xml += `	<LINGUISTIC_TYPE LINGUISTIC_TYPE_ID="${ALIGNED_TYPE}" TIME_ALIGNABLE="true" GRAPHIC_REFERENCES="false" />
 `;
+    if (hasSubdivisionTiers) {
+      xml += `	<LINGUISTIC_TYPE LINGUISTIC_TYPE_ID="${SUBDIVISION_TYPE}" CONSTRAINTS="Time_Subdivision" TIME_ALIGNABLE="true" GRAPHIC_REFERENCES="false" />
+`;
+    }
     if (hasDependentTiers) {
-      // Symbolic_Association: exactly one child annotation per parent annotation,
-      // which is what a translation or gloss line is.
       xml += `	<LINGUISTIC_TYPE LINGUISTIC_TYPE_ID="${DEPENDENT_TYPE}" CONSTRAINTS="Symbolic_Association" TIME_ALIGNABLE="false" GRAPHIC_REFERENCES="false" />
 `;
     }
@@ -323,23 +467,51 @@ export function exportToEaf({
   // arranged the columns, which is the order ELAN then shows them in.
   const cleanSubTiers = normalizeSubTiers(subTiers, { sort: false });
 
+  const hasWordSubTiers = cleanSubTiers.some(
+    (st) => st.type === SUB_TIER_TYPE_WORD,
+  );
+
   // ELAN convention: a dependent tier is named `<layer>@<participant>` so the same
   // layer can hang off every speaker tier without id collisions.
   const dependentTierId = (subTierName, speakerTierId) =>
     `${subTierName}@${speakerTierId}`;
 
-  // Pre-create tiers for all configured speakers in the project, plus one dependent
-  // tier per speaker for each sub-tier, so that layers a user has defined but not yet
-  // filled in still arrive in ELAN ready to type into.
+  // If a sub-tier is named 'morphs', use 'morphemes' to prevent tier name collision
+  const morphTierName = cleanSubTiers.some(
+    (st) => (st.name || '').trim().toLowerCase() === 'morphs',
+  )
+    ? 'morphemes'
+    : 'morphs';
+
+  // Pre-create tiers for all configured speakers in the project, plus morpheme tier
+  // and dependent tiers per speaker, so layers arrive in ELAN ready to type into.
   if (Array.isArray(speakers) && speakers.length > 0) {
     for (const spk of speakers) {
       const tierId = spk.name ? spk.name.trim() : `Speaker ${spk.id}`;
-      eaf.addTier(tierId, spk.name || `Speaker ${spk.id}`);
-      for (const st of cleanSubTiers) {
-        eaf.addTier(dependentTierId(st.name, tierId), '', {
+      eaf.addTier(tierId, spk.name || `Speaker ${spk.id}`, {
+        typeRef: ALIGNED_TYPE,
+      });
+
+      const morphTierId = dependentTierId(morphTierName, tierId);
+      if (hasWordSubTiers) {
+        eaf.addTier(morphTierId, spk.name || `Speaker ${spk.id}`, {
           parentRef: tierId,
-          typeRef: DEPENDENT_TYPE,
+          typeRef: SUBDIVISION_TYPE,
         });
+      }
+
+      for (const st of cleanSubTiers) {
+        if (st.type === SUB_TIER_TYPE_WORD) {
+          eaf.addTier(dependentTierId(st.name, tierId), '', {
+            parentRef: morphTierId,
+            typeRef: DEPENDENT_TYPE,
+          });
+        } else {
+          eaf.addTier(dependentTierId(st.name, tierId), '', {
+            parentRef: tierId,
+            typeRef: DEPENDENT_TYPE,
+          });
+        }
       }
     }
   }
@@ -391,6 +563,8 @@ export function exportToEaf({
 
       const startMs = Math.round(seg.start * 1000);
       const endMs = Math.round(seg.end * 1000);
+      if (endMs <= startMs) continue;
+
       const parentLocalId = eaf.addAnnotation(
         tierName,
         startMs,
@@ -398,16 +572,74 @@ export function exportToEaf({
         text,
         participant,
       );
+      if (!parentLocalId) continue;
+
+      const morphTierId = dependentTierId(morphTierName, tierName);
+      let morphLocalIds = [];
+
+      if (hasWordSubTiers) {
+        const wordSubTier = cleanSubTiers.find(
+          (st) => st.type === SUB_TIER_TYPE_WORD,
+        );
+        const splitters = wordSubTier?.splitters ?? DEFAULT_SPLITTERS;
+        const words = tokenizeWords(seg.text, splitters);
+        if (words.length > 0) {
+          const durationMs = endMs - startMs;
+          const morphemeItems = words.map((w, idx) => {
+            const mStart =
+              startMs + Math.round((idx * durationMs) / words.length);
+            const mEnd =
+              idx === words.length - 1
+                ? endMs
+                : startMs + Math.round(((idx + 1) * durationMs) / words.length);
+            return {
+              value: w,
+              startMs: mStart,
+              endMs: mEnd,
+            };
+          });
+
+          morphLocalIds = eaf.addSubdividedAnnotations(
+            morphTierId,
+            tierName,
+            parentLocalId,
+            morphemeItems,
+          );
+        }
+      }
 
       for (const st of cleanSubTiers) {
-        const subText = getSubText(seg, st.id);
-        if (!subText.trim()) continue;
-        eaf.addRefAnnotation(
-          dependentTierId(st.name, tierName),
-          tierName,
-          parentLocalId,
-          subText,
-        );
+        if (st.type === SUB_TIER_TYPE_WORD) {
+          if (morphLocalIds.length > 0) {
+            const words = tokenizeWords(
+              seg.text,
+              st.splitters ?? DEFAULT_SPLITTERS,
+            );
+            const tags = getWordAnnotations(seg, st.id, words.length);
+            for (let i = 0; i < words.length; i++) {
+              const tagVal = tags[i] ? String(tags[i]).trim() : '';
+              if (morphLocalIds[i]) {
+                eaf.addRefAnnotation(
+                  dependentTierId(st.name, tierName),
+                  morphTierId,
+                  morphLocalIds[i],
+                  tagVal,
+                  { allowEmpty: true },
+                );
+              }
+            }
+          }
+        } else {
+          const subText = getSubText(seg, st.id);
+          if (subText && subText.trim()) {
+            eaf.addRefAnnotation(
+              dependentTierId(st.name, tierName),
+              tierName,
+              parentLocalId,
+              subText,
+            );
+          }
+        }
       }
     }
   } else if (chunks && chunks.length > 0) {
