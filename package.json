@@ -7,11 +7,13 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "bun test"
+    "test": "bun test",
+    "postinstall": "bun scripts/patchHunspell.js"
   },
   "dependencies": {
     "@fortawesome/fontawesome-free": "^7.3.1",
     "@huggingface/transformers": "^3.8.1",
+    "hunspell-asm": "^4.0.2",
     "jszip": "^3.10.2",
     "onnxruntime-web": "1.30.0"
   },

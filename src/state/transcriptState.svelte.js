@@ -18,7 +18,16 @@ import {
   formatTimeSec2,
   formatSrtTime,
 } from '../utils/formatters.js';
-import { SPEAKER_COLORS, getSpeakerColor, getSpeakerInitials } from '../utils/speakers.js';
+import {
+  SPEAKER_COLORS,
+  getSpeakerColor,
+  getSpeakerInitials,
+  getSegmentSpeakerId,
+  isSameSpeaker,
+  resolveSameSpeakerOverlaps,
+  adjustSameSpeakerBoundariesOnDrag,
+  calculateSegmentSplit,
+} from '../utils/speakers.js';
 import {
   getTileCanvas as renderGetTileCanvas,
   drawTile as renderDrawTile,
@@ -175,6 +184,7 @@ class TranscriptState {
     clientX: 0,
   });
   wasDraggingHandle = false;
+  boundaryDragState = null;
   waveformHoverTime = $state(null);
   waveformHoverY = $state(0);
   waveformWrapEl = $state(null);
@@ -733,6 +743,9 @@ class TranscriptState {
       (a, b) => (a.start ?? 0) - (b.start ?? 0),
     );
 
+    // Rule: no segments of the same speaker can overlap
+    resolveSameSpeakerOverlaps(this.segments, speakerId);
+
     if (this.transcriptView !== 'segments') {
       this.transcriptView = 'segments';
     }
@@ -783,6 +796,9 @@ class TranscriptState {
     } else {
       seg.speaker = `Speaker ${spkId}`;
     }
+
+    // Rule: no segments of the same speaker can overlap
+    resolveSameSpeakerOverlaps(this.segments, spkId);
 
     if (this.fullResult?.segments) {
       this.fullResult.segments = this.segments;
@@ -1108,37 +1124,14 @@ class TranscriptState {
     return mergedSegment;
   }
 
-  splitSegment(segmentId) {
+  splitSegment(segmentId, splitTime = null) {
     const seg = this.segments.find((s) => s.id === segmentId);
     if (!seg) return null;
 
-    const start = seg.start ?? 0;
-    const end = seg.end ?? start + 1;
-    const totalDuration = end - start;
-    if (totalDuration < 0.1) return null;
+    const split = calculateSegmentSplit(seg, splitTime);
+    if (!split) return null;
 
-    // Halve the segment in waveform
-    const mid = Number(((start + end) / 2).toFixed(2));
-    const dur1 = Number(Math.max(0.05, mid - start).toFixed(2));
-    const dur2 = Number(Math.max(0.05, end - mid).toFixed(2));
-
-    const seg1 = {
-      ...seg,
-      start,
-      end: mid,
-      duration: dur1,
-    };
-
-    const segSpeakerId = Number(seg.speakerId) || 1;
-    const seg2 = {
-      id: `seg-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-      start: mid,
-      end,
-      duration: dur2,
-      speakerId: segSpeakerId,
-      speaker: seg.speaker || `Speaker ${segSpeakerId}`,
-      text: '', // Empty text block for the new segment
-    };
+    const { seg1, seg2, splitPoint } = split;
 
     this.segments = this.segments
       .map((s) => (s.id === seg.id ? seg1 : s));
@@ -1173,7 +1166,7 @@ class TranscriptState {
       }
     }
 
-    appState.statusMessage = `Split segment into [${formatTimeSec(start)} - ${formatTimeSec(mid)}] and [${formatTimeSec(mid)} - ${formatTimeSec(end)}]`;
+    appState.statusMessage = `Split segment into [${formatTimeSec(seg1.start)} - ${formatTimeSec(splitPoint)}] and [${formatTimeSec(splitPoint)} - ${formatTimeSec(seg2.end)}]`;
 
     requestAnimationFrame(() => this.drawVerticalWaveform());
     this.notifySegmentsChange();
@@ -1222,8 +1215,9 @@ class TranscriptState {
   handleSplitFromContextMenu() {
     if (!this.contextMenu.targetSegment) return;
     const id = this.contextMenu.targetSegment.id;
+    const splitTime = this.contextMenu.time;
     this.closeContextMenu();
-    this.splitSegment(id);
+    this.splitSegment(id, splitTime);
   }
 
   handleMergeWithNextFromContextMenu() {
@@ -1298,6 +1292,36 @@ class TranscriptState {
         clientY: e.clientY,
         clientX: e.clientX,
       };
+
+      // Record neighboring segments of the same speaker for smooth boundary drag tracking
+      let prevSameSpeakerSeg = null;
+      let nextSameSpeakerSeg = null;
+      if (selectedSeg) {
+        const sortedSameSpeaker = this.segments
+          .filter((s) => isSameSpeaker(s, selectedSeg))
+          .sort((a, b) => (a.start ?? 0) - (b.start ?? 0));
+        const idx = sortedSameSpeaker.findIndex((s) => s.id === selectedSeg.id);
+        if (idx > 0) {
+          prevSameSpeakerSeg = sortedSameSpeaker[idx - 1];
+        }
+        if (idx >= 0 && idx < sortedSameSpeaker.length - 1) {
+          nextSameSpeakerSeg = sortedSameSpeaker[idx + 1];
+        }
+      }
+
+      this.boundaryDragState = {
+        segmentId: this.selectedSegmentId,
+        handle,
+        initialStart: selectedSeg?.start ?? 0,
+        initialEnd: selectedSeg?.end ?? 0,
+        prevSegId: prevSameSpeakerSeg?.id || null,
+        initialPrevEnd: prevSameSpeakerSeg?.end ?? null,
+        initialPrevStart: prevSameSpeakerSeg?.start ?? null,
+        nextSegId: nextSameSpeakerSeg?.id || null,
+        initialNextStart: nextSameSpeakerSeg?.start ?? null,
+        initialNextEnd: nextSameSpeakerSeg?.end ?? null,
+      };
+
       try {
         e.target.setPointerCapture(e.pointerId);
       } catch (_) {}
@@ -1307,6 +1331,7 @@ class TranscriptState {
       return;
     }
     this.wasDraggingHandle = false;
+    this.boundaryDragState = null;
   }
 
   handleWaveformPointerMove(e) {
@@ -1322,26 +1347,18 @@ class TranscriptState {
     this.waveformHoverTime = Math.floor(time);
 
     if (this.activeDragHandle && this.selectedSegmentId) {
-      const selectedSeg = this.segments.find((s) => s.id === this.selectedSegmentId);
-      if (selectedSeg) {
-        if (this.activeDragHandle === 'start') {
-          const maxStart = Math.max(0, (selectedSeg.end ?? 1) - 0.2);
-          const newStart = Math.max(startTime, Math.min(maxStart, time));
-          selectedSeg.start = Number(newStart.toFixed(2));
-          selectedSeg.duration = Number(
-            Math.max(0.1, selectedSeg.end - selectedSeg.start).toFixed(2),
-          );
-          this.dragMagnifier.time = selectedSeg.start;
-        } else if (this.activeDragHandle === 'end') {
-          const minEnd = (selectedSeg.start ?? 0) + 0.2;
-          const maxEnd = startTime + duration;
-          const newEnd = Math.max(minEnd, Math.min(maxEnd, time));
-          selectedSeg.end = Number(newEnd.toFixed(2));
-          selectedSeg.duration = Number(
-            Math.max(0.1, selectedSeg.end - selectedSeg.start).toFixed(2),
-          );
-          this.dragMagnifier.time = selectedSeg.end;
-        }
+      const result = adjustSameSpeakerBoundariesOnDrag({
+        segments: this.segments,
+        selectedSegId: this.selectedSegmentId,
+        handle: this.activeDragHandle,
+        time,
+        startTime,
+        duration,
+        boundaryDragState: this.boundaryDragState,
+      });
+
+      if (result?.selectedSeg) {
+        this.dragMagnifier.time = result.newTime;
         this.dragMagnifier.clientY = e.clientY;
         this.dragMagnifier.clientX = e.clientX;
         this.segments = [...this.segments];
@@ -1375,6 +1392,7 @@ class TranscriptState {
         }
       } catch (_) {}
       this.activeDragHandle = null;
+      this.boundaryDragState = null;
       this.dragMagnifier = {
         active: false,
         handle: null,
@@ -1383,6 +1401,12 @@ class TranscriptState {
         clientY: 0,
         clientX: 0,
       };
+
+      // Safeguard: guarantee no segments of the same speaker overlap
+      const selectedSeg = this.segments.find((s) => s.id === this.selectedSegmentId);
+      if (selectedSeg) {
+        resolveSameSpeakerOverlaps(this.segments, getSegmentSpeakerId(selectedSeg));
+      }
 
       if (this.metrics) {
         const speechSec = this.segments.reduce(

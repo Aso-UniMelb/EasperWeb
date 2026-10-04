@@ -12,6 +12,7 @@
   import DatasetBuilderPage from './pages/DatasetBuilderPage.svelte';
   import ModelsPage from './pages/ModelsPage.svelte';
   import GuidePage from './pages/GuidePage.svelte';
+  import LexiconsPage from './pages/LexiconsPage.svelte';
   import ProjectManagerModal from './components/project/ProjectManagerModal.svelte';
   import NewProjectModal from './components/project/NewProjectModal.svelte';
   import ProjectSettingsModal from './components/project/ProjectSettingsModal.svelte';
@@ -243,6 +244,8 @@
       projectState.currentView = 'dataset';
     } else if (router.currentRoute === 'guide') {
       projectState.currentView = 'guide';
+    } else if (router.currentRoute === 'lexicons') {
+      projectState.currentView = 'lexicons';
     }
   });
 </script>
@@ -262,6 +265,8 @@
     <ModelsPage />
   {:else if router.currentRoute === 'guide'}
     <GuidePage />
+  {:else if router.currentRoute === 'lexicons'}
+    <LexiconsPage />
   {:else}
     <HomePage />
   {/if}

@@ -1,5 +1,6 @@
 <script>
   import { projectState } from '../../state/projectState.svelte.js';
+  import { lexiconState } from '../../state/lexiconState.svelte.js';
   import {
     SPEAKER_COLORS,
     ensureDefaultSpeakers,
@@ -20,6 +21,7 @@
 
   let title = $state('');
   let transcriber = $state('');
+  let lexiconId = $state('');
   let speakers = $state([]);
   let subTiers = $state([]);
   let errorMessage = $state('');
@@ -28,8 +30,12 @@
   // Synchronize modal state when opened
   $effect(() => {
     if (projectState.isProjectSettingsOpen && projectState.activeProject) {
+      if (!lexiconState.lexicons || lexiconState.lexicons.length === 0) {
+        lexiconState.init();
+      }
       title = projectState.activeProject.title || '';
       transcriber = projectState.activeProject.transcriber || '';
+      lexiconId = projectState.activeProject.lexiconId || '';
       const existingSpeakers = projectState.activeProject.speakers;
       speakers = ensureDefaultSpeakers(existingSpeakers).map((s) => ({ ...s }));
       subTiers = normalizeSubTiers(projectState.activeProject.subTiers).map(
@@ -40,12 +46,25 @@
           lexiconInput: formatLexicon(t.lexicon),
           splitters:
             t.splitters != null ? String(t.splitters) : DEFAULT_SPLITTERS,
+          lexiconField: t.lexiconField || '',
         }),
       );
       errorMessage = '';
       successMessage = '';
     }
   });
+
+  const selectedLexicon = $derived(
+    lexiconState.lexicons?.find((l) => l.id === lexiconId) || null,
+  );
+
+  const availableLexiconFields = $derived(
+    selectedLexicon?.fields
+      ? selectedLexicon.fields.filter(
+          (f) => (f.name || '').trim().toLowerCase() !== 'headword',
+        )
+      : [],
+  );
 
   function handleAddSpeaker() {
     errorMessage = '';
@@ -111,6 +130,12 @@
         : preset === 'Morphology' || preset === 'Gloss'
           ? [...LEIPZIG_GLOSS_LEXICON]
           : [];
+    const defaultLexField =
+      preset === 'POS'
+        ? 'POS'
+        : preset === 'Morphology' || preset === 'Gloss'
+          ? 'Gloss'
+          : '';
 
     subTiers = [
       ...subTiers,
@@ -121,6 +146,7 @@
         lexicon: defaultLexicon,
         lexiconInput: formatLexicon(defaultLexicon),
         splitters: DEFAULT_SPLITTERS,
+        lexiconField: isWordType ? defaultLexField : '',
       },
     ].sort((a, b) => a.id - b.id);
   }
@@ -155,15 +181,21 @@
 
   function handleTypeChange(tier, newType) {
     tier.type = newType;
-    if (
-      newType === SUB_TIER_TYPE_WORD &&
-      (!tier.lexicon || tier.lexicon.length === 0)
-    ) {
+    if (newType === SUB_TIER_TYPE_WORD) {
       const low = (tier.name || '').toLowerCase();
-      if (low.includes('pos')) {
-        applyPresetLexicon(tier, COMMON_POS_LEXICON);
-      } else if (low.includes('gloss') || low.includes('morph')) {
-        applyPresetLexicon(tier, LEIPZIG_GLOSS_LEXICON);
+      if (!tier.lexicon || tier.lexicon.length === 0) {
+        if (low.includes('pos')) {
+          applyPresetLexicon(tier, COMMON_POS_LEXICON);
+        } else if (low.includes('gloss') || low.includes('morph')) {
+          applyPresetLexicon(tier, LEIPZIG_GLOSS_LEXICON);
+        }
+      }
+      if (!tier.lexiconField) {
+        if (low.includes('pos')) {
+          tier.lexiconField = 'POS';
+        } else if (low.includes('gloss') || low.includes('morph')) {
+          tier.lexiconField = 'Gloss';
+        }
       }
     }
   }
@@ -240,8 +272,12 @@
             ? String(t.splitters)
             : DEFAULT_SPLITTERS
           : DEFAULT_SPLITTERS;
+      const lexiconField =
+        type === SUB_TIER_TYPE_WORD
+          ? (t.lexiconField || '').trim()
+          : '';
 
-      sanitizedSubTiers.push({ id, name, type, lexicon, splitters });
+      sanitizedSubTiers.push({ id, name, type, lexicon, splitters, lexiconField });
     }
 
     try {
@@ -250,6 +286,7 @@
         transcriber: transcriber.trim(),
         speakers: sanitizedSpeakers,
         subTiers: sanitizedSubTiers,
+        lexiconId: lexiconId || null,
       });
       projectState.isProjectSettingsOpen = false;
     } catch (err) {
@@ -322,6 +359,30 @@
               bind:value={transcriber}
               placeholder="e.g., Alice Smith"
             />
+          </div>
+        </div>
+
+        <div class="form-section">
+          <h4 class="section-title">Spellchecking &amp; Lexicon</h4>
+          <p class="section-desc">
+            Select an Easper lexicon to automatically spellcheck dialogue in the Transcription Studio using Hunspell.
+          </p>
+          <div class="form-group">
+            <label for="project-settings-lexicon" class="form-label"
+              >Active Lexicon</label
+            >
+            <select
+              id="project-settings-lexicon"
+              class="form-input"
+              bind:value={lexiconId}
+            >
+              <option value="">None (Spellchecking Disabled)</option>
+              {#each lexiconState.lexicons as lex (lex.id)}
+                <option value={lex.id}>
+                  {lex.title || lex.name || 'Untitled Lexicon'} ({lex.entries?.length || 0} entries)
+                </option>
+              {/each}
+            </select>
           </div>
         </div>
 
@@ -643,6 +704,68 @@
                           </span>
                         </p>
                       {/if}
+
+                      <!-- Active Lexicon Source Field Setting -->
+                      <div class="lexfield-mapping-group">
+                        <div class="lexfield-mapping-header">
+                          <label
+                            for="lexfield-select-{tier.id}"
+                            class="sub-label lexfield-label"
+                          >
+                            <i class="fa-solid fa-database"></i>
+                            Active Lexicon Field (Auto Tagging Source):
+                          </label>
+                          {#if selectedLexicon}
+                            <span
+                              class="lexfield-active-badge"
+                              title="Active Lexicon for this project"
+                            >
+                              <i class="fa-solid fa-book-bookmark"></i>
+                              {selectedLexicon.title ||
+                                selectedLexicon.name ||
+                                'Active Lexicon'}
+                            </span>
+                          {/if}
+                        </div>
+
+                        {#if selectedLexicon}
+                          <div class="lexfield-select-wrapper">
+                            <select
+                              id="lexfield-select-{tier.id}"
+                              class="form-input lexfield-select"
+                              bind:value={tier.lexiconField}
+                            >
+                              <option value="">None (Auto Tagging Disabled)</option>
+                              {#each availableLexiconFields as field (field.id)}
+                                <option value={field.name}>
+                                  {field.name}
+                                </option>
+                              {/each}
+                              {#if tier.lexiconField && !availableLexiconFields.some((f) => f.name === tier.lexiconField)}
+                                <option value={tier.lexiconField}>
+                                  {tier.lexiconField} (Custom / Unmatched)
+                                </option>
+                              {/if}
+                            </select>
+                          </div>
+                          <span class="lexfield-hint">
+                            Values from this field in <strong
+                              >{selectedLexicon.title ||
+                                'the active lexicon'}</strong
+                            > will be automatically grabbed when you run Auto Tagging
+                            in the workspace.
+                          </span>
+                        {:else}
+                          <div class="lexfield-no-lexicon-warning">
+                            <i class="fa-solid fa-circle-info"></i>
+                            <span>
+                              No active lexicon selected for this project. Choose
+                              an <strong>Active Lexicon</strong> in the section above
+                              to specify a field (e.g. POS or Gloss) for Auto Tagging.
+                            </span>
+                          </div>
+                        {/if}
+                      </div>
                     </div>
                   {:else}
                     <div class="subtier-sentence-note">
@@ -1208,6 +1331,103 @@
 
   :global([data-theme='dark']) .subtier-sentence-note {
     color: #34d399;
+  }
+
+  .lexfield-mapping-group {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding-top: 10px;
+    border-top: 1px dashed rgba(2, 132, 199, 0.2);
+    margin-top: 4px;
+  }
+
+  :global([data-theme='dark']) .lexfield-mapping-group {
+    border-top-color: rgba(56, 189, 248, 0.2);
+  }
+
+  .lexfield-mapping-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .lexfield-label {
+    margin: 0;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-weight: 700;
+  }
+
+  .lexfield-active-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 0.7rem;
+    font-weight: 600;
+    color: #059669;
+    background: rgba(16, 185, 129, 0.12);
+    border: 1px solid rgba(16, 185, 129, 0.25);
+    padding: 2px 8px;
+    border-radius: 12px;
+  }
+
+  :global([data-theme='dark']) .lexfield-active-badge {
+    color: #34d399;
+    background: rgba(16, 185, 129, 0.2);
+    border-color: rgba(52, 211, 153, 0.3);
+  }
+
+  .lexfield-select-wrapper {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .lexfield-select {
+    max-width: 320px;
+    font-weight: 600;
+  }
+
+  .lexfield-hint {
+    font-size: 0.72rem;
+    color: var(--text-muted, #64748b);
+    line-height: 1.35;
+  }
+
+  .lexfield-hint strong {
+    color: var(--text-color, #1e293b);
+  }
+
+  :global([data-theme='dark']) .lexfield-hint strong {
+    color: #f1f5f9;
+  }
+
+  .lexfield-no-lexicon-warning {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    font-size: 0.75rem;
+    color: #b45309;
+    background: #fffbeb;
+    border: 1px solid #fde68a;
+    border-radius: 6px;
+    padding: 6px 10px;
+    line-height: 1.4;
+  }
+
+  :global([data-theme='dark']) .lexfield-no-lexicon-warning {
+    color: #fbbf24;
+    background: rgba(245, 158, 11, 0.12);
+    border-color: rgba(245, 158, 11, 0.25);
+  }
+
+  .lexfield-no-lexicon-warning i {
+    margin-top: 2px;
+    flex-shrink: 0;
   }
 
   .subtier-empty {

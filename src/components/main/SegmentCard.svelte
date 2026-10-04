@@ -14,6 +14,9 @@
     SUB_TIER_TYPE_WORD,
   } from '../../utils/subTiers.js';
   import WordSubTierEditor from './WordSubTierEditor.svelte';
+  import { hunspellState } from '../../state/hunspellState.svelte.js';
+  import { lexiconState } from '../../state/lexiconState.svelte.js';
+  import { extractWordsFromText } from '../../utils/hunspellDictBuilder.js';
 
   let { seg } = $props();
 
@@ -39,6 +42,166 @@
   );
 
   let isSpeakerPickerOpen = $state(false);
+  let cellEl = $state(null);
+  let textareaEl = $state(null);
+  let activeSpellMenu = $state(null); // { word, start, end, x, y, suggestions }
+
+  const isLexiconSelected = $derived(
+    Boolean(projectState.activeProject?.lexiconId),
+  );
+
+  const hasSpellcheck = $derived(
+    Boolean(hunspellState.isReady && isLexiconSelected),
+  );
+
+  // Tokenize text into words and delimiters, identifying unrecognized words
+  const spellTokens = $derived.by(() => {
+    if (!hasSpellcheck || !seg.text) return [];
+
+    // Track Hunspell dictionary changes reactively so re-scan happens automatically
+    const _rebuiltAt = hunspellState.lastRebuiltAt;
+    const _wordCount = hunspellState.wordCount;
+    const _lexId = hunspellState.activeLexiconId;
+
+    const regex = /([\p{L}\p{N}]+(?:['’\-][\p{L}\p{N}]+)*)/gu;
+    const parts = seg.text.split(regex);
+    const tokens = [];
+
+    for (const part of parts) {
+      if (!part) continue;
+      const isWord = /[\p{L}\p{N}]/u.test(part);
+      if (isWord) {
+        const isMisspelled = !hunspellState.spell(part);
+        tokens.push({ text: part, isMisspelled, isWord: true });
+      } else {
+        tokens.push({ text: part, isMisspelled: false, isWord: false });
+      }
+    }
+    return tokens;
+  });
+
+  const hasMisspelledWords = $derived(
+    spellTokens.some((t) => t.isMisspelled),
+  );
+
+  function getWordAtOffset(text, offset) {
+    if (!text || offset < 0 || offset > text.length) return null;
+
+    let pos = offset;
+    const isWordChar = (ch) => ch && /[\p{L}\p{N}_\-']/u.test(ch);
+
+    if (!isWordChar(text[pos]) && pos > 0 && isWordChar(text[pos - 1])) {
+      pos = pos - 1;
+    }
+
+    if (!isWordChar(text[pos])) return null;
+
+    let start = pos;
+    while (start > 0 && isWordChar(text[start - 1])) {
+      start--;
+    }
+
+    let end = pos;
+    while (end < text.length && isWordChar(text[end])) {
+      end++;
+    }
+
+    const rawWord = text.slice(start, end);
+    const cleaned = rawWord.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, '');
+    if (!cleaned) return null;
+
+    const wordStart = start + rawWord.indexOf(cleaned);
+    const wordEnd = wordStart + cleaned.length;
+
+    return {
+      word: cleaned,
+      start: wordStart,
+      end: wordEnd,
+    };
+  }
+
+  function handleWordClickAtCaret(caretPos, mouseEvent) {
+    if (!hasSpellcheck || !seg.text) {
+      activeSpellMenu = null;
+      return false;
+    }
+
+    const wordInfo = getWordAtOffset(seg.text, caretPos);
+    if (!wordInfo) {
+      activeSpellMenu = null;
+      return false;
+    }
+
+    if (!hunspellState.spell(wordInfo.word)) {
+      const suggestions = hunspellState.suggest(wordInfo.word).slice(0, 5);
+
+      let x = 12;
+      let y = 32;
+      if (cellEl && mouseEvent) {
+        const rect = cellEl.getBoundingClientRect();
+        x = Math.max(8, Math.min(rect.width - 220, mouseEvent.clientX - rect.left));
+        y = mouseEvent.clientY - rect.top + 16;
+      }
+
+      activeSpellMenu = {
+        word: wordInfo.word,
+        start: wordInfo.start,
+        end: wordInfo.end,
+        x,
+        y,
+        suggestions,
+      };
+      return true;
+    } else {
+      activeSpellMenu = null;
+      return false;
+    }
+  }
+
+  function handleTextareaClick(e) {
+    e.stopPropagation();
+    const caretPos = e.target.selectionStart;
+    handleWordClickAtCaret(caretPos, e);
+  }
+
+  function handleTextareaContextMenu(e) {
+    const caretPos = e.target.selectionStart;
+    const handled = handleWordClickAtCaret(caretPos, e);
+    if (handled) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+  }
+
+  function handleApplySuggestion(suggestion) {
+    if (!activeSpellMenu) return;
+    const { start, end } = activeSpellMenu;
+    const oldText = seg.text || '';
+    const newText = oldText.slice(0, start) + suggestion + oldText.slice(end);
+    transcriptState.updateSegmentText(seg.id, newText);
+    projectState.saveCurrentProjectDebounced();
+    activeSpellMenu = null;
+
+    if (textareaEl) {
+      textareaEl.focus();
+      const newPos = start + suggestion.length;
+      textareaEl.setSelectionRange(newPos, newPos);
+    }
+  }
+
+  async function handleAddActiveToLexicon() {
+    if (!activeSpellMenu) return;
+    const word = activeSpellMenu.word;
+    const lexId = projectState.activeProject?.lexiconId;
+    activeSpellMenu = null;
+
+    if (lexId && word) {
+      await lexiconState.addHeadwordToLexicon(lexId, word);
+      await projectState.syncProjectLexiconToHunspell(lexId);
+      // Trigger instant reactivity across transcript segments
+      transcriptState.segments = [...transcriptState.segments];
+    }
+  }
 
   // Sub-tiers are a project-level setting; each adds one text column to every
   // segment. Order and visibility are arranged from the legend in the header bar.
@@ -145,9 +308,6 @@
   role="button"
   tabindex="0"
   aria-label="Speech segment"
-  title="{seg.speaker || 'Speaker ' + activeSpeakerId} ({formatTimeSec(
-    seg.start,
-  )} - {formatTimeSec(seg.end)})"
 >
   <!-- Speaker Initials Badge on Left Boundary -->
   <div class="segment-speaker-wrapper">
@@ -242,22 +402,109 @@
   <div class="segment-content" style="grid-template-columns: {columnTemplate};">
     {#each visibleColumns as col (col.key)}
       {#if col.isMain}
-        <textarea
-          use:autoResize
-          class="segment-text-input"
-          data-tier="main"
-          dir={transcriptState.textDirection}
-          bind:value={seg.text}
-          onfocus={() => transcriptState.selectSegment(seg.id, false)}
-          onclick={(e) => e.stopPropagation()}
-          onkeydown={(e) => handleTextareaKeyDown(e, 'main')}
-          oninput={(e) =>
-            transcriptState.updateSegmentText(seg.id, e.target.value)}
-          placeholder={isTranscribing ? 'Transcribing...' : '...'}
-          rows="1"
-          aria-label="Transcribed utterance text"
-          title="Transcription (Tab: next segment & play, Shift+Tab: previous)"
-        ></textarea>
+        <div class="main-tier-cell" bind:this={cellEl}>
+          {#if hasSpellcheck && hasMisspelledWords}
+            <div
+              class="spell-backdrop"
+              aria-hidden="true"
+              dir={transcriptState.textDirection}
+            >
+              {#each spellTokens as tok}
+                {#if tok.isMisspelled}
+                  <mark class="spell-wavy-underline">{tok.text}</mark>
+                {:else}
+                  <span>{tok.text}</span>
+                {/if}
+              {/each}
+            </div>
+          {/if}
+
+          <textarea
+            bind:this={textareaEl}
+            use:autoResize
+            class="segment-text-input"
+            data-tier="main"
+            dir={transcriptState.textDirection}
+            bind:value={seg.text}
+            spellcheck={isLexiconSelected ? 'false' : 'true'}
+            onfocus={() => transcriptState.selectSegment(seg.id, false)}
+            onclick={handleTextareaClick}
+            oncontextmenu={handleTextareaContextMenu}
+            onkeydown={(e) => handleTextareaKeyDown(e, 'main')}
+            oninput={(e) => {
+              transcriptState.updateSegmentText(seg.id, e.target.value);
+              if (activeSpellMenu) activeSpellMenu = null;
+            }}
+            placeholder={isTranscribing ? 'Transcribing...' : '...'}
+            rows="1"
+            aria-label="Transcribed utterance text"
+          ></textarea>
+
+          {#if activeSpellMenu}
+            <div
+              class="spell-menu-scrim"
+              onclick={(e) => {
+                e.stopPropagation();
+                activeSpellMenu = null;
+              }}
+              role="presentation"
+            ></div>
+
+            <div
+              class="spell-suggestion-menu"
+              style="left: {activeSpellMenu.x}px; top: {activeSpellMenu.y}px;"
+              onclick={(e) => e.stopPropagation()}
+              onkeydown={(e) => {
+                if (e.key === 'Escape') activeSpellMenu = null;
+              }}
+              role="menu"
+              tabindex="-1"
+            >
+              <div class="spell-menu-header">
+                <span class="spell-menu-typo">"{activeSpellMenu.word}"</span>
+                <button
+                  type="button"
+                  class="spell-menu-close"
+                  onclick={() => (activeSpellMenu = null)}
+                  title="Close suggestions"
+                >
+                  <i class="fa-solid fa-xmark"></i>
+                </button>
+              </div>
+
+              {#if activeSpellMenu.suggestions && activeSpellMenu.suggestions.length > 0}
+                <div class="spell-menu-section-title">Suggestions</div>
+                <div class="spell-menu-suggestions-list">
+                  {#each activeSpellMenu.suggestions as sugg}
+                    <button
+                      type="button"
+                      class="spell-menu-item suggestion-item"
+                      onclick={() => handleApplySuggestion(sugg)}
+                      role="menuitem"
+                    >
+                      <i class="fa-solid fa-check sugg-icon"></i>
+                      <span>{sugg}</span>
+                    </button>
+                  {/each}
+                </div>
+              {:else}
+                <div class="spell-menu-empty">No suggestions found</div>
+              {/if}
+
+              <div class="spell-menu-divider"></div>
+
+              <button
+                type="button"
+                class="spell-menu-item add-item"
+                onclick={handleAddActiveToLexicon}
+                role="menuitem"
+              >
+                <i class="fa-solid fa-plus add-icon"></i>
+                <span>Add "{activeSpellMenu.word}" to Lexicon</span>
+              </button>
+            </div>
+          {/if}
+        </div>
       {:else if col.type === SUB_TIER_TYPE_WORD}
         <WordSubTierEditor
           {seg}
@@ -271,6 +518,7 @@
           data-tier={col.key}
           dir={transcriptState.textDirection}
           value={getSubText(seg, col.key)}
+          spellcheck={isLexiconSelected ? 'false' : 'true'}
           onfocus={() => transcriptState.selectSegment(seg.id, false)}
           onclick={(e) => e.stopPropagation()}
           onkeydown={(e) => handleTextareaKeyDown(e, col.key)}
@@ -283,7 +531,6 @@
           placeholder={col.name}
           rows="1"
           aria-label="{col.name} for this utterance"
-          title="{col.name} (Tab: next segment in this column)"
         ></textarea>
       {/if}
     {/each}
@@ -456,5 +703,255 @@
   :global([data-theme='dark']) .segment-subtier-input:focus {
     color: #f1f5f9;
     background: rgba(255, 255, 255, 0.07);
+  }
+
+  /* Spellchecking in SegmentCard */
+  .main-tier-cell {
+    position: relative;
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .spell-backdrop {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    width: 100%;
+    height: 100%;
+    box-sizing: border-box;
+    font-family: inherit;
+    font-size: 0.88rem;
+    font-weight: 500;
+    line-height: 1.4;
+    padding: 2px 6px;
+    margin: 0;
+    border: 1px solid transparent;
+    word-break: break-word;
+    overflow-wrap: break-word;
+    white-space: pre-wrap;
+    color: transparent;
+    background: transparent;
+    overflow: hidden;
+    pointer-events: none;
+    user-select: none;
+    z-index: 3;
+    text-align: inherit;
+    direction: inherit;
+  }
+
+  @media (max-width: 900px) {
+    .spell-backdrop {
+      font-size: 0.82rem;
+      padding: 2px 4px;
+      line-height: 1.35;
+    }
+  }
+
+  @media (max-width: 600px) {
+    .spell-backdrop {
+      font-size: 0.78rem;
+      padding: 1px 2px;
+      line-height: 1.3;
+    }
+  }
+
+  .spell-wavy-underline {
+    background: transparent;
+    color: transparent;
+    text-decoration: underline wavy #ef4444 1.5px;
+    text-underline-offset: 3px;
+  }
+
+  :global([data-theme='dark']) .spell-wavy-underline {
+    text-decoration-color: #f87171;
+  }
+
+  /* Transparent scrim for dismissing context menu on click-outside */
+  .spell-menu-scrim {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 99;
+    background: transparent;
+    cursor: default;
+  }
+
+  /* Popover Context Menu */
+  .spell-suggestion-menu {
+    position: absolute;
+    z-index: 100;
+    min-width: 180px;
+    max-width: 250px;
+    background: var(--bg-card, #ffffff);
+    border: 1px solid var(--border-color, #cbd5e1);
+    border-radius: 8px;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.16);
+    padding: 6px;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    animation: menuFadeIn 0.12s ease-out;
+  }
+
+  @keyframes menuFadeIn {
+    from {
+      opacity: 0;
+      transform: translateY(-4px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  :global([data-theme='dark']) .spell-suggestion-menu {
+    background: #1e293b;
+    border-color: #475569;
+    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.5);
+  }
+
+  .spell-menu-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 3px 6px 5px 6px;
+    border-bottom: 1px solid var(--border-color, #e2e8f0);
+  }
+
+  :global([data-theme='dark']) .spell-menu-header {
+    border-bottom-color: #334155;
+  }
+
+  .spell-menu-typo {
+    font-size: 0.78rem;
+    font-weight: 700;
+    color: #ef4444;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    text-decoration: underline wavy #ef4444 1px;
+  }
+
+  :global([data-theme='dark']) .spell-menu-typo {
+    color: #f87171;
+  }
+
+  .spell-menu-close {
+    background: none;
+    border: none;
+    color: #94a3b8;
+    cursor: pointer;
+    font-size: 0.75rem;
+    padding: 2px 4px;
+    border-radius: 4px;
+  }
+
+  .spell-menu-close:hover {
+    color: #0f172a;
+    background: rgba(0, 0, 0, 0.06);
+  }
+
+  :global([data-theme='dark']) .spell-menu-close:hover {
+    color: #ffffff;
+    background: rgba(255, 255, 255, 0.1);
+  }
+
+  .spell-menu-section-title {
+    font-size: 0.65rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-muted, #64748b);
+    padding: 4px 6px 2px 6px;
+  }
+
+  .spell-menu-suggestions-list {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    max-height: 130px;
+    overflow-y: auto;
+  }
+
+  .spell-menu-item {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    width: 100%;
+    padding: 5px 8px;
+    border: none;
+    border-radius: 5px;
+    font-size: 0.78rem;
+    font-weight: 600;
+    text-align: left;
+    background: transparent;
+    cursor: pointer;
+    transition: all 0.1s ease;
+  }
+
+  .suggestion-item {
+    color: var(--text-heading, #0f172a);
+  }
+
+  :global([data-theme='dark']) .suggestion-item {
+    color: #f1f5f9;
+  }
+
+  .suggestion-item:hover {
+    background: #f0f9ff;
+    color: #0284c7;
+  }
+
+  :global([data-theme='dark']) .suggestion-item:hover {
+    background: #082f49;
+    color: #38bdf8;
+  }
+
+  .sugg-icon {
+    font-size: 0.7rem;
+    color: #0284c7;
+    opacity: 0.75;
+  }
+
+  .spell-menu-empty {
+    font-size: 0.72rem;
+    font-style: italic;
+    color: var(--text-muted, #94a3b8);
+    padding: 5px 8px;
+  }
+
+  .spell-menu-divider {
+    height: 1px;
+    background: var(--border-color, #e2e8f0);
+    margin: 3px 0;
+  }
+
+  :global([data-theme='dark']) .spell-menu-divider {
+    background: #334155;
+  }
+
+  .add-item {
+    color: #ea580c;
+  }
+
+  :global([data-theme='dark']) .add-item {
+    color: #fb923c;
+  }
+
+  .add-item:hover {
+    background: #fff7ed;
+  }
+
+  :global([data-theme='dark']) .add-item:hover {
+    background: rgba(234, 88, 12, 0.15);
+  }
+
+  .add-icon {
+    font-size: 0.7rem;
   }
 </style>

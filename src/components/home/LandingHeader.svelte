@@ -62,6 +62,15 @@
       <button
         type="button"
         class="nav-link"
+        onclick={() => router.navigate('/lexicon')}
+      >
+        <i class="fa-solid fa-book-bookmark nav-link-icon"></i>
+        <span>Lexicons</span>
+      </button>
+
+      <button
+        type="button"
+        class="nav-link"
         onclick={() => router.navigate('/guide')}
       >
         <i class="fa-solid fa-book nav-link-icon"></i>
@@ -179,6 +188,17 @@
       >
         <i class="fa-solid fa-brain"></i>
         <span>Models</span>
+      </button>
+      <button
+        type="button"
+        class="mobile-nav-item"
+        onclick={() => {
+          isMobileMenuOpen = false;
+          router.navigate('/lexicon');
+        }}
+      >
+        <i class="fa-solid fa-book-bookmark"></i>
+        <span>Lexicons</span>
       </button>
       <button
         type="button"

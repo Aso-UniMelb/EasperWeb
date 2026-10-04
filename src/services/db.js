@@ -5,11 +5,12 @@
  */
 
 const DB_NAME = 'easper_db';
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 const STORE_PROJECTS = 'projects';
 const STORE_AUDIO = 'audio';
 const STORE_MODELS = 'asr_models';
 const STORE_MODEL_FILES = 'asr_model_files';
+const STORE_LEXICONS = 'lexicons';
 
 let dbInstance = null;
 
@@ -37,6 +38,10 @@ export function openDB() {
       }
       if (!db.objectStoreNames.contains(STORE_MODEL_FILES)) {
         db.createObjectStore(STORE_MODEL_FILES, { keyPath: 'modelId' });
+      }
+      if (!db.objectStoreNames.contains(STORE_LEXICONS)) {
+        const lexiconStore = db.createObjectStore(STORE_LEXICONS, { keyPath: 'id' });
+        lexiconStore.createIndex('updatedAt', 'updatedAt', { unique: false });
       }
     };
 
@@ -288,5 +293,84 @@ export async function getAsrModelFiles(modelId) {
     request.onerror = () => reject(request.error);
   });
 }
+
+/**
+ * Retrieves all saved lexicons sorted by updatedAt descending.
+ * @returns {Promise<Array<Object>>}
+ */
+export async function getAllLexicons() {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction([STORE_LEXICONS], 'readonly');
+    const store = transaction.objectStore(STORE_LEXICONS);
+    const request = store.getAll();
+
+    request.onsuccess = () => {
+      const list = request.result || [];
+      list.sort((a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0));
+      resolve(list);
+    };
+
+    request.onerror = () => {
+      reject(request.error);
+    };
+  });
+}
+
+/**
+ * Retrieves a single lexicon by ID.
+ * @param {string} id
+ * @returns {Promise<Object|null>}
+ */
+export async function getLexicon(id) {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction([STORE_LEXICONS], 'readonly');
+    const store = transaction.objectStore(STORE_LEXICONS);
+    const request = store.get(id);
+
+    request.onsuccess = () => resolve(request.result || null);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+/**
+ * Saves or updates a lexicon in IndexedDB.
+ * @param {Object} lexiconData
+ * @returns {Promise<Object>}
+ */
+export async function saveLexicon(lexiconData) {
+  const db = await openDB();
+  // Unwrap any reactive Proxies to prevent DataCloneError in IndexedDB
+  const cleanDoc = JSON.parse(JSON.stringify(lexiconData));
+  cleanDoc.updatedAt = new Date().toISOString();
+
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction([STORE_LEXICONS], 'readwrite');
+    const store = transaction.objectStore(STORE_LEXICONS);
+    const request = store.put(cleanDoc);
+
+    request.onsuccess = () => resolve(cleanDoc);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+/**
+ * Deletes a lexicon from IndexedDB.
+ * @param {string} id
+ * @returns {Promise<boolean>}
+ */
+export async function deleteLexicon(id) {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction([STORE_LEXICONS], 'readwrite');
+    const store = transaction.objectStore(STORE_LEXICONS);
+    store.delete(id);
+
+    transaction.oncomplete = () => resolve(true);
+    transaction.onerror = () => reject(transaction.error);
+  });
+}
+
 
 

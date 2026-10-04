@@ -212,6 +212,7 @@
                 data-tier={col.key}
                 data-word-idx={idx}
                 rows="1"
+                spellcheck="false"
                 class="word-annotation-textarea {isWarning ? 'is-warning' : ''}"
                 placeholder={col.lexicon && col.lexicon.length > 0
                   ? 'tag'

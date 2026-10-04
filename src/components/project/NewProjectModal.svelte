@@ -1,5 +1,6 @@
 <script>
   import { projectState } from '../../state/projectState.svelte.js';
+  import { lexiconState } from '../../state/lexiconState.svelte.js';
   import { audioState } from '../../state/audioState.svelte.js';
   import { formatTimeSec } from '../../utils/formatters.js';
 
@@ -9,10 +10,19 @@
       ? localStorage.getItem('easper_last_transcriber') || ''
       : '',
   );
+  let lexiconId = $state('');
   let selectedFile = $state(null);
   let audioInputMode = $state('upload'); // 'upload' | 'mic'
   let isDragOver = $state(false);
   let errorMessage = $state('');
+
+  $effect(() => {
+    if (projectState.isNewProjectModalOpen) {
+      if (!lexiconState.lexicons || lexiconState.lexicons.length === 0) {
+        lexiconState.init();
+      }
+    }
+  });
 
   function handleFileSelected(file) {
     if (!file) return;
@@ -67,9 +77,11 @@
         transcriber,
         audioFileOrBlob: targetBlob,
         audioFileName: targetName,
+        lexiconId: lexiconId || null,
       });
       // Reset form
       title = '';
+      lexiconId = '';
       selectedFile = null;
       errorMessage = '';
     } catch (err) {
@@ -156,6 +168,25 @@
               placeholder="e.g. Alex Smith"
               bind:value={transcriber}
             />
+          </div>
+
+          <!-- Spellcheck Lexicon (Optional) -->
+          <div class="form-group">
+            <label for="new-project-lexicon">
+              Spellcheck Lexicon <span class="text-subtle" style="font-weight: normal; font-size: 0.85em;">(Optional)</span>
+            </label>
+            <select
+              id="new-project-lexicon"
+              class="form-control"
+              bind:value={lexiconId}
+            >
+              <option value="">None (Spellchecking Disabled)</option>
+              {#each lexiconState.lexicons as lex (lex.id)}
+                <option value={lex.id}>
+                  {lex.title || lex.name || 'Untitled Lexicon'} ({lex.entries?.length || 0} entries)
+                </option>
+              {/each}
+            </select>
           </div>
 
           <!-- Audio Input Source Selection -->

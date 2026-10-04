@@ -36,63 +36,15 @@
 </script>
 
 <div class="inline-settings-panel segmentation-panel">
-  <!-- Header Bar -->
-  <div class="panel-header">
-    <div class="panel-title-area">
-      <div class="panel-icon-wrap icon-scissors">
-        <i class="fa-solid fa-scissors"></i>
-      </div>
-      <div>
-        <h4 class="panel-title">Automatic Segmentation</h4>
-        <span class="panel-subtitle">Silero VAD &bull; Utterance Detection</span
-        >
-      </div>
-    </div>
-
-    <div class="panel-actions">
-      <button
-        type="button"
-        class="panel-tool-btn {appState.showHelpText ? 'active' : ''}"
-        onclick={() => appState.toggleHelpText()}
-        title={appState.showHelpText
-          ? 'Hide descriptive help text'
-          : 'Show descriptive help text'}
-        aria-pressed={appState.showHelpText}
-      >
-        <i class="fa-regular fa-circle-question"></i>
-        <span>Help</span>
-      </button>
-
-      <button
-        type="button"
-        class="panel-tool-btn"
-        onclick={() => transcriptState.resetVadDiarizationDefaults()}
-        disabled={appState.isProcessing}
-        title="Reset segmentation settings to defaults"
-      >
-        <i class="fa-solid fa-rotate-left"></i>
-        <span>Reset</span>
-      </button>
-
-      <button
-        type="button"
-        class="panel-close-btn"
-        onclick={onClose}
-        title="Close settings panel"
-        aria-label="Close"
-      >
-        <i class="fa-solid fa-xmark"></i>
-      </button>
-    </div>
-  </div>
-
-  <!-- Settings Grid: 3-column responsive layout -->
+  <!-- Panel Body -->
   <div class="panel-body">
-    <!-- Col 1: Detection & Sensitivity -->
-    <div class="settings-col">
-      <div class="col-head">
-        <i class="fa-solid fa-microphone"></i>
-        <span>Listening &amp; Sensitivity</span>
+    <!-- Settings Grid: 3-column responsive layout -->
+    <div class="settings-grid">
+      <!-- Col 1: Detection & Sensitivity -->
+      <div class="settings-col">
+        <div class="col-head">
+          <i class="fa-solid fa-microphone"></i>
+          <span>Listening &amp; Sensitivity</span>
       </div>
 
       <div class="setting-row">
@@ -332,8 +284,8 @@
     </div>
   </div>
 
-  <!-- Action Bar / Footer -->
-  <div class="panel-footer">
+  <!-- Action Bar / Footer inside panel body -->
+  <div class="panel-action-bar panel-footer">
     <div class="footer-status">
       {#if !hasAudio}
         <span class="status-badge status-warning">
@@ -378,6 +330,30 @@
     </div>
 
     <div class="footer-actions">
+      <button
+        type="button"
+        class="panel-tool-btn {appState.showHelpText ? 'active' : ''}"
+        onclick={() => appState.toggleHelpText()}
+        title={appState.showHelpText
+          ? 'Hide descriptive help text'
+          : 'Show descriptive help text'}
+        aria-pressed={appState.showHelpText}
+      >
+        <i class="fa-regular fa-circle-question"></i>
+        <span>Help</span>
+      </button>
+
+      <button
+        type="button"
+        class="panel-tool-btn"
+        onclick={() => transcriptState.resetVadDiarizationDefaults()}
+        disabled={appState.isProcessing}
+        title="Reset segmentation settings to defaults"
+      >
+        <i class="fa-solid fa-rotate-left"></i>
+        <span>Reset</span>
+      </button>
+
       {#if appState.isProcessing && appState.activeAction === 'segment'}
         <button
           type="button"
@@ -408,8 +384,19 @@
           <span>Run Automatic Segmentation</span>
         {/if}
       </button>
+
+      <button
+        type="button"
+        class="panel-close-btn"
+        onclick={onClose}
+        title="Close settings panel"
+        aria-label="Close"
+      >
+        <i class="fa-solid fa-xmark"></i>
+      </button>
     </div>
   </div>
+</div>
 
   <!-- Messages / Progress Alerts if any -->
   {#if appState.errorMessage}
@@ -422,8 +409,8 @@
 
 <style>
   .inline-settings-panel {
-    background: var(--bg-card, #ffffff);
-    border: 1px solid var(--border-color, #e2e8f0);
+    background: var(--bg-hover, #f1f5f9);
+    border: 1px solid var(--border-color, #cbd5e1);
     border-bottom: 2px solid var(--primary-color, #0284c7);
     border-radius: 8px 8px 0 0;
     box-shadow: 0 4px 14px rgba(0, 0, 0, 0.06);
@@ -435,7 +422,7 @@
   }
 
   :global([data-theme='dark']) .inline-settings-panel {
-    background: #1e293b;
+    background: #0f172a;
     border-color: #334155;
     border-bottom-color: #38bdf8;
     box-shadow: 0 4px 16px rgba(0, 0, 0, 0.28);
@@ -452,70 +439,11 @@
     }
   }
 
-  .panel-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 10px 14px;
-    border-bottom: 1px solid var(--border-color, #e2e8f0);
-    background: var(--bg-muted, #f8fafc);
-  }
-
-  :global([data-theme='dark']) .panel-header {
-    background: rgba(15, 23, 42, 0.45);
-    border-bottom-color: #334155;
-  }
-
-  .panel-title-area {
-    display: flex;
-    align-items: center;
-    gap: 9px;
-  }
-
-  .panel-icon-wrap {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 32px;
-    height: 32px;
-    border-radius: 6px;
-    font-size: 0.92rem;
-  }
-
-  .icon-scissors {
-    background: rgba(2, 132, 199, 0.12);
-    color: var(--primary-color, #0284c7);
-  }
-
-  :global([data-theme='dark']) .icon-scissors {
-    background: rgba(56, 189, 248, 0.18);
-    color: #38bdf8;
-  }
-
-  .panel-title {
-    margin: 0;
-    font-size: 0.88rem;
-    font-weight: 700;
-    color: var(--text-heading, #0f172a);
-    line-height: 1.2;
-  }
-
-  .panel-subtitle {
-    font-size: 0.72rem;
-    color: var(--text-muted, #64748b);
-  }
-
-  .panel-actions {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-  }
-
   .panel-tool-btn {
     display: inline-flex;
     align-items: center;
     gap: 5px;
-    padding: 4px 9px;
+    padding: 6px 10px;
     font-size: 0.74rem;
     font-weight: 600;
     color: var(--text-muted, #64748b);
@@ -553,11 +481,11 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 28px;
-    height: 28px;
-    border: none;
-    background: transparent;
-    border-radius: 5px;
+    width: 32px;
+    height: 32px;
+    border: 1px solid var(--border-color, #cbd5e1);
+    background: var(--bg-card, #ffffff);
+    border-radius: 6px;
     color: var(--text-muted, #64748b);
     cursor: pointer;
     font-size: 0.95rem;
@@ -567,6 +495,13 @@
   .panel-close-btn:hover {
     background: rgba(0, 0, 0, 0.07);
     color: var(--text-heading, #0f172a);
+    border-color: var(--text-muted, #64748b);
+  }
+
+  :global([data-theme='dark']) .panel-close-btn {
+    background: #1e293b;
+    border-color: #475569;
+    color: #94a3b8;
   }
 
   :global([data-theme='dark']) .panel-close-btn:hover {
@@ -575,14 +510,21 @@
   }
 
   .panel-body {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding: 12px 14px;
+    background: transparent;
+  }
+
+  .settings-grid {
     display: grid;
     grid-template-columns: repeat(3, 1fr);
     gap: 16px;
-    padding: 14px;
   }
 
   @media (max-width: 900px) {
-    .panel-body {
+    .settings-grid {
       grid-template-columns: 1fr;
       gap: 12px;
     }
@@ -592,14 +534,14 @@
     display: flex;
     flex-direction: column;
     gap: 10px;
-    background: var(--bg-hover, #f8fafc);
+    background: var(--bg-card, #ffffff);
     border: 1px solid var(--border-color, #e2e8f0);
     border-radius: 6px;
     padding: 10px 12px;
   }
 
   :global([data-theme='dark']) .settings-col {
-    background: rgba(15, 23, 42, 0.35);
+    background: #1e293b;
     border-color: #334155;
   }
 
@@ -750,19 +692,21 @@
     text-decoration: underline;
   }
 
+  .panel-action-bar,
   .panel-footer {
     display: flex;
     align-items: center;
     justify-content: space-between;
     flex-wrap: wrap;
     gap: 10px;
-    padding: 10px 14px;
-    border-top: 1px solid var(--border-color, #e2e8f0);
-    background: var(--bg-muted, #f8fafc);
+    padding-top: 10px;
+    border-top: 1px solid var(--border-color, #cbd5e1);
+    background: transparent;
   }
 
+  :global([data-theme='dark']) .panel-action-bar,
   :global([data-theme='dark']) .panel-footer {
-    background: rgba(15, 23, 42, 0.45);
+    background: transparent;
     border-top-color: #334155;
   }
 

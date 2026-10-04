@@ -16,6 +16,7 @@
     SUB_TIER_PRESETS,
     normalizeSubTiers,
   } from '../../utils/subTiers.js';
+  import { lexiconState } from '../../state/lexiconState.svelte.js';
 
   let eafFile = $state(null);
   let audioFile = $state(null);
@@ -23,6 +24,7 @@
   let audioMatch = $state(null);
 
   let title = $state('');
+  let lexiconId = $state('');
   let transcriber = $state(
     typeof window !== 'undefined'
       ? localStorage.getItem('easper_last_transcriber') || ''
@@ -48,6 +50,7 @@
     parsedEaf = null;
     audioMatch = null;
     title = '';
+    lexiconId = '';
     speakers = [];
     subTiers = [];
     tierConfigs = [];
@@ -61,6 +64,14 @@
     projectState.isImportElanOpen = false;
     resetState();
   }
+
+  $effect(() => {
+    if (projectState.isImportElanOpen) {
+      if (!lexiconState.lexicons || lexiconState.lexicons.length === 0) {
+        lexiconState.init();
+      }
+    }
+  });
 
   async function handleEafSelected(file) {
     if (!file) return;
@@ -237,6 +248,7 @@
         audioFileName: audioFile.name,
         speakers: compiled.speakers,
         subTiers: compiled.subTiers,
+        lexiconId: lexiconId || null,
         segments: compiled.segments,
         transcript: compiled.transcript,
       });
@@ -470,6 +482,21 @@
                   placeholder="e.g. Dr. Aris"
                   bind:value={transcriber}
                 />
+              </div>
+              <div class="form-group">
+                <label for="elan-proj-lexicon">Spellcheck Lexicon (Optional)</label>
+                <select
+                  id="elan-proj-lexicon"
+                  class="form-control"
+                  bind:value={lexiconId}
+                >
+                  <option value="">None (Spellchecking Disabled)</option>
+                  {#each lexiconState.lexicons as lex (lex.id)}
+                    <option value={lex.id}>
+                      {lex.title || lex.name || 'Untitled Lexicon'} ({lex.entries?.length || 0} entries)
+                    </option>
+                  {/each}
+                </select>
               </div>
             </div>
 

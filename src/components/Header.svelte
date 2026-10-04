@@ -4,9 +4,35 @@
   import { projectState } from '../state/projectState.svelte.js';
   import { modelState } from '../state/modelState.svelte.js';
   import { router } from '../services/router.svelte.js';
+  import { lexiconState } from '../state/lexiconState.svelte.js';
 
   // The transcriber is the one view that trades the tab bar for project controls
   let isStudio = $derived(router.currentRoute === 'transcriber');
+
+  let projectLexicon = $derived(
+    projectState.activeProject?.lexiconId
+      ? lexiconState.lexicons.find(
+          (l) => l.id === projectState.activeProject.lexiconId,
+        ) || null
+      : null,
+  );
+
+  $effect(() => {
+    if (projectState.activeProject?.lexiconId) {
+      if (!lexiconState.lexicons || lexiconState.lexicons.length === 0) {
+        lexiconState.init();
+      }
+    }
+  });
+
+  function handleGoToLexicon() {
+    const lexId = projectState.activeProject?.lexiconId;
+    if (lexId) {
+      router.navigate(`/lexicon/${lexId}`);
+    } else {
+      router.navigate('/lexicon');
+    }
+  }
 
   let isEditingTitle = $state(false);
   let editedTitle = $state('');
@@ -194,6 +220,21 @@
         <i class="fa-solid fa-gear"></i>
         <span>Project Settings</span>
       </button>
+
+      <button
+        type="button"
+        class="btn-header-action"
+        onclick={handleGoToLexicon}
+        title={projectLexicon
+          ? `Open active lexicon: ${projectLexicon.title || projectLexicon.name}`
+          : 'Open Lexicon Manager'}
+      >
+        <i class="fa-solid fa-book"></i>
+        <span>Lexicon</span>
+        {#if projectLexicon}
+          <span class="header-lex-badge">{projectLexicon.title || projectLexicon.name}</span>
+        {/if}
+      </button>
     {/if}
   </div>
 
@@ -247,6 +288,16 @@
       >
         <i class="fa-solid fa-brain"></i>
         <span>Models</span>
+      </button>
+
+      <button
+        type="button"
+        class="nav-tab {router.currentRoute === 'lexicons' ? 'active' : ''}"
+        onclick={() => router.navigate('/lexicon')}
+        title="Lexicon Management System"
+      >
+        <i class="fa-solid fa-book-bookmark"></i>
+        <span>Lexicons</span>
       </button>
 
       <button
@@ -432,6 +483,20 @@
             <i class="fa-solid fa-gear"></i>
             <span>Project Settings</span>
           </button>
+          <button
+            type="button"
+            class="drawer-subaction-btn"
+            onclick={() => {
+              closeDrawer();
+              handleGoToLexicon();
+            }}
+            title={projectLexicon
+              ? `Open active lexicon: ${projectLexicon.title || projectLexicon.name}`
+              : 'Open Lexicon Manager'}
+          >
+            <i class="fa-solid fa-book"></i>
+            <span>{projectLexicon ? `Lexicon: ${projectLexicon.title || projectLexicon.name}` : 'Lexicons'}</span>
+          </button>
         </div>
       {/if}
 
@@ -470,6 +535,25 @@
         <div class="drawer-item-content">
           <span class="drawer-item-title">Models</span>
           <span class="drawer-item-sub">Speech Recognition &amp; VAD</span>
+        </div>
+      </button>
+
+      <button
+        type="button"
+        class="drawer-nav-item {router.currentRoute === 'lexicons'
+          ? 'active'
+          : ''}"
+        onclick={() => {
+          router.navigate('/lexicon');
+          closeDrawer();
+        }}
+      >
+        <div class="drawer-item-icon-box">
+          <i class="fa-solid fa-book-bookmark"></i>
+        </div>
+        <div class="drawer-item-content">
+          <span class="drawer-item-title">Lexicons</span>
+          <span class="drawer-item-sub">Dictionaries &amp; Vocabularies</span>
         </div>
       </button>
 
@@ -564,6 +648,24 @@
 
   :global([data-theme='dark']) .btn-header-action:hover {
     background: rgba(255, 255, 255, 0.1);
+    color: #7dd3fc;
+  }
+
+  .header-lex-badge {
+    font-size: 0.68rem;
+    font-weight: 700;
+    padding: 1px 6px;
+    border-radius: 4px;
+    background: rgba(2, 132, 199, 0.15);
+    color: var(--primary-color, #0284c7);
+    max-width: 110px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  :global([data-theme='dark']) .header-lex-badge {
+    background: rgba(56, 189, 248, 0.2);
     color: #7dd3fc;
   }
 

@@ -22,254 +22,254 @@
 </script>
 
 <div class="inline-settings-panel recognition-panel">
-  <!-- Header Bar -->
-  <div class="panel-header">
-    <div class="panel-title-area">
-      <div class="panel-icon-wrap icon-brain">
-        <i class="fa-solid fa-brain"></i>
-      </div>
-      <div>
-        <h4 class="panel-title">Speech Recognition</h4>
-        <span class="panel-subtitle"
-          >Whisper ONNX &bull; Automated Transcription</span
-        >
-      </div>
-    </div>
-
-    <div class="panel-actions">
-      <!-- Prominent Manage Models Button -->
-      <button
-        type="button"
-        class="panel-tool-btn btn-manage-prominent"
-        onclick={() => modelState.openModelManager()}
-        title="Open Model Manager modal to download, configure or add speech models"
-      >
-        <i class="fa-solid fa-sliders"></i>
-        <span>Manage Models</span>
-      </button>
-
-      <button
-        type="button"
-        class="panel-close-btn"
-        onclick={onClose}
-        title="Close settings panel"
-        aria-label="Close"
-      >
-        <i class="fa-solid fa-xmark"></i>
-      </button>
-    </div>
-  </div>
-
-  <!-- Panel Body: Streamlined, compact control row without Utterance Queue bloat -->
+  <!-- Panel Body -->
   <div class="panel-body">
-    <div class="model-row">
-      <!-- Model Selection & Preload Status -->
-      <div class="model-select-container">
-        <div class="field-label-row">
-          <label for="inline-asr-model-select" class="field-label"
-            >Active Model</label
-          >
-          {#if selectedModel?.language}
-            <span
-              class="lang-tag"
-              title="Target language configured in Model Manager"
-            >
-              <i class="fa-solid fa-language"></i>
-              {selectedModel.language.toUpperCase()}
-            </span>
-          {/if}
-          <span
-            class="lang-tag dtype-tag"
-            title="Active Model Precision: {modelState.modelSource === 'folder'
-              ? modelState.modelDtype?.toUpperCase() || 'FP32'
-              : modelState.activeDevice === 'webgpu'
-                ? 'Q4 (Hardware-accelerated WebGPU WGSL MatMulNBits)'
-                : 'Q8 (CPU SIMD)'}"
-          >
-            {modelState.modelSource === 'folder'
-              ? modelState.modelDtype?.toUpperCase() || 'FP32'
-              : modelState.activeDevice === 'webgpu'
-                ? 'Q4'
-                : 'Q8'}
-          </span>
-        </div>
+    {#if modelState.models.length === 0}
+      <div class="empty-models-panel">
+        <button
+          type="button"
+          class="panel-tool-btn btn-manage-prominent"
+          onclick={() => modelState.openModelManager()}
+          title="Open Model Manager modal to download, configure or add speech models"
+        >
+          <i class="fa-solid fa-sliders"></i>
+          <span>Model Manager</span>
+        </button>
 
-        <div class="select-with-preload">
-          <select
-            id="inline-asr-model-select"
-            class="model-select-input"
-            value={modelState.selectedModelId}
-            onchange={(e) => modelState.selectModel(e.target.value)}
-            disabled={appState.isProcessing || modelState.isModelLoading}
-          >
-            {#if modelState.models.length === 0}
-              <option value="" disabled selected
-                >No models added (Click Manage)</option
+        <button
+          type="button"
+          class="panel-close-btn"
+          onclick={onClose}
+          title="Close settings panel"
+          aria-label="Close"
+        >
+          <i class="fa-solid fa-xmark"></i>
+        </button>
+      </div>
+    {:else}
+      <div class="model-row">
+        <!-- Model Selection & Preload Status -->
+        <div class="model-select-container">
+          <div class="field-label-row">
+            <label for="inline-asr-model-select" class="field-label"
+              >Active Model</label
+            >
+            {#if selectedModel?.language}
+              <span
+                class="lang-tag"
+                title="Target language configured in Model Manager"
               >
-            {:else}
+                <i class="fa-solid fa-language"></i>
+                {selectedModel.language.toUpperCase()}
+              </span>
+            {/if}
+            <span
+              class="lang-tag dtype-tag"
+              title="Active Model Precision: {modelState.modelSource === 'folder'
+                ? modelState.modelDtype?.toUpperCase() || 'FP32'
+                : modelState.activeDevice === 'webgpu'
+                  ? 'Q4 (Hardware-accelerated WebGPU WGSL MatMulNBits)'
+                  : 'Q8 (CPU SIMD)'}"
+            >
+              {modelState.modelSource === 'folder'
+                ? modelState.modelDtype?.toUpperCase() || 'FP32'
+                : modelState.activeDevice === 'webgpu'
+                  ? 'Q4'
+                  : 'Q8'}
+            </span>
+          </div>
+
+          <div class="select-with-preload">
+            <select
+              id="inline-asr-model-select"
+              class="model-select-input"
+              value={modelState.selectedModelId}
+              onchange={(e) => modelState.selectModel(e.target.value)}
+              disabled={appState.isProcessing || modelState.isModelLoading}
+            >
               {#each modelState.models as m (m.id)}
                 <option value={m.id}>
                   {m.title}
                 </option>
               {/each}
-            {/if}
-          </select>
+            </select>
 
-          <button
-            type="button"
-            class="btn-preload-pill {modelState.isModelLoaded ? 'loaded' : ''}"
-            onclick={() => modelState.preloadModel(appState.worker)}
-            disabled={appState.isProcessing ||
-              modelState.isModelLoading ||
-              (modelState.modelSource === 'folder' &&
-                modelState.localFileCount === 0)}
-            title={modelState.isModelLoaded
-              ? 'Model is loaded and ready in memory (click to reload)'
-              : 'Preload model weights into browser memory ahead of transcription'}
-          >
-            {#if modelState.isModelLoading}
-              <i class="fa-solid fa-spinner fa-spin"></i>
-              <span>Loading...</span>
-            {:else if modelState.isModelLoaded}
-              <i class="fa-solid fa-circle-check"></i>
-              <span>Ready</span>
-            {:else}
-              <i class="fa-solid fa-cloud-arrow-down"></i>
-              <span>Preload</span>
-            {/if}
-          </button>
-
-          {#if modelState.isModelLoading}
             <button
               type="button"
-              class="btn-cancel-load"
-              onclick={() => transcriptState.stopTranscription(onWorkerReset)}
-              title="Cancel model loading"
-              aria-label="Cancel model loading"
+              class="btn-preload-pill {modelState.isModelLoaded ? 'loaded' : ''}"
+              onclick={() => modelState.preloadModel(appState.worker)}
+              disabled={appState.isProcessing ||
+                modelState.isModelLoading ||
+                (modelState.modelSource === 'folder' &&
+                  modelState.localFileCount === 0)}
+              title={modelState.isModelLoaded
+                ? 'Model is loaded and ready in memory (click to reload)'
+                : 'Preload model weights into browser memory ahead of transcription'}
+            >
+              {#if modelState.isModelLoading}
+                <i class="fa-solid fa-spinner fa-spin"></i>
+                <span>Loading...</span>
+              {:else if modelState.isModelLoaded}
+                <i class="fa-solid fa-circle-check"></i>
+                <span>Ready</span>
+              {:else}
+                <i class="fa-solid fa-cloud-arrow-down"></i>
+                <span>Preload</span>
+              {/if}
+            </button>
+
+            {#if modelState.isModelLoading}
+              <button
+                type="button"
+                class="btn-cancel-load"
+                onclick={() => transcriptState.stopTranscription(onWorkerReset)}
+                title="Cancel model loading"
+                aria-label="Cancel model loading"
+              >
+                <i class="fa-solid fa-xmark"></i>
+              </button>
+            {/if}
+
+            <button
+              type="button"
+              class="panel-tool-btn btn-manage-prominent"
+              onclick={() => modelState.openModelManager()}
+              title="Open Model Manager modal to download, configure or add speech models"
+            >
+              <i class="fa-solid fa-sliders"></i>
+              <span>Model Manager</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Acceleration / Compute Device Selection -->
+        <div class="device-select-container">
+          <div class="field-label-row">
+            <label for="inline-asr-device-select" class="field-label"
+              >Acceleration</label
+            >
+            {#if modelState.activeDevice === 'webgpu'}
+              <span
+                class="device-chip chip-gpu"
+                title="WebGPU hardware acceleration active"
+              >
+                <i class="fa-solid fa-bolt"></i> WebGPU
+              </span>
+            {:else}
+              <span
+                class="device-chip chip-cpu"
+                title="Multi-threaded CPU WebAssembly active"
+              >
+                <i class="fa-solid fa-microchip"></i> CPU
+              </span>
+            {/if}
+          </div>
+
+          <select
+            id="inline-asr-device-select"
+            class="device-select-input"
+            value={modelState.preferredDevice}
+            onchange={(e) => modelState.setPreferredDevice(e.target.value)}
+            disabled={appState.isProcessing || modelState.isModelLoading}
+            title="Select execution backend (WebGPU or multi-threaded CPU)"
+          >
+            <option value="auto">Auto (WebGPU preferred)</option>
+            <option value="webgpu" disabled={!modelState.isWebGpuSupported}>
+              WebGPU {!modelState.isWebGpuSupported
+                ? '(Not supported)'
+                : '(Fastest)'}
+            </option>
+            <option value="wasm">CPU (WASM multi-threaded)</option>
+          </select>
+        </div>
+
+        <!-- Action & Live Status -->
+        <div class="action-container">
+          <div class="status-box">
+            {#if !hasAudio}
+              <span class="status-chip chip-warning">
+                <i class="fa-solid fa-triangle-exclamation"></i>
+                <span>Load audio file first</span>
+              </span>
+            {:else if totalCount === 0}
+              <span class="status-chip chip-neutral">
+                <i class="fa-solid fa-circle-info"></i>
+                <span>No segments &bull; run Auto Segmentation first</span>
+              </span>
+            {:else if emptyCount === 0}
+              <span class="status-chip chip-success">
+                <i class="fa-solid fa-circle-check"></i>
+                <span>All {totalCount} segments transcribed</span>
+              </span>
+            {:else}
+              <span class="status-chip chip-info">
+                <i class="fa-solid fa-clock"></i>
+                <span
+                  ><strong>{emptyCount}</strong> of {totalCount} segment{emptyCount ===
+                  1
+                    ? ''
+                    : 's'} empty</span
+                >
+              </span>
+            {/if}
+          </div>
+
+          <div class="actions-cluster">
+            {#if appState.isProcessing && appState.activeAction === 'transcribe_empty'}
+              <button
+                type="button"
+                class="btn-stop-action"
+                onclick={() => transcriptState.stopTranscription(onWorkerReset)}
+                title="Stop transcription process"
+              >
+                <i class="fa-solid fa-stop"></i>
+                <span>Stop</span>
+              </button>
+            {/if}
+
+            <button
+              type="button"
+              class="btn-run-action"
+              onclick={() => transcriptState.handleTranscribeEmptySegments()}
+              disabled={appState.isProcessing ||
+                emptyCount === 0 ||
+                !hasAudio ||
+                (modelState.modelSource === 'folder' &&
+                  modelState.localFileCount === 0)}
+              title="Transcribe empty segments with selected Whisper model"
+            >
+              {#if appState.isProcessing && appState.activeAction === 'transcribe_empty'}
+                <i class="fa-solid fa-spinner fa-spin"></i>
+                <span>Transcribing...</span>
+              {:else if emptyCount === 0 && totalCount > 0}
+                <i class="fa-solid fa-circle-check"></i>
+                <span>All Done</span>
+              {:else if totalCount === 0}
+                <i class="fa-solid fa-triangle-exclamation"></i>
+                <span>Segments Needed</span>
+              {:else}
+                <i class="fa-solid fa-play"></i>
+                <span
+                  >Transcribe {emptyCount} Segment{emptyCount === 1
+                    ? ''
+                    : 's'}</span
+                >
+              {/if}
+            </button>
+
+            <button
+              type="button"
+              class="panel-close-btn"
+              onclick={onClose}
+              title="Close settings panel"
+              aria-label="Close"
             >
               <i class="fa-solid fa-xmark"></i>
             </button>
-          {/if}
+          </div>
         </div>
       </div>
-
-      <!-- Acceleration / Compute Device Selection -->
-      <div class="device-select-container">
-        <div class="field-label-row">
-          <label for="inline-asr-device-select" class="field-label"
-            >Acceleration</label
-          >
-          {#if modelState.activeDevice === 'webgpu'}
-            <span
-              class="device-chip chip-gpu"
-              title="WebGPU hardware acceleration active"
-            >
-              <i class="fa-solid fa-bolt"></i> WebGPU
-            </span>
-          {:else}
-            <span
-              class="device-chip chip-cpu"
-              title="Multi-threaded CPU WebAssembly active"
-            >
-              <i class="fa-solid fa-microchip"></i> CPU
-            </span>
-          {/if}
-        </div>
-
-        <select
-          id="inline-asr-device-select"
-          class="device-select-input"
-          value={modelState.preferredDevice}
-          onchange={(e) => modelState.setPreferredDevice(e.target.value)}
-          disabled={appState.isProcessing || modelState.isModelLoading}
-          title="Select execution backend (WebGPU or multi-threaded CPU)"
-        >
-          <option value="auto">Auto (WebGPU preferred)</option>
-          <option value="webgpu" disabled={!modelState.isWebGpuSupported}>
-            WebGPU {!modelState.isWebGpuSupported
-              ? '(Not supported)'
-              : '(Fastest)'}
-          </option>
-          <option value="wasm">CPU (WASM multi-threaded)</option>
-        </select>
-      </div>
-
-      <!-- Action & Live Status -->
-      <div class="action-container">
-        <div class="status-box">
-          {#if !hasAudio}
-            <span class="status-chip chip-warning">
-              <i class="fa-solid fa-triangle-exclamation"></i>
-              <span>Load audio file first</span>
-            </span>
-          {:else if totalCount === 0}
-            <span class="status-chip chip-neutral">
-              <i class="fa-solid fa-circle-info"></i>
-              <span>No segments &bull; run Auto Segmentation first</span>
-            </span>
-          {:else if emptyCount === 0}
-            <span class="status-chip chip-success">
-              <i class="fa-solid fa-circle-check"></i>
-              <span>All {totalCount} segments transcribed</span>
-            </span>
-          {:else}
-            <span class="status-chip chip-info">
-              <i class="fa-solid fa-clock"></i>
-              <span
-                ><strong>{emptyCount}</strong> of {totalCount} segment{emptyCount ===
-                1
-                  ? ''
-                  : 's'} empty</span
-              >
-            </span>
-          {/if}
-        </div>
-
-        <div class="actions-cluster">
-          {#if appState.isProcessing && appState.activeAction === 'transcribe_empty'}
-            <button
-              type="button"
-              class="btn-stop-action"
-              onclick={() => transcriptState.stopTranscription(onWorkerReset)}
-              title="Stop transcription process"
-            >
-              <i class="fa-solid fa-stop"></i>
-              <span>Stop</span>
-            </button>
-          {/if}
-
-          <button
-            type="button"
-            class="btn-run-action"
-            onclick={() => transcriptState.handleTranscribeEmptySegments()}
-            disabled={appState.isProcessing ||
-              emptyCount === 0 ||
-              !hasAudio ||
-              (modelState.modelSource === 'folder' &&
-                modelState.localFileCount === 0)}
-            title="Transcribe empty segments with selected Whisper model"
-          >
-            {#if appState.isProcessing && appState.activeAction === 'transcribe_empty'}
-              <i class="fa-solid fa-spinner fa-spin"></i>
-              <span>Transcribing...</span>
-            {:else if emptyCount === 0 && totalCount > 0}
-              <i class="fa-solid fa-circle-check"></i>
-              <span>All Done</span>
-            {:else if totalCount === 0}
-              <i class="fa-solid fa-triangle-exclamation"></i>
-              <span>Segments Needed</span>
-            {:else}
-              <i class="fa-solid fa-play"></i>
-              <span
-                >Transcribe {emptyCount} Segment{emptyCount === 1
-                  ? ''
-                  : 's'}</span
-              >
-            {/if}
-          </button>
-        </div>
-      </div>
-    </div>
+    {/if}
   </div>
 
   <!-- Messages / Progress Alerts if any -->
@@ -283,8 +283,8 @@
 
 <style>
   .inline-settings-panel {
-    background: var(--bg-card, #ffffff);
-    border: 1px solid var(--border-color, #e2e8f0);
+    background: var(--bg-hover, #f1f5f9);
+    border: 1px solid var(--border-color, #cbd5e1);
     border-bottom: 2px solid #7c3aed;
     border-radius: 8px 8px 0 0;
     box-shadow: 0 4px 14px rgba(0, 0, 0, 0.06);
@@ -296,7 +296,7 @@
   }
 
   :global([data-theme='dark']) .inline-settings-panel {
-    background: #1e293b;
+    background: #0f172a;
     border-color: #334155;
     border-bottom-color: #a78bfa;
     box-shadow: 0 4px 16px rgba(0, 0, 0, 0.28);
@@ -313,63 +313,12 @@
     }
   }
 
-  .panel-header {
+  .empty-models-panel {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 8px 14px;
-    border-bottom: 1px solid var(--border-color, #e2e8f0);
-    background: var(--bg-muted, #f8fafc);
-  }
-
-  :global([data-theme='dark']) .panel-header {
-    background: rgba(15, 23, 42, 0.45);
-    border-bottom-color: #334155;
-  }
-
-  .panel-title-area {
-    display: flex;
-    align-items: center;
-    gap: 9px;
-  }
-
-  .panel-icon-wrap {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 30px;
-    height: 30px;
-    border-radius: 6px;
-    font-size: 0.88rem;
-  }
-
-  .icon-brain {
-    background: rgba(124, 58, 237, 0.12);
-    color: #7c3aed;
-  }
-
-  :global([data-theme='dark']) .icon-brain {
-    background: rgba(167, 139, 250, 0.18);
-    color: #c084fc;
-  }
-
-  .panel-title {
-    margin: 0;
-    font-size: 0.86rem;
-    font-weight: 700;
-    color: var(--text-heading, #0f172a);
-    line-height: 1.2;
-  }
-
-  .panel-subtitle {
-    font-size: 0.7rem;
-    color: var(--text-muted, #64748b);
-  }
-
-  .panel-actions {
-    display: flex;
-    align-items: center;
-    gap: 8px;
+    gap: 12px;
+    padding: 2px 0;
   }
 
   /* High-visibility Manage Models button */
@@ -436,11 +385,12 @@
   /* Compact body container */
   .panel-body {
     padding: 10px 14px;
-    background: var(--bg-card, #ffffff);
+    background: transparent;
+    border-radius: 8px 8px 0 0;
   }
 
   :global([data-theme='dark']) .panel-body {
-    background: #1e293b;
+    background: transparent;
   }
 
   .model-row {

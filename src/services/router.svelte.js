@@ -6,6 +6,9 @@
  *   '/transcriber/:id' -> 'transcriber' (with params.id)
  *   '/transcriber' -> 'transcriber'
  *   '/dataset-builder' -> 'dataset-builder'
+ *   '/models' -> 'models'
+ *   '/lexicon/:id' -> 'lexicons' (with params.id)
+ *   '/lexicon' -> 'lexicons' (Lexicon Manager)
  *   '/guide' -> 'guide'
  */
 
@@ -107,14 +110,22 @@ class Router {
       return;
     }
 
-    // 5. Guide: /guide
+    // 5. Lexicons: /lexicon, /lexicons, /lexicon/:id, /lexicons/:id
+    const lexiconsMatch = normalized.match(/^\/lexicons?(?:\/([^\/]+))?$/);
+    if (lexiconsMatch) {
+      this.currentRoute = 'lexicons';
+      this.params = { id: lexiconsMatch[1] || null };
+      return;
+    }
+
+    // 6. Guide: /guide
     if (normalized === '/guide') {
       this.currentRoute = 'guide';
       this.params = {};
       return;
     }
 
-    // 5. Unknown -> fallback to home
+    // Fallback to home
     this.currentRoute = 'home';
     this.params = {};
   }

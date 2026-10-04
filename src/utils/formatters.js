@@ -74,4 +74,49 @@ export function formatBytes(bytes) {
   return `${(bytes / Math.pow(1024, i)).toFixed(1)} ${units[i]}`;
 }
 
+/**
+ * Formats ISO date-time into a human-friendly string for table rows.
+ * E.g., "Today, 14:32" or "Oct 3, 14:32"
+ * @param {string} isoString
+ * @returns {string}
+ */
+export function formatEntryDateTime(isoString) {
+  if (!isoString) return '—';
+  try {
+    const d = new Date(isoString);
+    if (isNaN(d.getTime())) return '—';
+
+    const yy = String(d.getFullYear()).slice(-2);
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    const hh = String(d.getHours()).padStart(2, '0');
+    const min = String(d.getMinutes()).padStart(2, '0');
+
+    return `${yy}/${mm}/${dd} ${hh}:${min}`;
+  } catch {
+    return '—';
+  }
+}
+
+/**
+ * Formats ISO date-time into full detailed localized string for tooltips.
+ * E.g., "Oct 3, 2026, 2:32:15 PM"
+ * @param {string} isoString
+ * @returns {string}
+ */
+export function formatFullDateTime(isoString) {
+  if (!isoString) return '';
+  try {
+    const d = new Date(isoString);
+    if (isNaN(d.getTime())) return '';
+    return d.toLocaleString(undefined, {
+      dateStyle: 'medium',
+      timeStyle: 'medium',
+    });
+  } catch {
+    return '';
+  }
+}
+
+
 

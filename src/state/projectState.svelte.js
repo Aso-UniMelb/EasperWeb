@@ -19,6 +19,8 @@ import { audioState } from './audioState.svelte.js';
 import { transcriptState } from './transcriptState.svelte.js';
 import { appState } from './appState.svelte.js';
 import { router } from '../services/router.svelte.js';
+import { hunspellState } from './hunspellState.svelte.js';
+import { lexiconState } from './lexiconState.svelte.js';
 import JSZip from 'jszip';
 
 class ProjectState {
@@ -178,7 +180,7 @@ class ProjectState {
    * Automatically decodes and converts audio to 16kHz mono 16-bit PCM WAV (Whisper format),
    * stores audio Blob and project JSON in IndexedDB, and opens it.
    */
-  async createProject({ title, transcriber, audioFileOrBlob, audioFileName }) {
+  async createProject({ title, transcriber, audioFileOrBlob, audioFileName, lexiconId = null }) {
     if (!audioFileOrBlob) {
       throw new Error('Please select an audio file.');
     }
@@ -219,6 +221,7 @@ class ProjectState {
         subTiers: [],
         columnOrder: [],
         hiddenColumns: [],
+        lexiconId: lexiconId || null,
         segments: [],
         transcript: '',
         textDirection: transcriptState.textDirection || 'ltr',
@@ -268,6 +271,7 @@ class ProjectState {
     subTiers,
     segments,
     transcript,
+    lexiconId = null,
   }) {
     if (!audioFileOrBlob) {
       throw new Error('Please provide the matching audio file for the ELAN project.');
@@ -312,6 +316,7 @@ class ProjectState {
         subTiers: cleanSubTiers,
         columnOrder: [],
         hiddenColumns: [],
+        lexiconId: lexiconId || null,
         segments: Array.isArray(segments) ? segments : [],
         transcript: transcript || '',
         textDirection: transcriptState.textDirection || 'ltr',
@@ -381,6 +386,9 @@ class ProjectState {
       // Load audio and segments into transcriptState and audioState
       await transcriptState.loadProjectState(projectDoc, audioBlob);
 
+      // Sync project's chosen lexicon with Hunspell spellchecker
+      await this.syncProjectLexiconToHunspell(projectDoc.lexiconId);
+
       this.saveStatus = 'saved';
       this.isProjectManagerOpen = false;
       this.currentView = 'workspace';
@@ -393,6 +401,62 @@ class ProjectState {
     } finally {
       this.isConverting = false;
       this.convertingMessage = '';
+    }
+  }
+
+  /**
+   * Syncs the project's chosen lexicon to Hunspell engine.
+   * If lexiconId is provided, rebuilds Hunspell dictionary from that lexicon.
+   * If null/empty, clears or resets Hunspell dictionary.
+   * @param {string|null} lexiconId
+   */
+  async syncProjectLexiconToHunspell(lexiconId) {
+    try {
+      if (!lexiconId) {
+        await hunspellState.rebuildFromLexicon(null);
+        return;
+      }
+      if (!lexiconState.lexicons || lexiconState.lexicons.length === 0) {
+        await lexiconState.init();
+      }
+      const lex = lexiconState.lexicons.find((l) => l.id === lexiconId);
+      if (lex) {
+        await hunspellState.rebuildFromLexicon(lex);
+      } else {
+        await hunspellState.rebuildFromLexicon(null);
+      }
+    } catch (err) {
+      console.warn('[ProjectState] Failed to sync lexicon to Hunspell:', err);
+    }
+  }
+
+  /**
+   * Updates the project's assigned spellchecking lexicon and persists to DB.
+   * @param {string} projectId
+   * @param {string|null} lexiconId
+   */
+  async setProjectLexicon(projectId, lexiconId) {
+    try {
+      const proj = await getProject(projectId);
+      if (!proj) return;
+
+      const cleanLexId = lexiconId || null;
+      proj.lexiconId = cleanLexId;
+      proj.updatedAt = new Date().toISOString();
+      await saveProject(proj);
+
+      if (this.activeProject?.id === projectId) {
+        this.activeProject = { ...this.activeProject, lexiconId: cleanLexId };
+        await this.syncProjectLexiconToHunspell(cleanLexId);
+      }
+
+      const idx = this.projects.findIndex((p) => p.id === projectId);
+      if (idx !== -1) {
+        this.projects[idx] = { ...this.projects[idx], lexiconId: cleanLexId };
+      }
+      appState.statusMessage = cleanLexId ? 'Spellcheck lexicon updated.' : 'Spellcheck disabled for this project.';
+    } catch (err) {
+      console.error('[ProjectState] Failed to set project lexicon:', err);
     }
   }
 
@@ -450,7 +514,7 @@ class ProjectState {
    */
   async updateProjectSettings(
     projectId,
-    { title, transcriber, speakers, subTiers },
+    { title, transcriber, speakers, subTiers, lexiconId },
   ) {
     try {
       const proj = await getProject(projectId);
@@ -521,6 +585,9 @@ class ProjectState {
           ? normalizeSubTiers($state.snapshot(subTiers))
           : normalizeSubTiers(proj.subTiers);
 
+      const cleanLexId =
+        lexiconId !== undefined ? (lexiconId || null) : (proj.lexiconId || null);
+
       const updated = {
         ...proj,
         title: title !== undefined ? title.trim() : proj.title,
@@ -528,6 +595,7 @@ class ProjectState {
           transcriber !== undefined ? transcriber.trim() : proj.transcriber,
         speakers: newSpeakers,
         subTiers: newSubTiers,
+        lexiconId: cleanLexId,
         segments: updatedSegments || [],
         updatedAt: new Date().toISOString(),
       };
@@ -535,6 +603,7 @@ class ProjectState {
       await saveProject(updated);
       if (this.activeProjectId === projectId) {
         this.activeProject = { ...this.activeProject, ...updated };
+        await this.syncProjectLexiconToHunspell(cleanLexId);
       }
       await this.loadProjects();
       appState.statusMessage = 'Project settings saved successfully.';

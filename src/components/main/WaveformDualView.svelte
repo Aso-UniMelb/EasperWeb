@@ -11,11 +11,12 @@
   import { buildColumns } from '../../utils/subTiers.js';
   import SegmentationSettingsPanel from './SegmentationSettingsPanel.svelte';
   import SpeechRecognitionSettingsPanel from './SpeechRecognitionSettingsPanel.svelte';
+  import AutoTaggingSettingsPanel from './AutoTaggingSettingsPanel.svelte';
   import WaveformBoundaryMagnifier from './WaveformBoundaryMagnifier.svelte';
 
   let { onWorkerReset } = $props();
 
-  let activeDrawer = $state(null); // 'segmentation' | 'recognition' | null
+  let activeDrawer = $state(null); // 'segmentation' | 'recognition' | 'tagging' | null
   let waveformDualWrapperEl = $state(null);
 
   function toggleDrawer(name) {
@@ -321,6 +322,26 @@
       ></i>
     </button>
 
+    <!-- Auto Tagging Settings Toggle Button -->
+    <button
+      type="button"
+      class="btn-header-tool {activeDrawer === 'tagging'
+        ? 'is-active active-tagging'
+        : ''}"
+      onclick={() => toggleDrawer('tagging')}
+      title="Automatically tag word-level sub-tiers from active lexicon"
+      aria-expanded={activeDrawer === 'tagging'}
+    >
+      <i class="fa-solid fa-tags"></i>
+      <span>Auto Tagging</span>
+      <i
+        class="fa-solid fa-chevron-down toggle-caret {activeDrawer ===
+        'tagging'
+          ? 'open'
+          : ''}"
+      ></i>
+    </button>
+
     <div class="header-action-divider"></div>
 
     <!-- Writing Direction Toggle (LTR <-> RTL) -->
@@ -373,6 +394,10 @@
     <SpeechRecognitionSettingsPanel
       onClose={() => (activeDrawer = null)}
       {onWorkerReset}
+    />
+  {:else if activeDrawer === 'tagging'}
+    <AutoTaggingSettingsPanel
+      onClose={() => (activeDrawer = null)}
     />
   {/if}
 
@@ -635,12 +660,12 @@
         class="context-menu-item item-split"
         onclick={() => transcriptState.handleSplitFromContextMenu()}
         role="menuitem"
-        title="Halve this segment in waveform and add an empty text block [{formatTimeSec(
-          transcriptState.contextMenu.targetSegment.start,
-        )} - {formatTimeSec(transcriptState.contextMenu.targetSegment.end)}]"
+        title="Split this segment at {formatTimeSec(
+          transcriptState.contextMenu.time,
+        )} and add an empty text block"
       >
         <i class="fa-solid fa-scissors"></i>
-        <span>Split</span>
+        <span>Split Here</span>
       </button>
       {#if transcriptState.contextMenu.nextSegment}
         <button
@@ -1047,6 +1072,18 @@
     background-color: rgba(124, 58, 237, 0.12);
     border-color: #7c3aed;
     color: #7c3aed;
+  }
+
+  .btn-header-tool.is-active.active-tagging {
+    background-color: rgba(16, 185, 129, 0.12);
+    border-color: #10b981;
+    color: #059669;
+  }
+
+  :global([data-theme='dark']) .btn-header-tool.is-active.active-tagging {
+    background-color: rgba(16, 185, 129, 0.2);
+    border-color: #34d399;
+    color: #34d399;
   }
 
   .btn-header-tool:disabled {

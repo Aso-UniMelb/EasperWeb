@@ -54,6 +54,15 @@
 
         <button
           type="button"
+          class="btn-cta-secondary"
+          onclick={() => router.navigate('/lexicon')}
+        >
+          <i class="fa-solid fa-book-bookmark"></i>
+          <span>Lexicon Manager</span>
+        </button>
+
+        <button
+          type="button"
           class="btn-cta-ghost"
           onclick={() => router.navigate('/guide')}
         >
