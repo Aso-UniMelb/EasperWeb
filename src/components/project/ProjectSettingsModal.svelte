@@ -1,4 +1,5 @@
 <script>
+  import { untrack } from 'svelte';
   import { projectState } from '../../state/projectState.svelte.js';
   import { lexiconState } from '../../state/lexiconState.svelte.js';
   import {
@@ -26,32 +27,50 @@
   let subTiers = $state([]);
   let errorMessage = $state('');
   let successMessage = $state('');
+  let wasOpen = false;
+  let lastOpenProjectId = null;
 
   // Synchronize modal state when opened
   $effect(() => {
-    if (projectState.isProjectSettingsOpen && projectState.activeProject) {
-      if (!lexiconState.lexicons || lexiconState.lexicons.length === 0) {
-        lexiconState.init();
-      }
-      title = projectState.activeProject.title || '';
-      transcriber = projectState.activeProject.transcriber || '';
-      lexiconId = projectState.activeProject.lexiconId || '';
-      const existingSpeakers = projectState.activeProject.speakers;
-      speakers = ensureDefaultSpeakers(existingSpeakers).map((s) => ({ ...s }));
-      subTiers = normalizeSubTiers(projectState.activeProject.subTiers).map(
-        (t) => ({
-          ...t,
-          type: t.type || SUB_TIER_TYPE_SENTENCE,
-          lexicon: Array.isArray(t.lexicon) ? [...t.lexicon] : [],
-          lexiconInput: formatLexicon(t.lexicon),
-          splitters:
-            t.splitters != null ? String(t.splitters) : DEFAULT_SPLITTERS,
-          lexiconField: t.lexiconField || '',
-        }),
-      );
-      errorMessage = '';
-      successMessage = '';
+    const isOpen = Boolean(
+      projectState.isProjectSettingsOpen && projectState.activeProject,
+    );
+    const currentProjectId = projectState.activeProject?.id || null;
+
+    if (isOpen && (!wasOpen || lastOpenProjectId !== currentProjectId)) {
+      untrack(() => {
+        if (
+          !lexiconState.isInitialized &&
+          (!lexiconState.lexicons || lexiconState.lexicons.length === 0)
+        ) {
+          lexiconState.init();
+        }
+        if (projectState.activeProject) {
+          title = projectState.activeProject.title || '';
+          transcriber = projectState.activeProject.transcriber || '';
+          lexiconId = projectState.activeProject.lexiconId || '';
+          const existingSpeakers = projectState.activeProject.speakers;
+          speakers = ensureDefaultSpeakers(existingSpeakers).map((s) => ({
+            ...s,
+          }));
+          subTiers = normalizeSubTiers(projectState.activeProject.subTiers).map(
+            (t) => ({
+              ...t,
+              type: t.type || SUB_TIER_TYPE_SENTENCE,
+              lexicon: Array.isArray(t.lexicon) ? [...t.lexicon] : [],
+              lexiconInput: formatLexicon(t.lexicon),
+              splitters:
+                t.splitters != null ? String(t.splitters) : DEFAULT_SPLITTERS,
+              lexiconField: t.lexiconField || '',
+            }),
+          );
+        }
+        errorMessage = '';
+        successMessage = '';
+      });
+      lastOpenProjectId = currentProjectId;
     }
+    wasOpen = isOpen;
   });
 
   const selectedLexicon = $derived(
@@ -92,7 +111,7 @@
         name: `Speaker ${nextId}`,
         initials: `S${nextId}`,
       },
-    ].sort((a, b) => a.id - b.id);
+    ].sort((a, b) => Number(a.id) - Number(b.id));
   }
 
   function handleRemoveSpeaker(idToRemove) {
@@ -101,7 +120,7 @@
       errorMessage = 'A project must have at least one speaker.';
       return;
     }
-    speakers = speakers.filter((s) => s.id !== idToRemove);
+    speakers = speakers.filter((s) => Number(s.id) !== Number(idToRemove));
   }
 
   function handleAddSubTier() {

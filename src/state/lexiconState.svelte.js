@@ -92,6 +92,7 @@ class LexiconState {
   lexicons = $state([]);
   activeLexiconId = $state(null);
   isLoading = $state(false);
+  isInitialized = $state(false);
   statusMessage = $state('');
 
   // UI View state
@@ -130,6 +131,7 @@ class LexiconState {
    * Initializes the lexicon store by loading saved lexicons from IndexedDB.
    */
   async init() {
+    if (this.isInitialized || this.isLoading) return;
     this.isLoading = true;
     try {
       const saved = await getAllLexicons();
@@ -157,6 +159,7 @@ class LexiconState {
       if (this.activeLexicon) {
         hunspellState.rebuildFromLexicon(this.activeLexicon);
       }
+      this.isInitialized = true;
     } catch (err) {
       console.error('[LexiconState] Failed to initialize lexicons:', err);
       this.statusMessage = 'Could not load lexicons from storage.';
