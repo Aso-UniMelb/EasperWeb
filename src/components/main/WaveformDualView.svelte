@@ -5,7 +5,12 @@
   import { projectState } from '../../state/projectState.svelte.js';
   import { modelState } from '../../state/modelState.svelte.js';
   import { formatTimeSec } from '../../utils/formatters.js';
-  import { getSpeakerColor } from '../../utils/speakers.js';
+  import {
+    getSpeakerColor,
+    getSpeakerInitials,
+    calculateSidebarColWidth,
+    getWaveformPillarLayout,
+  } from '../../utils/speakers.js';
   import SegmentCard from './SegmentCard.svelte';
   import TierLegend from './TierLegend.svelte';
   import { buildColumns } from '../../utils/subTiers.js';
@@ -19,9 +24,60 @@
   let activeDrawer = $state(null); // 'segmentation' | 'recognition' | 'tagging' | null
   let waveformDualWrapperEl = $state(null);
 
+  let projectSpeakers = $derived(
+    projectState.activeProject?.speakers || [
+      { id: 1, name: 'Speaker 1', initials: 'S1' },
+    ],
+  );
+
+  let sidebarWidth = $derived(calculateSidebarColWidth(projectSpeakers));
+  let pillarLayout = $derived(
+    getWaveformPillarLayout(sidebarWidth, projectSpeakers),
+  );
+
+  let isAutomationMenuOpen = $state(false);
+  let automationMenuContainer = $state(null);
+
   function toggleDrawer(name) {
     activeDrawer = activeDrawer === name ? null : name;
   }
+
+  function toggleAutomationMenu() {
+    isAutomationMenuOpen = !isAutomationMenuOpen;
+  }
+
+  function selectAutomationTool(tool) {
+    toggleDrawer(tool);
+    isAutomationMenuOpen = false;
+  }
+
+  $effect(() => {
+    if (!isAutomationMenuOpen) return;
+
+    function handlePointerDown(e) {
+      if (
+        automationMenuContainer &&
+        !automationMenuContainer.contains(e.target)
+      ) {
+        isAutomationMenuOpen = false;
+      }
+    }
+
+    function handleKeyDown(e) {
+      if (e.key === 'Escape') {
+        isAutomationMenuOpen = false;
+      }
+    }
+
+    window.addEventListener('pointerdown', handlePointerDown);
+    window.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      window.removeEventListener('pointerdown', handlePointerDown);
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  });
+
 
   // Ctrl + Scroll / Cmd + Scroll to adjust vertical zoom while keeping playhead visible
   $effect(() => {
@@ -54,6 +110,43 @@
     window.addEventListener('wheel', handleWheel, { passive: false });
     return () => {
       window.removeEventListener('wheel', handleWheel);
+    };
+  });
+
+  // Global keyboard shortcuts for Undo (Ctrl+Z / Cmd+Z) and Redo (Ctrl+Y / Ctrl+Shift+Z / Cmd+Shift+Z)
+  $effect(() => {
+    const handleKeyDown = (e) => {
+      // Check if user is typing in a textarea, input, or contenteditable element
+      const tag = document.activeElement?.tagName?.toLowerCase();
+      const isContentEditable = document.activeElement?.isContentEditable;
+      if (tag === 'textarea' || tag === 'input' || isContentEditable) {
+        return; // Allow native browser text editing undo
+      }
+
+      const isMac =
+        typeof navigator !== 'undefined' &&
+        navigator.platform?.toUpperCase().indexOf('MAC') >= 0;
+      const cmdOrCtrl = isMac ? e.metaKey : e.ctrlKey;
+
+      if (!cmdOrCtrl) return;
+
+      const key = e.key.toLowerCase();
+      if (key === 'z' && !e.shiftKey) {
+        if (transcriptState.canUndo) {
+          e.preventDefault();
+          transcriptState.undo();
+        }
+      } else if (key === 'y' || (key === 'z' && e.shiftKey)) {
+        if (transcriptState.canRedo) {
+          e.preventDefault();
+          transcriptState.redo();
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
     };
   });
 
@@ -277,70 +370,174 @@
 
     <div class="header-action-divider"></div>
 
-    <!-- Automatic Segmentation Settings Toggle Button -->
-    <button
-      type="button"
-      class="btn-header-tool {activeDrawer === 'segmentation'
-        ? 'is-active active-segment'
-        : ''}"
-      onclick={() => toggleDrawer('segmentation')}
-      title="Automatic segmentation settings and execution"
-      aria-expanded={activeDrawer === 'segmentation'}
-    >
-      <i class="fa-solid fa-scissors"></i>
-      <span>Auto Segmentation</span>
-      <i
-        class="fa-solid fa-chevron-down toggle-caret {activeDrawer ===
-        'segmentation'
-          ? 'open'
-          : ''}"
-      ></i>
-    </button>
+    <!-- Undo / Redo History Controls -->
+    <div class="waveform-history-controls">
+      <button
+        type="button"
+        class="btn-header-tool btn-history-action"
+        disabled={!transcriptState.canUndo}
+        onclick={() => transcriptState.undo()}
+        title={transcriptState.canUndo
+          ? `Undo ${transcriptState.undoActionName} (Ctrl+Z)`
+          : 'Undo (Ctrl+Z)'}
+        aria-label="Undo segment operation"
+      >
+        <i class="fa-solid fa-rotate-left"></i>
+        <span class="history-btn-label">Undo</span>
+      </button>
 
-    <!-- Speech Recognition Settings Toggle Button -->
-    <button
-      type="button"
-      class="btn-header-tool {activeDrawer === 'recognition'
-        ? 'is-active active-transcribe'
-        : ''}"
-      onclick={() => toggleDrawer('recognition')}
-      title="Speech recognition model settings and execution"
-      aria-expanded={activeDrawer === 'recognition'}
+      <button
+        type="button"
+        class="btn-header-tool btn-history-action"
+        disabled={!transcriptState.canRedo}
+        onclick={() => transcriptState.redo()}
+        title={transcriptState.canRedo
+          ? `Redo ${transcriptState.redoActionName} (Ctrl+Y)`
+          : 'Redo (Ctrl+Y)'}
+        aria-label="Redo segment operation"
+      >
+        <i class="fa-solid fa-rotate-right"></i>
+        <span class="history-btn-label">Redo</span>
+      </button>
+    </div>
+
+    <div class="header-action-divider"></div>
+
+    <!-- Automation Tools Dropdown Collection -->
+    <div
+      class="automation-dropdown-container"
+      bind:this={automationMenuContainer}
     >
-      <i class="fa-solid fa-brain"></i>
-      <span>Speech Recognition</span>
-      {#if transcriptState.emptySegmentsCount > 0}
-        <span class="tool-count-badge"
-          >{transcriptState.emptySegmentsCount}</span
-        >
+      <button
+        type="button"
+        class="btn-automation-menu-trigger {isAutomationMenuOpen
+          ? 'active'
+          : ''} {activeDrawer ? 'drawer-active' : ''}"
+        onclick={toggleAutomationMenu}
+        aria-expanded={isAutomationMenuOpen}
+        title="Automation tools: Auto Segmentation, Speech Recognition, and Auto Tagging"
+      >
+        <i class="fa-solid fa-wand-magic-sparkles"></i>
+        <span>Automation Tools</span>
+        {#if activeDrawer}
+          <span class="active-drawer-pill">
+            {activeDrawer === 'segmentation'
+              ? 'Segmentation'
+              : activeDrawer === 'recognition'
+                ? 'Recognition'
+                : 'Tagging'}
+          </span>
+        {/if}
+        {#if transcriptState.emptySegmentsCount > 0 && !activeDrawer}
+          <span
+            class="tool-count-badge"
+            title="{transcriptState.emptySegmentsCount} empty segments awaiting speech recognition"
+          >
+            {transcriptState.emptySegmentsCount}
+          </span>
+        {/if}
+        <i
+          class="fa-solid fa-chevron-down caret-icon {isAutomationMenuOpen
+            ? 'rotated'
+            : ''}"
+        ></i>
+      </button>
+
+      {#if isAutomationMenuOpen}
+        <div class="automation-dropdown-menu" role="menu">
+          <div class="dropdown-category-title">
+            <i class="fa-solid fa-bolt"></i>
+            <span>AI &amp; Automation</span>
+          </div>
+
+          <!-- Auto Segmentation -->
+          <button
+            type="button"
+            class="automation-menu-item {activeDrawer === 'segmentation'
+              ? 'active-item'
+              : ''}"
+            role="menuitem"
+            onclick={() => selectAutomationTool('segmentation')}
+            title="Automatic speech segmentation (Silero VAD or uniform intervals)"
+          >
+            <div class="item-icon-box icon-segmentation">
+              <i class="fa-solid fa-scissors"></i>
+            </div>
+            <div class="item-text-box">
+              <div class="item-title-row">
+                <span class="item-title">Auto Segmentation</span>
+                {#if activeDrawer === 'segmentation'}
+                  <span class="item-status-pill">Active</span>
+                {/if}
+              </div>
+              <div class="item-desc">
+                Detect speech boundaries with Silero VAD or uniform intervals
+              </div>
+            </div>
+          </button>
+
+          <!-- Speech Recognition -->
+          <button
+            type="button"
+            class="automation-menu-item {activeDrawer === 'recognition'
+              ? 'active-item'
+              : ''}"
+            role="menuitem"
+            onclick={() => selectAutomationTool('recognition')}
+            title="Speech recognition model settings and execution"
+          >
+            <div class="item-icon-box icon-recognition">
+              <i class="fa-solid fa-brain"></i>
+            </div>
+            <div class="item-text-box">
+              <div class="item-title-row">
+                <span class="item-title">Speech Recognition</span>
+                {#if transcriptState.emptySegmentsCount > 0}
+                  <span
+                    class="tool-count-badge"
+                    title="{transcriptState.emptySegmentsCount} segments awaiting transcription"
+                  >
+                    {transcriptState.emptySegmentsCount}
+                  </span>
+                {/if}
+                {#if activeDrawer === 'recognition'}
+                  <span class="item-status-pill">Active</span>
+                {/if}
+              </div>
+              <div class="item-desc">
+                Transcribe speech to text using Whisper ONNX models
+              </div>
+            </div>
+          </button>
+
+          <!-- Auto Tagging -->
+          <button
+            type="button"
+            class="automation-menu-item {activeDrawer === 'tagging'
+              ? 'active-item'
+              : ''}"
+            role="menuitem"
+            onclick={() => selectAutomationTool('tagging')}
+            title="Automatically tag word-level sub-tiers from active lexicon"
+          >
+            <div class="item-icon-box icon-tagging">
+              <i class="fa-solid fa-tags"></i>
+            </div>
+            <div class="item-text-box">
+              <div class="item-title-row">
+                <span class="item-title">Auto Tagging</span>
+                {#if activeDrawer === 'tagging'}
+                  <span class="item-status-pill">Active</span>
+                {/if}
+              </div>
+              <div class="item-desc">
+                Automatically annotate word tokens from project lexicons
+              </div>
+            </div>
+          </button>
+        </div>
       {/if}
-      <i
-        class="fa-solid fa-chevron-down toggle-caret {activeDrawer ===
-        'recognition'
-          ? 'open'
-          : ''}"
-      ></i>
-    </button>
-
-    <!-- Auto Tagging Settings Toggle Button -->
-    <button
-      type="button"
-      class="btn-header-tool {activeDrawer === 'tagging'
-        ? 'is-active active-tagging'
-        : ''}"
-      onclick={() => toggleDrawer('tagging')}
-      title="Automatically tag word-level sub-tiers from active lexicon"
-      aria-expanded={activeDrawer === 'tagging'}
-    >
-      <i class="fa-solid fa-tags"></i>
-      <span>Auto Tagging</span>
-      <i
-        class="fa-solid fa-chevron-down toggle-caret {activeDrawer ===
-        'tagging'
-          ? 'open'
-          : ''}"
-      ></i>
-    </button>
+    </div>
 
     <div class="header-action-divider"></div>
 
@@ -407,12 +604,51 @@
     onscroll={(e) => transcriptState.handleScroll(e)}
   >
     <!-- Left Column: Vertical Waveform Visualisation -->
-    <div class="waveform-sidebar-col">
+    <div
+      class="waveform-sidebar-col"
+      style="width: {sidebarWidth}px; min-width: {sidebarWidth}px;"
+    >
+      <!-- Sticky Header Row above Waveform & Speaker Pillars -->
+      <div
+        class="waveform-pillars-header"
+        style="width: {sidebarWidth}px;"
+      >
+        <div
+          class="header-ruler"
+          style="width: {pillarLayout.rulerWidth}px;"
+          title="Timeline Time Ruler"
+        >
+          <i class="fa-regular fa-clock"></i>
+        </div>
+        <div
+          class="header-wave"
+          style="width: {pillarLayout.waveWidth}px;"
+          title="Audio Waveform"
+        >
+          <span>Wave</span>
+        </div>
+        {#each pillarLayout.pillars as p (p.speakerId)}
+          {@const col = getSpeakerColor(p.speakerId)}
+          <div
+            class="header-pillar-cell"
+            style="width: {p.width}px;"
+            title="{p.speaker.name || 'Speaker ' + p.speakerId} (Pillar #{p.speakerId})"
+          >
+            <span
+              class="pillar-speaker-badge"
+              style="background: {col.primary}; color: #ffffff;"
+            >
+              {getSpeakerInitials(p.speaker, p.speakerId)}
+            </span>
+          </div>
+        {/each}
+      </div>
+
       <!-- Full-size Canvas Wrapper -->
       <div
         class="waveform-canvas-wrap"
         bind:this={transcriptState.waveformWrapEl}
-        style="height: {transcriptState.waveformCalculatedHeight}px; min-height: {transcriptState.waveformCalculatedHeight}px;"
+        style="width: {sidebarWidth}px; height: {transcriptState.waveformCalculatedHeight}px; min-height: {transcriptState.waveformCalculatedHeight}px;"
         onpointerdown={(e) => transcriptState.handleWaveformPointerDown(e)}
         onpointermove={(e) => transcriptState.handleWaveformPointerMove(e)}
         onpointerup={(e) => transcriptState.handleWaveformPointerUp(e)}
@@ -428,7 +664,7 @@
         role="button"
         tabindex="0"
         aria-label="Interactive vertical waveform timeline"
-        title="Click to seek audio, drag handles to edit boundaries, or right-click to add a segment"
+        title="Click to seek audio, drag handles in speaker pillars to edit boundaries, or right-click to add a segment"
       >
         {#each transcriptState.visibleWaveformTiles as tile (tile.index)}
           <canvas
@@ -437,21 +673,6 @@
             style="top: {tile.top}px; height: {tile.height}px;"
           ></canvas>
         {/each}
-        {#if transcriptState.waveformHoverTime !== null}
-          <div
-            class="waveform-hover-tooltip"
-            style="top: {Math.max(
-              10,
-              Math.min(
-                transcriptState.waveformCalculatedHeight - 24,
-                transcriptState.waveformHoverY - 12,
-              ),
-            )}px;"
-          >
-            <i class="fa-solid fa-play"></i>
-            {formatTimeSec(transcriptState.waveformHoverTime)}
-          </div>
-        {/if}
       </div>
     </div>
 
@@ -460,6 +681,18 @@
       class="segments-main-col"
       bind:this={transcriptState.segmentsContainerEl}
     >
+      <div class="segments-header-row">
+        <span class="segments-header-title">
+          <i class="fa-solid fa-layer-group"></i>
+          Segments &amp; Utterances
+        </span>
+        {#if transcriptState.segments.length > 0}
+          <span class="segments-header-count">
+            {transcriptState.segments.length}
+            {transcriptState.segments.length === 1 ? 'segment' : 'segments'}
+          </span>
+        {/if}
+      </div>
       {#if appState.isProcessing && transcriptState.segments.length === 0}
         <!-- Live Processing Placeholder while waiting for first segment -->
         <div class="segment-loading-state">
@@ -564,9 +797,7 @@
       {#if transcriptState.segments.length > 0}
         <div
           class="segments-track-wrap"
-          style="height: {transcriptState.waveformCalculatedHeight +
-            140}px; min-height: {transcriptState.waveformCalculatedHeight +
-            140}px;"
+          style="height: {transcriptState.staggeredTrackHeight}px; min-height: {transcriptState.staggeredTrackHeight}px;"
         >
           {#each transcriptState.segments as seg (seg.id)}
             <SegmentCard {seg} />
@@ -1041,6 +1272,29 @@
     box-shadow: 0 0 0 1.5px var(--spk-color);
   }
 
+  /* History Controls (Undo / Redo) */
+  .waveform-history-controls {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    flex-shrink: 0;
+  }
+
+  .btn-history-action {
+    padding: 0 9px;
+    gap: 5px;
+  }
+
+  .btn-history-action:disabled {
+    opacity: 0.38;
+    cursor: not-allowed;
+    filter: grayscale(1);
+  }
+
+  .history-btn-label {
+    font-size: 0.74rem;
+  }
+
   /* Auto Segmentation & Speech Recognition Header Tool Buttons */
   .btn-header-tool {
     display: inline-flex;
@@ -1066,43 +1320,9 @@
     color: var(--primary-color, #0284c7);
   }
 
-  .btn-header-tool.is-active.active-segment {
-    background-color: rgba(2, 132, 199, 0.12);
-    border-color: var(--primary-color, #0284c7);
-    color: var(--primary-color, #0284c7);
-  }
-
-  .btn-header-tool.is-active.active-transcribe {
-    background-color: rgba(124, 58, 237, 0.12);
-    border-color: #7c3aed;
-    color: #7c3aed;
-  }
-
-  .btn-header-tool.is-active.active-tagging {
-    background-color: rgba(16, 185, 129, 0.12);
-    border-color: #10b981;
-    color: #059669;
-  }
-
-  :global([data-theme='dark']) .btn-header-tool.is-active.active-tagging {
-    background-color: rgba(16, 185, 129, 0.2);
-    border-color: #34d399;
-    color: #34d399;
-  }
-
   .btn-header-tool:disabled {
     opacity: 0.5;
     cursor: not-allowed;
-  }
-
-  .toggle-caret {
-    font-size: 0.65rem;
-    opacity: 0.65;
-    transition: transform 0.15s ease;
-  }
-
-  .toggle-caret.open {
-    transform: rotate(180deg);
   }
 
   .tool-count-badge {
@@ -1124,18 +1344,6 @@
     background-color: #334155;
     border-color: #38bdf8;
     color: #38bdf8;
-  }
-
-  :global([data-theme='dark']) .btn-header-tool.is-active.active-segment {
-    background-color: rgba(56, 189, 248, 0.18);
-    border-color: #38bdf8;
-    color: #38bdf8;
-  }
-
-  :global([data-theme='dark']) .btn-header-tool.is-active.active-transcribe {
-    background-color: rgba(167, 139, 250, 0.2);
-    border-color: #a78bfa;
-    color: #c084fc;
   }
 
   :global([data-theme='dark']) .tool-count-badge {

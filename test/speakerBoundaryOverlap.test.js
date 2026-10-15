@@ -5,6 +5,10 @@ import {
   resolveSameSpeakerOverlaps,
   adjustSameSpeakerBoundariesOnDrag,
   calculateSegmentSplit,
+  getWaveformPillarLayout,
+  calculateSidebarColWidth,
+  calculateStaggeredSegmentPositions,
+  sortSegmentsChronologically,
 } from '../src/utils/speakers.js';
 
 describe('Same-Speaker Overlap Prevention Rules', () => {
@@ -283,6 +287,236 @@ describe('Same-Speaker Overlap Prevention Rules', () => {
     it('returns null for segments shorter than minimum splittable duration', () => {
       const seg = { id: 'seg-short', speakerId: 1, start: 2.0, end: 2.08 };
       expect(calculateSegmentSplit(seg, 2.04)).toBeNull();
+    });
+  });
+
+  describe('Speaker Pillar Layout and Responsive Sidebar Width', () => {
+    it('calculateSidebarColWidth produces responsive widths for 1 to 5 speakers', () => {
+      // 1 speaker
+      expect(calculateSidebarColWidth([{ id: 1, name: 'S1' }])).toBe(146);
+      // 2 speakers
+      expect(
+        calculateSidebarColWidth([
+          { id: 1, name: 'S1' },
+          { id: 2, name: 'S2' },
+        ]),
+      ).toBe(166);
+      // 3 speakers
+      expect(
+        calculateSidebarColWidth([
+          { id: 1, name: 'S1' },
+          { id: 2, name: 'S2' },
+          { id: 3, name: 'S3' },
+        ]),
+      ).toBe(186);
+      // Fallback with empty array
+      expect(calculateSidebarColWidth([])).toBe(146);
+    });
+
+    it('getWaveformPillarLayout calculates correct ruler, waveform, and pillar coordinates for 3 overlapping speakers', () => {
+      const speakers = [
+        { id: 1, name: 'Alice', initials: 'AL' },
+        { id: 2, name: 'Bob', initials: 'BO' },
+        { id: 3, name: 'Charlie', initials: 'CH' },
+      ];
+      const totalWidth = 186;
+      const layout = getWaveformPillarLayout(totalWidth, speakers);
+
+      expect(layout.rulerWidth).toBe(38);
+      expect(layout.waveLeft).toBe(38);
+      expect(layout.pillars.length).toBe(3);
+
+      // Verify pillars are placed adjacent to each other without horizontal collision
+      const [p1, p2, p3] = layout.pillars;
+      expect(p1.speakerId).toBe(1);
+      expect(p2.speakerId).toBe(2);
+      expect(p3.speakerId).toBe(3);
+
+      expect(p1.left).toBe(layout.waveRight);
+      expect(p1.right).toBe(p2.left);
+      expect(p2.right).toBe(p3.left);
+      expect(p3.right).toBeLessThanOrEqual(totalWidth);
+
+      // Verify waveform track remains visible and distinct
+      expect(layout.waveWidth).toBeGreaterThanOrEqual(60);
+      expect(layout.waveRight).toBe(layout.waveLeft + layout.waveWidth);
+    });
+
+    it('enables collision-free hit testing for 3 simultaneous overlapping segments', () => {
+      const speakers = [
+        { id: 1, name: 'Speaker 1' },
+        { id: 2, name: 'Speaker 2' },
+        { id: 3, name: 'Speaker 3' },
+      ];
+      const totalWidth = 186;
+      const layout = getWaveformPillarLayout(totalWidth, speakers);
+
+      // 3 distinct speakers speaking simultaneously between 10.0s and 15.0s
+      const seg1 = { id: 's1', speakerId: 1, start: 10.0, end: 15.0 };
+      const seg2 = { id: 's2', speakerId: 2, start: 10.0, end: 15.0 };
+      const seg3 = { id: 's3', speakerId: 3, start: 10.0, end: 15.0 };
+      const segments = [seg1, seg2, seg3];
+
+      const startTime = 0;
+      const duration = 20;
+      const totalHeight = 1000;
+      const yStart = (10.0 / duration) * totalHeight; // 500px
+
+      // Target Speaker 2's pillar horizontally
+      const p2 = layout.pillars[1];
+      const clickXInPillar2 = p2.left + p2.width / 2;
+      const clickY = yStart; // Exactly at the start boundary
+
+      // Find pillar under pointer
+      const matchedPillar = layout.pillars.find(
+        (p) => clickXInPillar2 >= p.left - 2 && clickXInPillar2 <= p.right + 2,
+      );
+      expect(matchedPillar).toBeDefined();
+      expect(matchedPillar.speakerId).toBe(2);
+
+      // Find matching segment in this pillar
+      const segInPillar = segments.find(
+        (s) => (Number(s.speakerId) || 1) === matchedPillar.speakerId,
+      );
+      expect(segInPillar.id).toBe('s2');
+
+      // Boundary handle hit testing resolves cleanly to Speaker 2's segment handle
+      const segYStart = ((segInPillar.start - startTime) / duration) * totalHeight;
+      const isStartHit = Math.abs(clickY - segYStart) <= 10;
+      expect(isStartHit).toBe(true);
+    });
+  });
+
+  describe('Solution 2: Vertical Waterfall Staggering for Overlapping Segments', () => {
+    it('sortSegmentsChronologically sorts by start time and breaks ties by speakerId', () => {
+      const segs = [
+        { id: 'c', speakerId: 2, start: 5.0 },
+        { id: 'b', speakerId: 1, start: 5.0 },
+        { id: 'a', speakerId: 1, start: 1.0 },
+      ];
+      const sorted = sortSegmentsChronologically(segs);
+      expect(sorted[0].id).toBe('a');
+      expect(sorted[1].id).toBe('b'); // S1 starts at 5.0
+      expect(sorted[2].id).toBe('c'); // S2 starts at 5.0
+    });
+
+    it('places non-overlapping segments at their exact timeline trueTop', () => {
+      const segments = [
+        { id: 'seg-1', speakerId: 1, start: 2.0, end: 4.0 },
+        { id: 'seg-2', speakerId: 2, start: 10.0, end: 12.0 },
+      ];
+      const positions = calculateStaggeredSegmentPositions(segments, {
+        startTime: 0,
+        duration: 20,
+        totalHeight: 2000, // 100px per second
+        defaultCardHeight: 48,
+        gap: 6,
+      });
+
+      // Seg 1 at 2.0s -> 200px
+      expect(positions['seg-1'].trueTop).toBe(200);
+      expect(positions['seg-1'].top).toBe(200);
+      expect(positions['seg-1'].isPushed).toBe(false);
+      expect(positions['seg-1'].offset).toBe(0);
+
+      // Seg 2 at 10.0s -> 1000px (far after 200 + 48 = 248px)
+      expect(positions['seg-2'].trueTop).toBe(1000);
+      expect(positions['seg-2'].top).toBe(1000);
+      expect(positions['seg-2'].isPushed).toBe(false);
+      expect(positions['seg-2'].offset).toBe(0);
+    });
+
+    it('staggers 2 overlapping segments starting at the exact same timestamp without covering each other', () => {
+      const segments = [
+        { id: 'seg-1', speakerId: 1, start: 5.0, end: 8.0 },
+        { id: 'seg-2', speakerId: 2, start: 5.0, end: 8.0 },
+      ];
+      const positions = calculateStaggeredSegmentPositions(segments, {
+        startTime: 0,
+        duration: 20,
+        totalHeight: 2000, // 100px per sec -> 5.0s = 500px
+        defaultCardHeight: 50,
+        gap: 6,
+      });
+
+      // Seg 1 sits at true timeline level 500px
+      expect(positions['seg-1'].trueTop).toBe(500);
+      expect(positions['seg-1'].top).toBe(500);
+      expect(positions['seg-1'].isPushed).toBe(false);
+      expect(positions['seg-1'].offset).toBe(0);
+
+      // Seg 2 is pushed immediately below Seg 1: 500 + 50 (card height) + 6 (gap) = 556px
+      expect(positions['seg-2'].trueTop).toBe(500);
+      expect(positions['seg-2'].top).toBe(556);
+      expect(positions['seg-2'].isPushed).toBe(true);
+      expect(positions['seg-2'].offset).toBe(56);
+
+      // Verify Seg 1 and Seg 2 do not collide or cover each other
+      const seg1Bottom = positions['seg-1'].top + positions['seg-1'].cardH;
+      expect(positions['seg-2'].top).toBeGreaterThanOrEqual(seg1Bottom + 6);
+    });
+
+    it('handles 3 simultaneous overlapping speakers with waterfall push-down', () => {
+      const segments = [
+        { id: 'seg-1', speakerId: 1, start: 5.0, end: 9.0 },
+        { id: 'seg-2', speakerId: 2, start: 5.0, end: 9.0 },
+        { id: 'seg-3', speakerId: 3, start: 5.1, end: 9.0 },
+        { id: 'seg-4', speakerId: 1, start: 12.0, end: 15.0 },
+      ];
+      const positions = calculateStaggeredSegmentPositions(segments, {
+        startTime: 0,
+        duration: 20,
+        totalHeight: 2000,
+        defaultCardHeight: 50,
+        gap: 6,
+      });
+
+      // Seg 1 at 500px
+      expect(positions['seg-1'].top).toBe(500);
+      expect(positions['seg-1'].isPushed).toBe(false);
+
+      // Seg 2 pushed to 556px
+      expect(positions['seg-2'].top).toBe(556);
+      expect(positions['seg-2'].isPushed).toBe(true);
+
+      // Seg 3 pushed to 556 + 50 + 6 = 612px
+      expect(positions['seg-3'].top).toBe(612);
+      expect(positions['seg-3'].isPushed).toBe(true);
+      expect(positions['seg-3'].offset).toBe(612 - 510); // 102px offset from 5.1s (510px)
+
+      // Seg 4 at 12.0s (1200px) is far below 612 + 50 = 662px, so it returns to its true timeline position
+      expect(positions['seg-4'].trueTop).toBe(1200);
+      expect(positions['seg-4'].top).toBe(1200);
+      expect(positions['seg-4'].isPushed).toBe(false);
+      expect(positions['seg-4'].offset).toBe(0);
+    });
+
+    it('respects dynamic measured card heights', () => {
+      const segments = [
+        { id: 'seg-1', speakerId: 1, start: 4.0, end: 7.0 },
+        { id: 'seg-2', speakerId: 2, start: 4.0, end: 7.0 },
+      ];
+      // Seg 1 has multiline translation text and measured height is 80px
+      const cardHeights = {
+        'seg-1': 80,
+        'seg-2': 50,
+      };
+      const positions = calculateStaggeredSegmentPositions(segments, {
+        startTime: 0,
+        duration: 10,
+        totalHeight: 1000, // 4.0s = 400px
+        cardHeights,
+        defaultCardHeight: 48,
+        gap: 8,
+      });
+
+      expect(positions['seg-1'].cardH).toBe(80);
+      expect(positions['seg-1'].top).toBe(400);
+
+      // Seg 2 pushed below 80px card: 400 + 80 + 8 = 488px
+      expect(positions['seg-2'].top).toBe(488);
+      expect(positions['seg-2'].cardH).toBe(50);
+      expect(positions['seg-2'].isPushed).toBe(true);
     });
   });
 });

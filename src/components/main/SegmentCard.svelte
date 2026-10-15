@@ -277,6 +277,13 @@
     e.stopPropagation();
     isSpeakerPickerOpen = !isSpeakerPickerOpen;
   }
+
+  let layoutInfo = $derived(transcriptState.segmentLayoutPositions[seg.id]);
+  let cardTop = $derived(
+    layoutInfo?.top ?? transcriptState.getSegmentTop(seg.start),
+  );
+  let isStaggered = $derived(Boolean(layoutInfo?.isPushed));
+  let staggerOffset = $derived(layoutInfo?.offset ?? 0);
 </script>
 
 <div
@@ -287,10 +294,8 @@
     ? 'segment-card-active'
     : ''} {isHovered ? 'segment-card-hover' : ''} {isTranscribing
     ? 'segment-card-transcribing'
-    : ''}"
-  style="top: {transcriptState.getSegmentTop(
-    seg.start,
-  )}px; --card-speaker-color: {speakerColor.primary};"
+    : ''} {isStaggered ? 'segment-card-staggered' : ''}"
+  style="top: {cardTop}px; --card-speaker-color: {speakerColor.primary};"
   onclick={() => {
     isSpeakerPickerOpen = false;
     transcriptState.selectSegment(seg.id, false);
@@ -309,6 +314,19 @@
   tabindex="0"
   aria-label="Speech segment"
 >
+  {#if isStaggered && staggerOffset > 0}
+    <!-- Stagger Connector: links pushed card back to its true start timestamp on timeline -->
+    <div
+      class="stagger-connector"
+      style="height: {staggerOffset}px; top: -{staggerOffset}px; --stagger-color: {speakerColor.primary};"
+      title="Starts at {formatTimeSec(seg.start)} (staggered below overlapping segment)"
+    >
+      <div class="stagger-tick-top"></div>
+      <div class="stagger-stem"></div>
+      <div class="stagger-tick-bottom"></div>
+    </div>
+  {/if}
+
   <!-- Speaker Initials Badge on Left Boundary -->
   <div class="segment-speaker-wrapper">
     <button

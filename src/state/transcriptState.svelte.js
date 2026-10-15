@@ -34,6 +34,9 @@ import {
   resolveSameSpeakerOverlaps,
   adjustSameSpeakerBoundariesOnDrag,
   calculateSegmentSplit,
+  getWaveformPillarLayout,
+  calculateStaggeredSegmentPositions,
+  sortSegmentsChronologically,
 } from '../utils/speakers.js';
 import {
   getTileCanvas as renderGetTileCanvas,
@@ -233,6 +236,7 @@ class TranscriptState {
   currentTranscribingSegment = $state(null);
   activeHoverSegmentId = $state(null);
   selectedSegmentId = $state(null);
+  hoveredSegmentId = $state(null);
   activeDragHandle = $state(null); // 'start' | 'end' | null
   hoveredDragHandle = $state(null); // 'start' | 'end' | null
   dragMagnifier = $state({
@@ -346,6 +350,193 @@ class TranscriptState {
   segments = $state([]);
   fullResult = $state(null);
   metrics = $state(null);
+
+  // Undo / Redo history stacks (limited to structural segment operations)
+  undoStack = $state([]);
+  redoStack = $state([]);
+  MAX_UNDO_STEPS = 50;
+  preDragSegmentsSnapshot = null;
+
+  get canUndo() {
+    return this.undoStack.length > 0;
+  }
+
+  get canRedo() {
+    return this.redoStack.length > 0;
+  }
+
+  get undoActionName() {
+    if (this.undoStack.length === 0) return '';
+    return this.undoStack[this.undoStack.length - 1].actionName || 'Edit';
+  }
+
+  get redoActionName() {
+    if (this.redoStack.length === 0) return '';
+    return this.redoStack[this.redoStack.length - 1].actionName || 'Edit';
+  }
+
+  /**
+   * Pushes a state snapshot onto the undo stack and clears the redo stack.
+   * If snapshotBefore is provided, it is stored as the prior state.
+   */
+  pushUndo(actionName, snapshotBefore = null) {
+    let stateToSave;
+    if (snapshotBefore) {
+      if (Array.isArray(snapshotBefore)) {
+        stateToSave = {
+          actionName,
+          segments: JSON.parse(JSON.stringify(snapshotBefore)),
+          selectedSegmentId: this.selectedSegmentId,
+          timestamp: Date.now(),
+        };
+      } else {
+        stateToSave = {
+          actionName,
+          segments: JSON.parse(
+            JSON.stringify(snapshotBefore.segments || snapshotBefore),
+          ),
+          selectedSegmentId:
+            snapshotBefore.selectedSegmentId ?? this.selectedSegmentId,
+          timestamp: Date.now(),
+        };
+      }
+    } else {
+      stateToSave = {
+        actionName,
+        segments: JSON.parse(JSON.stringify(this.segments)),
+        selectedSegmentId: this.selectedSegmentId,
+        timestamp: Date.now(),
+      };
+    }
+
+    this.undoStack = [...this.undoStack, stateToSave];
+    if (this.undoStack.length > this.MAX_UNDO_STEPS) {
+      this.undoStack = this.undoStack.slice(
+        this.undoStack.length - this.MAX_UNDO_STEPS,
+      );
+    }
+    this.redoStack = [];
+  }
+
+  /**
+   * Reverts to the previous segment state in the undo stack.
+   */
+  undo() {
+    if (this.undoStack.length === 0) return false;
+
+    const previousState = this.undoStack[this.undoStack.length - 1];
+    this.undoStack = this.undoStack.slice(0, -1);
+
+    const currentState = {
+      actionName: previousState.actionName,
+      segments: JSON.parse(JSON.stringify(this.segments)),
+      selectedSegmentId: this.selectedSegmentId,
+      timestamp: Date.now(),
+    };
+    this.redoStack = [...this.redoStack, currentState];
+    if (this.redoStack.length > this.MAX_UNDO_STEPS) {
+      this.redoStack = this.redoStack.slice(
+        this.redoStack.length - this.MAX_UNDO_STEPS,
+      );
+    }
+
+    this.segments = previousState.segments;
+    this.selectedSegmentId = previousState.selectedSegmentId;
+
+    this.transcript = this.segments
+      .map((s) => cleanSpeechText(s.text))
+      .filter(Boolean)
+      .join(' ');
+
+    if (this.metrics) {
+      this.metrics.totalSegments = this.segments.length;
+      const speechSec = this.segments.reduce(
+        (acc, s) => acc + (s.duration || 0),
+        0,
+      );
+      this.metrics.speechDuration = Number(speechSec.toFixed(2));
+      this.metrics.silenceSkipped = Number(
+        Math.max(0, (this.metrics.audioDuration || 0) - speechSec).toFixed(2),
+      );
+    }
+    if (this.fullResult) {
+      this.fullResult.text = this.transcript;
+      this.fullResult.segments = this.segments;
+      if (this.fullResult.output) {
+        this.fullResult.output.text = this.transcript;
+        this.fullResult.output.segments = this.segments;
+      }
+    }
+
+    appState.statusMessage = `Undo: ${previousState.actionName}`;
+    requestAnimationFrame(() => this.drawVerticalWaveform());
+    this.notifySegmentsChange();
+    projectState.saveCurrentProjectDebounced();
+    return true;
+  }
+
+  /**
+   * Re-applies the next segment state in the redo stack.
+   */
+  redo() {
+    if (this.redoStack.length === 0) return false;
+
+    const nextState = this.redoStack[this.redoStack.length - 1];
+    this.redoStack = this.redoStack.slice(0, -1);
+
+    const currentState = {
+      actionName: nextState.actionName,
+      segments: JSON.parse(JSON.stringify(this.segments)),
+      selectedSegmentId: this.selectedSegmentId,
+      timestamp: Date.now(),
+    };
+    this.undoStack = [...this.undoStack, currentState];
+    if (this.undoStack.length > this.MAX_UNDO_STEPS) {
+      this.undoStack = this.undoStack.slice(
+        this.undoStack.length - this.MAX_UNDO_STEPS,
+      );
+    }
+
+    this.segments = nextState.segments;
+    this.selectedSegmentId = nextState.selectedSegmentId;
+
+    this.transcript = this.segments
+      .map((s) => cleanSpeechText(s.text))
+      .filter(Boolean)
+      .join(' ');
+
+    if (this.metrics) {
+      this.metrics.totalSegments = this.segments.length;
+      const speechSec = this.segments.reduce(
+        (acc, s) => acc + (s.duration || 0),
+        0,
+      );
+      this.metrics.speechDuration = Number(speechSec.toFixed(2));
+      this.metrics.silenceSkipped = Number(
+        Math.max(0, (this.metrics.audioDuration || 0) - speechSec).toFixed(2),
+      );
+    }
+    if (this.fullResult) {
+      this.fullResult.text = this.transcript;
+      this.fullResult.segments = this.segments;
+      if (this.fullResult.output) {
+        this.fullResult.output.text = this.transcript;
+        this.fullResult.output.segments = this.segments;
+      }
+    }
+
+    appState.statusMessage = `Redo: ${nextState.actionName}`;
+    requestAnimationFrame(() => this.drawVerticalWaveform());
+    this.notifySegmentsChange();
+    projectState.saveCurrentProjectDebounced();
+    return true;
+  }
+
+  clearUndoHistory() {
+    this.undoStack = [];
+    this.redoStack = [];
+    this.preDragSegmentsSnapshot = null;
+  }
 
   get waveformCalculatedHeight() {
     return this.waveformState?.duration
@@ -485,6 +676,44 @@ class TranscriptState {
     const duration = this.waveformState.duration || 1;
     const ratio = (segStart - startTime) / duration;
     return Math.max(0, Math.round(ratio * height));
+  }
+
+  // Measured card heights map (plain non-reactive object to avoid rendering feedback loops)
+  cardHeights = {};
+
+  registerCardHeight(segmentId, height) {
+    if (!segmentId || !height || height <= 0) return;
+    this.cardHeights[segmentId] = Math.round(height);
+  }
+
+  unregisterCardHeight(segmentId) {
+    if (!segmentId) return;
+    delete this.cardHeights[segmentId];
+  }
+
+  get segmentLayoutPositions() {
+    if (!this.waveformState || !this.waveformState.duration) return {};
+    return calculateStaggeredSegmentPositions(this.segments, {
+      startTime: this.waveformState.startTime || 0,
+      duration: this.waveformState.duration || 1,
+      totalHeight: this.waveformCalculatedHeight,
+      cardHeights: this.cardHeights,
+      defaultCardHeight: 48,
+      gap: 6,
+    });
+  }
+
+  get staggeredTrackHeight() {
+    const baseH = this.waveformCalculatedHeight + 140;
+    const positions = this.segmentLayoutPositions;
+    let maxBottom = baseH;
+    for (const key in positions) {
+      const pos = positions[key];
+      if (pos && pos.top + (pos.cardH || 48) + 40 > maxBottom) {
+        maxBottom = pos.top + (pos.cardH || 48) + 40;
+      }
+    }
+    return maxBottom;
   }
 
   selectSegment(segmentId, scrollIntoView = false) {
@@ -799,6 +1028,8 @@ class TranscriptState {
       text: '',
     };
 
+    this.pushUndo('Add segment');
+
     this.segments = [...this.segments, newSegment].sort(
       (a, b) => (a.start ?? 0) - (b.start ?? 0),
     );
@@ -846,6 +1077,9 @@ class TranscriptState {
     if (!seg) return;
 
     const spkId = Math.max(1, Math.min(5, Number(speakerId) || 1));
+    if (Number(seg.speakerId) === spkId) return;
+
+    this.pushUndo('Change speaker');
     seg.speakerId = spkId;
 
     // Resolve speaker name from project speakers if available
@@ -873,7 +1107,11 @@ class TranscriptState {
 
   deleteSegment(segmentId) {
     const segToDelete = this.segments.find((s) => s.id === segmentId);
+    if (!segToDelete) return;
+
+    this.pushUndo('Delete segment');
     this.segments = this.segments.filter((s) => s.id !== segmentId);
+    this.unregisterCardHeight(segmentId);
 
     if (segToDelete && Array.isArray(this.vadSpeechRegions)) {
       this.vadSpeechRegions = this.vadSpeechRegions.filter((r) => {
@@ -1080,6 +1318,8 @@ class TranscriptState {
     const idx = sorted.findIndex((s) => s.id === segmentId);
     if (idx < 0 || idx >= sorted.length - 1) return null;
 
+    this.pushUndo('Merge segment');
+
     const segA = sorted[idx];
     const segB = sorted[idx + 1];
 
@@ -1191,6 +1431,8 @@ class TranscriptState {
 
     const split = calculateSegmentSplit(seg, splitTime);
     if (!split) return null;
+
+    this.pushUndo('Split segment');
 
     const { seg1, seg2, splitPoint } = split;
 
@@ -1304,28 +1546,65 @@ class TranscriptState {
     this.transcribeSingleSegment(target, targetModel);
   }
 
-  getHandleAtPosition(clientY) {
+  getHandleAtPosition(clientY, clientX = null) {
     const el = this.waveformWrapEl;
-    if (!el || !this.waveformState || !this.selectedSegmentId) return null;
-    const selectedSeg = this.segments.find((s) => s.id === this.selectedSegmentId);
-    if (!selectedSeg) return null;
+    if (!el || !this.waveformState) return null;
 
     const rect = el.getBoundingClientRect();
     const y = clientY - rect.top;
     const duration = this.waveformState.duration || 1;
     const startTime = this.waveformState.startTime || 0;
     const height = this.waveformCalculatedHeight;
+    const hitRadius = 10;
 
-    const yStart = ((selectedSeg.start - startTime) / duration) * height;
-    const yEnd = ((selectedSeg.end - startTime) / duration) * height;
+    // 1. If clientX is provided, check if the pointer is within a specific speaker's pillar
+    if (clientX !== null && clientX !== undefined) {
+      const x = clientX - rect.left;
+      const speakers = projectState.activeProject?.speakers || [
+        { id: 1, name: 'Speaker 1', initials: 'S1' },
+      ];
+      const pillarLayout = getWaveformPillarLayout(rect.width, speakers);
+      const targetPillar = pillarLayout.pillars?.find(
+        (p) => x >= p.left - 2 && x <= p.right + 2,
+      );
 
-    const hitRadius = 9;
-    if (Math.abs(y - yStart) <= hitRadius) {
-      return 'start';
+      if (targetPillar) {
+        // Look through segments of this speaker in this pillar
+        const pillarSegs = (this.segments || []).filter(
+          (s) => (Number(s.speakerId) || 1) === targetPillar.speakerId,
+        );
+
+        // Check if cursor is near start or end handle of any segment in this pillar
+        for (const seg of pillarSegs) {
+          const yStart = (((seg.start ?? 0) - startTime) / duration) * height;
+          const yEnd = (((seg.end ?? 0) - startTime) / duration) * height;
+
+          if (Math.abs(y - yStart) <= hitRadius) {
+            return { handle: 'start', segmentId: seg.id };
+          }
+          if (Math.abs(y - yEnd) <= hitRadius) {
+            return { handle: 'end', segmentId: seg.id };
+          }
+        }
+      }
     }
-    if (Math.abs(y - yEnd) <= hitRadius) {
-      return 'end';
+
+    // 2. Fallback: check selected segment handles (works anywhere across waveform width for selected segment)
+    if (this.selectedSegmentId) {
+      const selectedSeg = this.segments.find((s) => s.id === this.selectedSegmentId);
+      if (selectedSeg) {
+        const yStart = (((selectedSeg.start ?? 0) - startTime) / duration) * height;
+        const yEnd = (((selectedSeg.end ?? 0) - startTime) / duration) * height;
+
+        if (Math.abs(y - yStart) <= hitRadius) {
+          return { handle: 'start', segmentId: selectedSeg.id };
+        }
+        if (Math.abs(y - yEnd) <= hitRadius) {
+          return { handle: 'end', segmentId: selectedSeg.id };
+        }
+      }
     }
+
     return null;
   }
 
@@ -1333,22 +1612,35 @@ class TranscriptState {
     if (e.button === 2) return;
     this.closeContextMenu();
     if (!this.waveformWrapEl || !this.waveformState) return;
-    const handle = this.getHandleAtPosition(e.clientY);
-    if (handle) {
+
+    const hit = this.getHandleAtPosition(e.clientY, e.clientX);
+    if (hit) {
+      const handle = hit.handle;
+      const targetSegId = hit.segmentId;
+
+      // Automatically select the segment whose handle was grabbed
+      if (targetSegId && targetSegId !== this.selectedSegmentId) {
+        this.selectSegment(targetSegId, false);
+      }
+
       this.activeDragHandle = handle;
+      this.hoveredSegmentId = targetSegId;
       this.wasDraggingHandle = true;
+      this.preDragSegmentsSnapshot = JSON.parse(JSON.stringify(this.segments));
+
       const selectedSeg = this.segments.find(
-        (s) => s.id === this.selectedSegmentId,
+        (s) => s.id === (targetSegId || this.selectedSegmentId),
       );
       const currentTime = selectedSeg
         ? handle === 'start'
           ? selectedSeg.start ?? 0
           : selectedSeg.end ?? 0
         : 0;
+
       this.dragMagnifier = {
         active: true,
         handle,
-        segmentId: this.selectedSegmentId,
+        segmentId: targetSegId || this.selectedSegmentId,
         time: currentTime,
         clientY: e.clientY,
         clientX: e.clientX,
@@ -1371,7 +1663,7 @@ class TranscriptState {
       }
 
       this.boundaryDragState = {
-        segmentId: this.selectedSegmentId,
+        segmentId: targetSegId || this.selectedSegmentId,
         handle,
         initialStart: selectedSeg?.start ?? 0,
         initialEnd: selectedSeg?.end ?? 0,
@@ -1400,6 +1692,7 @@ class TranscriptState {
     if (!el || !this.waveformState) return;
     const rect = el.getBoundingClientRect();
     const y = e.clientY - rect.top;
+    const x = e.clientX - rect.left;
     this.waveformHoverY = Math.max(0, Math.min(rect.height, y));
     const ratio = this.waveformHoverY / Math.max(1, rect.height);
     const duration = this.waveformState.duration || 1;
@@ -1428,15 +1721,41 @@ class TranscriptState {
       return;
     }
 
-    const handle = this.getHandleAtPosition(e.clientY);
+    // Detect handles under pointer (checks speaker pillar under mouse first)
+    const hit = this.getHandleAtPosition(e.clientY, e.clientX);
+    const handle = hit ? hit.handle : null;
+    this.hoveredSegmentId = hit ? hit.segmentId : null;
+
     if (handle !== this.hoveredDragHandle) {
       this.hoveredDragHandle = handle;
       el.style.cursor = handle ? 'ns-resize' : 'crosshair';
     }
 
-    const hoveredSeg = this.segments.find(
-      (s) => time >= (s.start ?? 0) && time <= (s.end ?? 0),
+    // Determine hovered segment:
+    // If mouse is inside a speaker pillar, hover that speaker's segment!
+    const speakers = projectState.activeProject?.speakers || [
+      { id: 1, name: 'Speaker 1', initials: 'S1' },
+    ];
+    const pillarLayout = getWaveformPillarLayout(rect.width, speakers);
+    const targetPillar = pillarLayout.pillars?.find(
+      (p) => x >= p.left && x <= p.right,
     );
+
+    let hoveredSeg = null;
+    if (targetPillar) {
+      hoveredSeg = this.segments.find(
+        (s) =>
+          (Number(s.speakerId) || 1) === targetPillar.speakerId &&
+          time >= (s.start ?? 0) &&
+          time <= (s.end ?? 0),
+      );
+    }
+    if (!hoveredSeg) {
+      // If hovering waveform or ruler, hover selected segment or any segment overlapping time
+      hoveredSeg = this.segments.find(
+        (s) => time >= (s.start ?? 0) && time <= (s.end ?? 0),
+      );
+    }
     this.activeHoverSegmentId = hoveredSeg ? hoveredSeg.id : null;
 
     requestAnimationFrame(() => this.drawVerticalWaveform());
@@ -1453,6 +1772,7 @@ class TranscriptState {
         }
       } catch (_) {}
       this.activeDragHandle = null;
+      this.hoveredSegmentId = null;
       this.boundaryDragState = null;
       this.dragMagnifier = {
         active: false,
@@ -1467,6 +1787,16 @@ class TranscriptState {
       const selectedSeg = this.segments.find((s) => s.id === this.selectedSegmentId);
       if (selectedSeg) {
         resolveSameSpeakerOverlaps(this.segments, getSegmentSpeakerId(selectedSeg));
+      }
+
+      if (this.preDragSegmentsSnapshot) {
+        const hasChanged =
+          JSON.stringify(this.preDragSegmentsSnapshot) !==
+          JSON.stringify(this.segments);
+        if (hasChanged) {
+          this.pushUndo('Move boundary', this.preDragSegmentsSnapshot);
+        }
+        this.preDragSegmentsSnapshot = null;
       }
 
       if (this.metrics) {
@@ -1496,6 +1826,7 @@ class TranscriptState {
   handleWaveformMouseLeave() {
     this.waveformHoverTime = null;
     this.hoveredDragHandle = null;
+    this.hoveredSegmentId = null;
     this.activeHoverSegmentId = null;
     requestAnimationFrame(() => this.drawVerticalWaveform());
   }
@@ -1510,13 +1841,36 @@ class TranscriptState {
     if (!this.waveformWrapEl || !this.waveformState || !audioEl) return;
     const rect = this.waveformWrapEl.getBoundingClientRect();
     const y = e.clientY - rect.top;
+    const x = e.clientX - rect.left;
     const ratio = Math.max(0, Math.min(1, y / Math.max(1, rect.height)));
     const time =
       (this.waveformState.startTime ?? 0) + ratio * (this.waveformState.duration ?? 0);
 
-    const clickedSeg = this.segments.find(
-      (s) => time >= (s.start ?? 0) && time <= (s.end ?? 0),
+    const speakers = projectState.activeProject?.speakers || [
+      { id: 1, name: 'Speaker 1', initials: 'S1' },
+    ];
+    const pillarLayout = getWaveformPillarLayout(rect.width, speakers);
+    const targetPillar = pillarLayout.pillars?.find(
+      (p) => x >= p.left && x <= p.right,
     );
+
+    let clickedSeg = null;
+    if (targetPillar) {
+      // User clicked directly in a speaker's pillar
+      clickedSeg = this.segments.find(
+        (s) =>
+          (Number(s.speakerId) || 1) === targetPillar.speakerId &&
+          time >= (s.start ?? 0) &&
+          time <= (s.end ?? 0),
+      );
+    }
+
+    if (!clickedSeg) {
+      clickedSeg = this.segments.find(
+        (s) => time >= (s.start ?? 0) && time <= (s.end ?? 0),
+      );
+    }
+
     if (clickedSeg) {
       this.selectSegment(clickedSeg.id, false);
     }
@@ -1535,6 +1889,7 @@ class TranscriptState {
 
     const rect = this.waveformWrapEl.getBoundingClientRect();
     const y = e.clientY - rect.top;
+    const x = e.clientX - rect.left;
     const ratio = Math.max(0, Math.min(1, y / Math.max(1, rect.height)));
     const time = Number(
       (
@@ -1543,9 +1898,29 @@ class TranscriptState {
       ).toFixed(2),
     );
 
-    const targetSeg = this.segments.find(
-      (s) => time >= (s.start ?? 0) && time <= (s.end ?? 0),
+    const speakers = projectState.activeProject?.speakers || [
+      { id: 1, name: 'Speaker 1', initials: 'S1' },
+    ];
+    const pillarLayout = getWaveformPillarLayout(rect.width, speakers);
+    const targetPillar = pillarLayout.pillars?.find(
+      (p) => x >= p.left && x <= p.right,
     );
+
+    let targetSeg = null;
+    if (targetPillar) {
+      // Right-click inside a specific speaker's pillar selects/targets that speaker's segment
+      targetSeg = this.segments.find(
+        (s) =>
+          (Number(s.speakerId) || 1) === targetPillar.speakerId &&
+          time >= (s.start ?? 0) &&
+          time <= (s.end ?? 0),
+      );
+    }
+    if (!targetSeg) {
+      targetSeg = this.segments.find(
+        (s) => time >= (s.start ?? 0) && time <= (s.end ?? 0),
+      );
+    }
     const nextSeg = targetSeg ? this.getNextSegment(targetSeg) : null;
 
     const menuW = 280;
@@ -1562,7 +1937,7 @@ class TranscriptState {
     const spaceAbove = e.clientY;
     const openAbove = spaceBelow < estimatedH + 15 && spaceAbove > spaceBelow;
 
-    const x = Math.min(window.innerWidth - menuW - 10, Math.max(10, e.clientX));
+    const xPos = Math.min(window.innerWidth - menuW - 10, Math.max(10, e.clientX));
     const yPos = openAbove
       ? Math.max(10, e.clientY - estimatedH - 4)
       : Math.min(window.innerHeight - estimatedH - 10, e.clientY + 2);
@@ -1747,6 +2122,9 @@ class TranscriptState {
     appState.downloadProgress = null;
 
     if (Array.isArray(payload?.segments) && payload.segments.length > 0) {
+      if (this.segments.length > 0) {
+        this.pushUndo('Speaker Diarization');
+      }
       const spkIdMap = new Map();
       const projectSpeakers = projectState.activeProject?.speakers || [];
       const defaultSpk = projectSpeakers[0] || { id: 1, name: 'Speaker 1', initials: 'S1' };
@@ -1851,6 +2229,10 @@ class TranscriptState {
       ...s,
       id: idx + 1,
     }));
+
+    if (this.segments.length > 0 || combinedSegments.length > 0) {
+      this.pushUndo('Auto-segmentation');
+    }
 
     this.segments = combinedSegments;
     this.preservedSegments = [];
@@ -2989,9 +3371,10 @@ class TranscriptState {
       this.workflowStep = 'segment';
     }
 
-    // Reset transcription metrics from any previous project
+    // Reset transcription metrics and undo history from any previous project
     this.metrics = null;
     this.asrOutputTarget = 'main';
+    this.clearUndoHistory();
 
     // 4. Trigger vertical waveform redraw
     requestAnimationFrame(() => this.drawVerticalWaveform());
@@ -3009,6 +3392,7 @@ class TranscriptState {
     this.asrOutputTarget = 'main';
     this.workflowStep = 'segment';
     this.metrics = null;
+    this.clearUndoHistory();
     if (audioState.fileAudioUrl) {
       URL.revokeObjectURL(audioState.fileAudioUrl);
       audioState.fileAudioUrl = null;

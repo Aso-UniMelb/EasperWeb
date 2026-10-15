@@ -480,3 +480,149 @@ export function calculateSegmentSplit(seg, splitTime = null, minDuration = 0.05)
   return { seg1, seg2, splitPoint };
 }
 
+/**
+ * Calculates the horizontal layout of the waveform timeline and speaker pillars.
+ * @param {number} totalWidth
+ * @param {Array} [speakers]
+ * @returns {Object}
+ */
+export function getWaveformPillarLayout(totalWidth, speakers = []) {
+  const activeSpeakers =
+    Array.isArray(speakers) && speakers.length > 0
+      ? speakers
+      : [{ id: 1, name: 'Speaker 1', initials: 'S1' }];
+
+  const numSpeakers = Math.max(1, Math.min(5, activeSpeakers.length));
+  const rulerWidth = 38;
+
+  // Pillar width per speaker (between 18px and 26px)
+  const pillarWidth = Math.max(18, Math.min(26, Math.floor(92 / numSpeakers)));
+  const totalPillarsWidth = numSpeakers * pillarWidth;
+
+  // Waveform track occupies the center between ruler and speaker pillars
+  const waveLeft = rulerWidth;
+  const waveWidth = Math.max(50, totalWidth - rulerWidth - totalPillarsWidth);
+  const waveRight = waveLeft + waveWidth;
+
+  const pillars = activeSpeakers.map((spk, idx) => {
+    const left = waveRight + idx * pillarWidth;
+    return {
+      index: idx,
+      speakerId: Number(spk.id) || idx + 1,
+      speaker: spk,
+      left,
+      width: pillarWidth,
+      right: left + pillarWidth,
+    };
+  });
+
+  return {
+    totalWidth,
+    rulerWidth,
+    waveLeft,
+    waveWidth,
+    waveRight,
+    pillarWidth,
+    totalPillarsWidth,
+    pillars,
+    speakers: activeSpeakers,
+  };
+}
+
+/**
+ * Calculates the ideal width in pixels for the waveform sidebar column based on speaker count.
+ * @param {Array} [speakers]
+ * @returns {number}
+ */
+export function calculateSidebarColWidth(speakers = []) {
+  const num =
+    Array.isArray(speakers) && speakers.length > 0
+      ? Math.max(1, Math.min(5, speakers.length))
+      : 1;
+  const pillarW = Math.max(18, Math.min(26, Math.floor(92 / num)));
+  const rulerW = 38;
+  const targetWaveW = num === 1 ? 82 : num === 2 ? 76 : num === 3 ? 70 : 66;
+  return rulerW + targetWaveW + num * pillarW;
+}
+
+/**
+ * Sorts segments chronologically by start time, breaking ties deterministically by speaker ID.
+ * @param {Array} segments
+ * @returns {Array}
+ */
+export function sortSegmentsChronologically(segments) {
+  if (!Array.isArray(segments)) return [];
+  return [...segments].sort(
+    (a, b) =>
+      (a.start ?? 0) - (b.start ?? 0) ||
+      (Number(a.speakerId || 1) - Number(b.speakerId || 1)) ||
+      String(a.id || '').localeCompare(String(b.id || '')),
+  );
+}
+
+/**
+ * Calculates collision-free vertical staggered positions for segment cards (Solution 2 Waterfall).
+ * When overlapping segments start at the same timestamp or collide vertically,
+ * subsequent cards are pushed down so they sit directly below the preceding card,
+ * with a connector line pointing back to their true start timestamp on the timeline.
+ *
+ * @param {Array} segments
+ * @param {Object} options
+ * @param {number} [options.startTime=0]
+ * @param {number} [options.duration=1]
+ * @param {number} [options.totalHeight=1000]
+ * @param {Object} [options.cardHeights={}] Measured card heights map (segmentId -> px)
+ * @param {number} [options.defaultCardHeight=48] Fallback height before DOM measurement
+ * @param {number} [options.gap=6] Gap between stacked cards
+ * @returns {Object} Map of segmentId -> { top, trueTop, isPushed, offset, cardH }
+ */
+export function calculateStaggeredSegmentPositions(
+  segments = [],
+  {
+    startTime = 0,
+    duration = 1,
+    totalHeight = 1000,
+    cardHeights = {},
+    defaultCardHeight = 48,
+    gap = 6,
+  } = {},
+) {
+  const result = {};
+  if (!Array.isArray(segments) || segments.length === 0) return result;
+
+  const validDuration = Math.max(0.001, duration);
+  const sorted = sortSegmentsChronologically(segments);
+
+  let prevBottom = -Infinity;
+
+  for (let i = 0; i < sorted.length; i++) {
+    const seg = sorted[i];
+    const segStart = seg.start ?? 0;
+    const ratio = (segStart - startTime) / validDuration;
+    const trueTop = Math.max(0, Math.round(ratio * totalHeight));
+
+    const cardH = Math.max(
+      28,
+      Number(cardHeights?.[seg.id]) || defaultCardHeight,
+    );
+
+    // If trueTop collides with previous card's bottom, push it down
+    const top = Math.max(trueTop, prevBottom + gap);
+    const isPushed = top > trueTop + 1;
+    const offset = top - trueTop; // Pixels displaced from true timeline position
+
+    result[seg.id] = {
+      top,
+      trueTop,
+      isPushed,
+      offset,
+      cardH,
+    };
+
+    prevBottom = top + cardH;
+  }
+
+  return result;
+}
+
+

@@ -13,7 +13,11 @@ import { audioState } from '../state/audioState.svelte.js';
 import { appState } from '../state/appState.svelte.js';
 import { projectState } from '../state/projectState.svelte.js';
 import { formatTimeSec, formatTimeSec2 } from '../utils/formatters.js';
-import { getSpeakerColor } from '../utils/speakers.js';
+import {
+  getSpeakerColor,
+  getWaveformPillarLayout,
+  getSpeakerInitials,
+} from '../utils/speakers.js';
 
 export function getTileCanvas(state, index) {
   if (!state.waveformWrapEl) return null;
@@ -75,9 +79,13 @@ export function drawTile(state, tileIndex) {
   const { peaks, startTime = 0, duration = 1 } = state.waveformState;
   const endTime = startTime + duration;
 
-  const rulerWidth = width < 110 ? (width < 90 ? 36 : 42) : 54;
-  const trackLeft = rulerWidth;
-  const trackWidth = width - trackLeft - (width < 110 ? 3 : 6);
+  const speakers = projectState.activeProject?.speakers || [
+    { id: 1, name: 'Speaker 1', initials: 'S1' },
+  ];
+  const pillarLayout = getWaveformPillarLayout(width, speakers);
+  const rulerWidth = pillarLayout.rulerWidth;
+  const trackLeft = pillarLayout.waveLeft;
+  const trackWidth = pillarLayout.waveWidth;
   const centerX = trackLeft + trackWidth / 2;
   const maxAmpWidth = (trackWidth / 2) * 0.92;
 
@@ -89,6 +97,14 @@ export function drawTile(state, tileIndex) {
   ctx.beginPath();
   ctx.moveTo(rulerWidth, tileTop);
   ctx.lineTo(rulerWidth, tileBottom);
+  ctx.stroke();
+
+  // Waveform track boundary divider line between waveform and first speaker pillar
+  ctx.strokeStyle = '#1e293b';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(pillarLayout.waveRight, tileTop);
+  ctx.lineTo(pillarLayout.waveRight, tileBottom);
   ctx.stroke();
 
   // Ruler timestamps
@@ -183,70 +199,7 @@ export function drawTile(state, tileIndex) {
     }
   }
 
-  // Speech regions & segments on waveform track
-  const regionsToDraw =
-    state.segments.length > 0
-      ? state.segments
-      : Array.isArray(state.vadSpeechRegions)
-        ? state.vadSpeechRegions
-        : [];
-
-  for (const r of regionsToDraw) {
-    const segStart = r.start ?? 0;
-    const segEnd = r.end ?? segStart + 0.5;
-    const y1 = Math.max(0, ((segStart - startTime) / duration) * totalHeight);
-    const y2 = Math.min(totalHeight, ((segEnd - startTime) / duration) * totalHeight);
-    if (y2 < tileTop || y1 > tileBottom) continue;
-    const h = Math.max(2, y2 - y1);
-
-    // Resolve speaker color and initials
-    const spkId = r.speakerId || 1;
-    const spkColor = getSpeakerColor(spkId);
-    const isConfiguredSegment = Boolean(r.id && state.segments.length > 0);
-
-    // Use semi-transparent background so overlaps and waveform amplitudes remain visible underneath
-    ctx.fillStyle = isConfiguredSegment ? (spkColor.waveformBg || 'rgba(2, 132, 199, 0.22)') : 'rgba(16, 185, 129, 0.16)';
-    ctx.fillRect(trackLeft, y1, trackWidth, h);
-
-    // Left boundary vertical bar in speaker color
-    ctx.fillStyle = isConfiguredSegment ? spkColor.primary : '#10b981';
-    ctx.fillRect(trackLeft, y1, 3.5, h);
-
-  }
-
-  // Hover / Playing segments
-  if (Array.isArray(state.segments) && state.segments.length > 0) {
-    for (let idx = 0; idx < state.segments.length; idx++) {
-      const seg = state.segments[idx];
-      const segStart = seg.start ?? 0;
-      const segEnd = seg.end ?? segStart + 1;
-      const y1 = Math.max(0, ((segStart - startTime) / duration) * totalHeight);
-      const y2 = Math.min(totalHeight, ((segEnd - startTime) / duration) * totalHeight);
-      if (y2 < tileTop || y1 > tileBottom) continue;
-      const h = Math.max(3, y2 - y1);
-
-      const isHovered = state.activeHoverSegmentId === seg.id;
-      const isPlaying = state.activePlayingSegmentId === seg.id;
-
-      if (isHovered || isPlaying) {
-        ctx.fillStyle = isPlaying
-          ? 'rgba(2, 132, 199, 0.35)'
-          : 'rgba(99, 102, 241, 0.22)';
-        ctx.fillRect(trackLeft, y1, trackWidth, h);
-
-        ctx.strokeStyle = isPlaying ? '#0284c7' : '#818cf8';
-        ctx.lineWidth = isPlaying ? 2.5 : 1.5;
-        ctx.strokeRect(trackLeft, y1, trackWidth, h);
-
-        if (isPlaying) {
-          ctx.fillStyle = '#0284c7';
-          ctx.fillRect(width - 4, y1, 4, h);
-        }
-      }
-    }
-  }
-
-  // Selected segment
+  // Ambient highlight on the waveform track for currently selected segment
   if (state.selectedSegmentId && Array.isArray(state.segments)) {
     const selectedSeg = state.segments.find((s) => s.id === state.selectedSegmentId);
     if (selectedSeg) {
@@ -254,21 +207,144 @@ export function drawTile(state, tileIndex) {
       const segEnd = selectedSeg.end ?? segStart + 0.5;
       const y1 = Math.max(0, ((segStart - startTime) / duration) * totalHeight);
       const y2 = Math.min(totalHeight, ((segEnd - startTime) / duration) * totalHeight);
-
       if (y2 >= tileTop - 20 && y1 <= tileBottom + 20) {
-        const h = Math.max(2, y2 - y1);
-
-        ctx.fillStyle = 'rgba(56, 189, 248, 0.22)';
+        const h = Math.max(3, y2 - y1);
+        const spkColor = getSpeakerColor(selectedSeg.speakerId || 1);
+        ctx.fillStyle = spkColor.waveformBg || 'rgba(56, 189, 248, 0.16)';
         ctx.fillRect(trackLeft, y1, trackWidth, h);
-
-        ctx.strokeStyle = '#38bdf8';
-        ctx.lineWidth = 1.5;
+        ctx.strokeStyle = 'rgba(56, 189, 248, 0.4)';
+        ctx.lineWidth = 1;
         ctx.strokeRect(trackLeft, y1, trackWidth, h);
-
-        ctx.fillStyle = '#0284c7';
-        ctx.fillRect(trackLeft, y1, 4, h);
-
       }
+    }
+  }
+
+  // Draw Speaker Pillars (one column per project speaker to the right of the waveform)
+  if (pillarLayout && Array.isArray(pillarLayout.pillars)) {
+    for (const p of pillarLayout.pillars) {
+      // Background for speaker pillar
+      ctx.fillStyle = '#080c14';
+      ctx.fillRect(p.left, tileTop, p.width, tileHeight);
+
+      // Vertical separator line on the right edge of this pillar
+      ctx.strokeStyle = '#1e293b';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(p.right, tileTop);
+      ctx.lineTo(p.right, tileBottom);
+      ctx.stroke();
+
+      // Draw all segments belonging to this speaker in this pillar
+      const pillarSegs = (state.segments || []).filter(
+        (s) => (Number(s.speakerId) || 1) === p.speakerId,
+      );
+
+      for (const seg of pillarSegs) {
+        const segStart = seg.start ?? 0;
+        const segEnd = seg.end ?? segStart + 0.5;
+        const y1 = Math.max(0, ((segStart - startTime) / duration) * totalHeight);
+        const y2 = Math.min(totalHeight, ((segEnd - startTime) / duration) * totalHeight);
+        if (y2 < tileTop - 20 || y1 > tileBottom + 20) continue;
+        const h = Math.max(4, y2 - y1);
+
+        const isSelected = state.selectedSegmentId === seg.id;
+        const isHovered = state.activeHoverSegmentId === seg.id;
+        const isStartActive =
+          (state.activeDragHandle === 'start' && state.selectedSegmentId === seg.id) ||
+          (state.hoveredDragHandle === 'start' && state.hoveredSegmentId === seg.id);
+        const isEndActive =
+          (state.activeDragHandle === 'end' && state.selectedSegmentId === seg.id) ||
+          (state.hoveredDragHandle === 'end' && state.hoveredSegmentId === seg.id);
+
+        const spkCol = getSpeakerColor(p.speakerId);
+
+        // Segment block in pillar
+        ctx.fillStyle = isSelected
+          ? (spkCol.darkBg || 'rgba(2, 132, 199, 0.65)')
+          : isHovered
+            ? (spkCol.waveformBg || 'rgba(2, 132, 199, 0.42)')
+            : (spkCol.waveformBg || 'rgba(2, 132, 199, 0.28)');
+        ctx.fillRect(p.left + 1.5, y1, p.width - 3, h);
+
+        // Vertical borders (left & right) always retain speaker's identity color
+        ctx.strokeStyle = isHovered ? '#ffffff' : spkCol.primary;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        // Left border
+        ctx.moveTo(p.left + 1.5, y1);
+        ctx.lineTo(p.left + 1.5, y1 + h);
+        // Right border
+        ctx.moveTo(p.left + p.width - 1.5, y1);
+        ctx.lineTo(p.left + p.width - 1.5, y1 + h);
+        ctx.stroke();
+
+        // Horizontal borders (top & bottom): only change border color of top and bottom on selection
+        ctx.strokeStyle = isSelected ? '#38bdf8' : isHovered ? '#ffffff' : spkCol.primary;
+        ctx.lineWidth = isSelected ? 2 : 1;
+        ctx.beginPath();
+        // Top border
+        ctx.moveTo(p.left + 1, y1);
+        ctx.lineTo(p.left + p.width - 1, y1);
+        // Bottom border
+        ctx.moveTo(p.left + 1, y1 + h);
+        ctx.lineTo(p.left + p.width - 1, y1 + h);
+        ctx.stroke();
+
+        // Start boundary handle in this speaker's pillar
+        ctx.fillStyle = isStartActive ? '#ffffff' : isSelected ? '#38bdf8' : spkCol.primary;
+        ctx.fillRect(p.left, y1 - 2, p.width, 4);
+        if (isSelected || isStartActive) {
+          ctx.fillStyle = '#ffffff';
+          ctx.fillRect(p.left + p.width / 2 - 3, y1 - 3, 6, 2);
+        }
+
+        // End boundary handle in this speaker's pillar
+        const yBottom = Math.max(y2, y1 + h);
+        ctx.fillStyle = isEndActive ? '#ffffff' : isSelected ? '#38bdf8' : spkCol.primary;
+        ctx.fillRect(p.left, yBottom - 2, p.width, 4);
+        if (isSelected || isEndActive) {
+          ctx.fillStyle = '#ffffff';
+          ctx.fillRect(p.left + p.width / 2 - 3, yBottom + 1, 6, 2);
+        }
+
+        // Initials / duration inside pillar
+        if (h >= 24) {
+          ctx.font = 'bold 8px ui-monospace, sans-serif';
+          ctx.fillStyle = isSelected ? '#ffffff' : spkCol.primary;
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(
+            getSpeakerInitials(p.speaker, p.speakerId),
+            p.left + p.width / 2,
+            y1 + 10,
+          );
+          if (h >= 45) {
+            ctx.font = '7px ui-monospace, sans-serif';
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
+            ctx.fillText(
+              Number(segEnd - segStart).toFixed(1) + 's',
+              p.left + p.width / 2,
+              y1 + 22,
+            );
+          }
+        }
+      }
+    }
+  }
+
+  // Draw VAD regions if no segments exist yet
+  if ((!state.segments || state.segments.length === 0) && Array.isArray(state.vadSpeechRegions)) {
+    for (const r of state.vadSpeechRegions) {
+      const segStart = r.start ?? 0;
+      const segEnd = r.end ?? segStart + 0.5;
+      const y1 = Math.max(0, ((segStart - startTime) / duration) * totalHeight);
+      const y2 = Math.min(totalHeight, ((segEnd - startTime) / duration) * totalHeight);
+      if (y2 < tileTop || y1 > tileBottom) continue;
+      const h = Math.max(2, y2 - y1);
+      ctx.fillStyle = 'rgba(16, 185, 129, 0.16)';
+      ctx.fillRect(trackLeft, y1, trackWidth, h);
+      ctx.fillStyle = '#10b981';
+      ctx.fillRect(trackLeft, y1, 3.5, h);
     }
   }
 
@@ -491,8 +567,24 @@ export function drawTile(state, tileIndex) {
       const isEndActive =
         state.activeDragHandle === 'end' || state.hoveredDragHandle === 'end';
 
+      const selectedPillar = pillarLayout.pillars?.find(
+        (p) => p.speakerId === (Number(selectedSeg.speakerId) || 1),
+      );
+      const lineRight = selectedPillar ? selectedPillar.right : width;
+
       // 1. Start boundary line and start timing pill/badge
       if (y1 >= tileTop - 20 && y1 <= tileBottom + 20) {
+        // Connector line across waveform to the speaker's pillar
+        ctx.save();
+        ctx.strokeStyle = isStartActive ? '#38bdf8' : 'rgba(56, 189, 248, 0.45)';
+        ctx.lineWidth = isStartActive ? 1.5 : 1;
+        ctx.setLineDash([3, 2]);
+        ctx.beginPath();
+        ctx.moveTo(rulerWidth, y1);
+        ctx.lineTo(lineRight, y1);
+        ctx.stroke();
+        ctx.restore();
+
         // Timestamp badge in ruler sidebar for start boundary
         const startBadgeText = formatTimeSec2(segStart);
         ctx.font = 'bold 9px ui-monospace, SFMono-Regular, Menlo, monospace';
@@ -526,6 +618,17 @@ export function drawTile(state, tileIndex) {
 
       // 2. End boundary line and end timing pill/badge
       if (y2 >= tileTop - 20 && y2 <= tileBottom + 20) {
+        // Connector line across waveform to the speaker's pillar
+        ctx.save();
+        ctx.strokeStyle = isEndActive ? '#38bdf8' : 'rgba(56, 189, 248, 0.45)';
+        ctx.lineWidth = isEndActive ? 1.5 : 1;
+        ctx.setLineDash([3, 2]);
+        ctx.beginPath();
+        ctx.moveTo(rulerWidth, y2);
+        ctx.lineTo(lineRight, y2);
+        ctx.stroke();
+        ctx.restore();
+
         // Timestamp badge in ruler sidebar for end boundary
         const endBadgeText = formatTimeSec2(segEnd);
         ctx.font = 'bold 9px ui-monospace, SFMono-Regular, Menlo, monospace';
