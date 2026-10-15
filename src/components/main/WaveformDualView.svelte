@@ -687,7 +687,11 @@
       <!-- Multi-Model Transcription Buttons for Code-Switching -->
       <div class="context-menu-section-label">
         <i class="fa-solid fa-wand-magic-sparkles"></i>
-        <span>Transcribe Segment</span>
+        <span
+          >Transcribe Segment{transcriptState.effectiveAsrOutputTarget !== 'main'
+            ? ` (${transcriptState.getAsrOutputTargetName()})`
+            : ''}</span
+        >
       </div>
 
       {#if modelState.models && modelState.models.length > 0}

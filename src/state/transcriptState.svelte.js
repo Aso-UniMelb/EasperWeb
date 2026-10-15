@@ -10,7 +10,14 @@ import {
   extractWaveformPeaks,
 } from '../audio.js';
 import { exportToEaf } from '../elan.js';
-import { buildColumns, columnValues, mergeSubTexts } from '../utils/subTiers.js';
+import {
+  buildColumns,
+  columnValues,
+  mergeSubTexts,
+  getSubText,
+  normalizeSubTiers,
+  SUB_TIER_TYPE_SENTENCE,
+} from '../utils/subTiers.js';
 import {
   cleanSpeechText,
   formatTimeSec,
@@ -129,13 +136,66 @@ class TranscriptState {
     }
   }
 
+  // ASR Output destination: 'main' | tierId (string)
+  asrOutputTarget = $state('main');
+
+  get effectiveAsrOutputTarget() {
+    if (!this.asrOutputTarget || this.asrOutputTarget === 'main') {
+      return 'main';
+    }
+    const subTiers = normalizeSubTiers(projectState.activeProject?.subTiers);
+    const valid = subTiers.find(
+      (t) =>
+        String(t.id) === String(this.asrOutputTarget) &&
+        t.type === SUB_TIER_TYPE_SENTENCE,
+    );
+    return valid ? String(valid.id) : 'main';
+  }
+
+  setAsrOutputTarget(target) {
+    this.asrOutputTarget = target ? String(target) : 'main';
+    if (
+      target &&
+      target !== 'main' &&
+      projectState.activeProject?.hiddenColumns?.includes(String(target))
+    ) {
+      const hidden = (projectState.activeProject.hiddenColumns || []).filter(
+        (k) => String(k) !== String(target),
+      );
+      if (projectState.activeProjectId) {
+        projectState.setColumnLayout(projectState.activeProjectId, {
+          hiddenColumns: hidden,
+        });
+      }
+    }
+  }
+
+  getAsrOutputTargetName(target = this.effectiveAsrOutputTarget) {
+    if (target === 'main') return 'Main Transcription';
+    const subTiers = normalizeSubTiers(projectState.activeProject?.subTiers);
+    const tier = subTiers.find((t) => String(t.id) === String(target));
+    return tier ? tier.name : 'Main Transcription';
+  }
+
   get emptySegmentsCount() {
     if (!Array.isArray(this.segments)) return 0;
+    const target = this.effectiveAsrOutputTarget;
+    if (target !== 'main') {
+      return this.segments.filter(
+        (s) => !getSubText(s, target) || getSubText(s, target).trim() === '',
+      ).length;
+    }
     return this.segments.filter((s) => !s.text || s.text.trim() === '').length;
   }
 
   get transcribedSegmentsCount() {
     if (!Array.isArray(this.segments)) return 0;
+    const target = this.effectiveAsrOutputTarget;
+    if (target !== 'main') {
+      return this.segments.filter(
+        (s) => getSubText(s, target) && getSubText(s, target).trim() !== '',
+      ).length;
+    }
     return this.segments.filter((s) => s.text && s.text.trim() !== '').length;
   }
 
@@ -899,7 +959,8 @@ class TranscriptState {
     const seg = this.segments.find((s) => s.id === segmentId);
     if (!seg) return;
     if (!seg.subTexts) seg.subTexts = {};
-    seg.subTexts[String(tierId)] = newText;
+    seg.subTexts = { ...seg.subTexts, [String(tierId)]: newText };
+    this.segments = [...this.segments];
     if (this.fullResult) {
       this.fullResult.segments = this.segments;
       if (this.fullResult.output) {
@@ -1605,15 +1666,22 @@ class TranscriptState {
 
     if (seg) {
       const cleanText = cleanSpeechText(payload.text);
-      seg.text = cleanText;
-      this.updateSegmentText(seg.id, cleanText);
+      const target = this.effectiveAsrOutputTarget;
+      if (target !== 'main') {
+        this.updateSegmentSubText(seg.id, target, cleanText);
+      } else {
+        seg.text = cleanText;
+        this.updateSegmentText(seg.id, cleanText);
+      }
       this.selectSegment(seg.id, false);
 
       const timeRange = `[${formatTimeSec(payload.start)} - ${formatTimeSec(payload.end)}]`;
+      const targetName = this.getAsrOutputTargetName(target);
+      const destLabel = target !== 'main' ? ` (${targetName})` : '';
       if (cleanText) {
-        appState.statusMessage = `Transcribed segment ${timeRange}: "${cleanText}"`;
+        appState.statusMessage = `Transcribed segment ${timeRange}${destLabel}: "${cleanText}"`;
       } else {
-        appState.statusMessage = `Segment ${timeRange} transcribed: no speech text detected.`;
+        appState.statusMessage = `Segment ${timeRange} transcribed${destLabel}: no speech text detected.`;
       }
     } else {
       appState.statusMessage = 'Segment transcribed successfully.';
@@ -1641,7 +1709,10 @@ class TranscriptState {
     const count = payload?.transcribedCount ?? 0;
     const total = payload?.totalSegments ?? count;
     const time = payload?.timeSec ? ` in ${payload.timeSec}s` : '';
-    appState.statusMessage = `Transcription complete! Transcribed ${count} of ${total} empty segments${time}.`;
+    const target = this.effectiveAsrOutputTarget;
+    const targetName = this.getAsrOutputTargetName(target);
+    const destLabel = target !== 'main' ? ` into "${targetName}"` : '';
+    appState.statusMessage = `Transcription complete! Transcribed ${count} of ${total} empty segments${destLabel}${time}.`;
     this.notifySegmentsChange();
   }
 
@@ -2460,10 +2531,22 @@ class TranscriptState {
       return;
     }
 
-    const emptySegments = this.segments.filter((s) => !s.text || s.text.trim() === '');
+    const target = this.effectiveAsrOutputTarget;
+    const targetName = this.getAsrOutputTargetName(target);
+
+    const emptySegments = this.segments.filter((s) => {
+      if (target !== 'main') {
+        const txt = getSubText(s, target);
+        return !txt || txt.trim() === '';
+      }
+      return !s.text || s.text.trim() === '';
+    });
+
     if (emptySegments.length === 0) {
       appState.statusMessage =
-        'All segments are already transcribed! (Edit or clear any segment text to re-transcribe it).';
+        target !== 'main'
+          ? `All segments are already transcribed in "${targetName}"! (Edit or clear any segment text to re-transcribe it).`
+          : 'All segments are already transcribed! (Edit or clear any segment text to re-transcribe it).';
       return;
     }
 
@@ -2476,7 +2559,8 @@ class TranscriptState {
     appState.downloadProgress = null;
 
     try {
-      appState.statusMessage = `Preparing ${emptySegments.length} empty segments for Whisper transcription...`;
+      const destSuffix = target !== 'main' ? ` into "${targetName}"` : '';
+      appState.statusMessage = `Preparing ${emptySegments.length} empty segments for Whisper transcription${destSuffix}...`;
 
       if (!audioState.cachedDecodedAudio || audioState.cachedDecodedAudio.target !== audioTarget) {
         const decoded = await processAudioFile(audioTarget);
@@ -2519,7 +2603,7 @@ class TranscriptState {
         }, 40);
       }
 
-      appState.statusMessage = `Initializing Whisper model & transcribing ${emptySegments.length} empty segments...`;
+      appState.statusMessage = `Initializing Whisper model & transcribing ${emptySegments.length} empty segments${destSuffix}...`;
 
       appState.worker.postMessage({
         type: 'transcribe_empty_segments',
@@ -2880,6 +2964,7 @@ class TranscriptState {
 
     // Reset transcription metrics from any previous project
     this.metrics = null;
+    this.asrOutputTarget = 'main';
 
     // 4. Trigger vertical waveform redraw
     requestAnimationFrame(() => this.drawVerticalWaveform());
@@ -2894,6 +2979,7 @@ class TranscriptState {
     this.currentTranscribingSegment = null;
     this.selectedSegmentId = null;
     this.activeSnippetPlayId = null;
+    this.asrOutputTarget = 'main';
     this.workflowStep = 'segment';
     this.metrics = null;
     if (audioState.fileAudioUrl) {

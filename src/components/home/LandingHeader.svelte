@@ -26,7 +26,7 @@
       </div>
       <div class="brand-text">
         <span class="brand-title">Easper</span>
-        <span class="brand-tag">Local-First Speech AI</span>
+        <span class="brand-tag">Smart and Private Transcription</span>
       </div>
     </a>
 

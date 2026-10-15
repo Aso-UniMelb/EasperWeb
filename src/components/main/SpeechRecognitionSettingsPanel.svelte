@@ -3,6 +3,11 @@
   import { modelState } from '../../state/modelState.svelte.js';
   import { transcriptState } from '../../state/transcriptState.svelte.js';
   import { audioState } from '../../state/audioState.svelte.js';
+  import { projectState } from '../../state/projectState.svelte.js';
+  import {
+    normalizeSubTiers,
+    SUB_TIER_TYPE_SENTENCE,
+  } from '../../utils/subTiers.js';
 
   let { onClose = () => {}, onWorkerReset } = $props();
 
@@ -18,6 +23,27 @@
 
   const selectedModel = $derived(
     modelState.models.find((m) => m.id === modelState.selectedModelId),
+  );
+
+  const sentenceSubTiers = $derived(
+    normalizeSubTiers(projectState.activeProject?.subTiers).filter(
+      (t) => t.type === SUB_TIER_TYPE_SENTENCE,
+    ),
+  );
+
+  const selectedTargetTier = $derived(
+    transcriptState.effectiveAsrOutputTarget !== 'main'
+      ? sentenceSubTiers.find(
+          (t) =>
+            String(t.id) === String(transcriptState.effectiveAsrOutputTarget),
+        )
+      : null,
+  );
+
+  const isTranscribing = $derived(
+    appState.isProcessing &&
+      (appState.activeAction === 'transcribe_empty' ||
+        appState.activeAction === 'transcribe'),
   );
 </script>
 
@@ -183,10 +209,61 @@
           </select>
         </div>
 
+        <!-- ASR Output Destination Selection -->
+        <div class="target-select-container">
+          <div class="field-label-row">
+            <label for="inline-asr-output-select" class="field-label"
+              >Output Destination</label
+            >
+            {#if selectedTargetTier}
+              <span
+                class="target-chip chip-subtier"
+                title="Output directed to Sub-tier #{selectedTargetTier.id} ({selectedTargetTier.name})"
+              >
+                <i class="fa-solid fa-layer-group"></i> #{selectedTargetTier.id}
+              </span>
+            {:else}
+              <span
+                class="target-chip chip-main"
+                title="Output directed to Main Transcription tier"
+              >
+                <i class="fa-solid fa-align-left"></i> Main
+              </span>
+            {/if}
+          </div>
+
+          <select
+            id="inline-asr-output-select"
+            class="target-select-input"
+            value={transcriptState.effectiveAsrOutputTarget}
+            onchange={(e) => transcriptState.setAsrOutputTarget(e.target.value)}
+            disabled={appState.isProcessing || modelState.isModelLoading}
+            title="Select where to put the output of ASR (Main transcription or sentence-level sub-tier)"
+          >
+            <option value="main">Main Transcription</option>
+            {#each sentenceSubTiers as tier (tier.id)}
+              <option value={String(tier.id)}>
+                {tier.name} (Sub-tier #{tier.id})
+              </option>
+            {/each}
+          </select>
+        </div>
+
         <!-- Action & Live Status -->
         <div class="action-container">
           <div class="status-box">
-            {#if !hasAudio}
+            {#if isTranscribing}
+              <span class="status-chip chip-info">
+                <i class="fa-solid fa-spinner fa-spin"></i>
+                <span
+                  >Transcribing{selectedTargetTier
+                    ? ` into ${selectedTargetTier.name}`
+                    : ''}...{emptyCount > 0
+                    ? ` (${emptyCount} left)`
+                    : ''}</span
+                >
+              </span>
+            {:else if !hasAudio}
               <span class="status-chip chip-warning">
                 <i class="fa-solid fa-triangle-exclamation"></i>
                 <span>Load audio file first</span>
@@ -199,7 +276,11 @@
             {:else if emptyCount === 0}
               <span class="status-chip chip-success">
                 <i class="fa-solid fa-circle-check"></i>
-                <span>All {totalCount} segments transcribed</span>
+                <span
+                  >All {totalCount} segments transcribed{selectedTargetTier
+                    ? ` in ${selectedTargetTier.name}`
+                    : ''}</span
+                >
               </span>
             {:else}
               <span class="status-chip chip-info">
@@ -208,54 +289,55 @@
                   ><strong>{emptyCount}</strong> of {totalCount} segment{emptyCount ===
                   1
                     ? ''
-                    : 's'} empty</span
+                    : 's'} empty{selectedTargetTier
+                    ? ` in ${selectedTargetTier.name}`
+                    : ''}</span
                 >
               </span>
             {/if}
           </div>
 
           <div class="actions-cluster">
-            {#if appState.isProcessing && appState.activeAction === 'transcribe_empty'}
+            {#if isTranscribing}
               <button
                 type="button"
-                class="btn-stop-action"
+                class="btn-run-action btn-stop-action"
                 onclick={() => transcriptState.stopTranscription(onWorkerReset)}
                 title="Stop transcription process"
               >
                 <i class="fa-solid fa-stop"></i>
                 <span>Stop</span>
               </button>
+            {:else}
+              <button
+                type="button"
+                class="btn-run-action"
+                onclick={() => transcriptState.handleTranscribeEmptySegments()}
+                disabled={appState.isProcessing ||
+                  emptyCount === 0 ||
+                  !hasAudio ||
+                  (modelState.modelSource === 'folder' &&
+                    modelState.localFileCount === 0)}
+                title={selectedTargetTier
+                  ? `Transcribe empty segments into ${selectedTargetTier.name} with selected Whisper model`
+                  : 'Transcribe empty segments with selected Whisper model'}
+              >
+                {#if emptyCount === 0 && totalCount > 0}
+                  <i class="fa-solid fa-circle-check"></i>
+                  <span>All Done</span>
+                {:else if totalCount === 0}
+                  <i class="fa-solid fa-triangle-exclamation"></i>
+                  <span>Segments Needed</span>
+                {:else}
+                  <i class="fa-solid fa-play"></i>
+                  <span
+                    >Transcribe {emptyCount} Segment{emptyCount === 1
+                      ? ''
+                      : 's'}</span
+                  >
+                {/if}
+              </button>
             {/if}
-
-            <button
-              type="button"
-              class="btn-run-action"
-              onclick={() => transcriptState.handleTranscribeEmptySegments()}
-              disabled={appState.isProcessing ||
-                emptyCount === 0 ||
-                !hasAudio ||
-                (modelState.modelSource === 'folder' &&
-                  modelState.localFileCount === 0)}
-              title="Transcribe empty segments with selected Whisper model"
-            >
-              {#if appState.isProcessing && appState.activeAction === 'transcribe_empty'}
-                <i class="fa-solid fa-spinner fa-spin"></i>
-                <span>Transcribing...</span>
-              {:else if emptyCount === 0 && totalCount > 0}
-                <i class="fa-solid fa-circle-check"></i>
-                <span>All Done</span>
-              {:else if totalCount === 0}
-                <i class="fa-solid fa-triangle-exclamation"></i>
-                <span>Segments Needed</span>
-              {:else}
-                <i class="fa-solid fa-play"></i>
-                <span
-                  >Transcribe {emptyCount} Segment{emptyCount === 1
-                    ? ''
-                    : 's'}</span
-                >
-              {/if}
-            </button>
 
             <button
               type="button"
@@ -525,6 +607,76 @@
     border-color: rgba(148, 163, 184, 0.3);
   }
 
+  .target-select-container {
+    min-width: 190px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .target-select-input {
+    height: 34px;
+    padding: 4px 10px;
+    font-size: 0.8125rem;
+    font-weight: 500;
+    border: 1px solid var(--border-color, #cbd5e1);
+    border-radius: 6px;
+    background: var(--bg-card, #ffffff);
+    color: var(--text-heading, #0f172a);
+    transition: border-color 0.14s ease;
+  }
+
+  .target-select-input:focus {
+    outline: none;
+    border-color: #7c3aed;
+    box-shadow: 0 0 0 2px rgba(124, 58, 237, 0.15);
+  }
+
+  :global([data-theme='dark']) .target-select-input {
+    background: #0f172a;
+    border-color: #475569;
+    color: #f1f5f9;
+  }
+
+  :global([data-theme='dark']) .target-select-input:focus {
+    border-color: #a78bfa;
+    box-shadow: 0 0 0 2px rgba(167, 139, 250, 0.2);
+  }
+
+  .target-chip {
+    font-size: 0.68rem;
+    font-weight: 700;
+    border-radius: 4px;
+    padding: 1px 6px;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .chip-main {
+    background: #eff6ff;
+    color: #2563eb;
+    border: 1px solid #bfdbfe;
+  }
+
+  :global([data-theme='dark']) .chip-main {
+    background: rgba(37, 99, 235, 0.2);
+    color: #93c5fd;
+    border-color: rgba(37, 99, 235, 0.35);
+  }
+
+  .chip-subtier {
+    background: #fdf2f8;
+    color: #db2777;
+    border: 1px solid #fbcfe8;
+  }
+
+  :global([data-theme='dark']) .chip-subtier {
+    background: rgba(219, 39, 119, 0.2);
+    color: #f472b6;
+    border-color: rgba(219, 39, 119, 0.35);
+  }
+
   .select-with-preload {
     display: flex;
     align-items: center;
@@ -738,7 +890,7 @@
     align-items: center;
     gap: 6px;
     height: 34px;
-    padding: 0 13px;
+    padding: 0 16px;
     font-size: 0.8125rem;
     font-weight: 700;
     color: #ffffff;
@@ -748,10 +900,15 @@
     cursor: pointer;
     transition: all 0.14s ease;
     box-shadow: 0 1px 3px rgba(239, 68, 68, 0.3);
+    white-space: nowrap;
   }
 
-  .btn-stop-action:hover {
+  .btn-stop-action:hover,
+  .btn-run-action.btn-stop-action:hover {
     background: #dc2626;
+    border-color: #b91c1c;
+    transform: translateY(-1px);
+    box-shadow: 0 2px 6px rgba(239, 68, 68, 0.42);
   }
 
   .panel-alert {
