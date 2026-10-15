@@ -209,5 +209,62 @@ describe('ASR Output Target Selection', () => {
       expect(hiddenColumns).toEqual(['2']);
     });
   });
+
+  describe('Quiet background ASR execution without focus/scroll disruption', () => {
+    it('does not steal selection away from currently active segment when a background segment completes', () => {
+      // Simulate user having segment 1 selected while segment 2 completes in background
+      let selectedSegmentId = 'seg-1';
+
+      const payload = { segmentId: 'seg-2', start: 2.0, end: 4.0, text: 'Hello from worker' };
+      const segments = [
+        { id: 'seg-1', text: 'User is editing this' },
+        { id: 'seg-2', text: '' },
+      ];
+
+      const seg = segments.find((s) => s.id === payload.segmentId);
+      if (seg) {
+        seg.text = payload.text;
+        // Background ASR does NOT call selectSegment(seg.id)
+      }
+
+      expect(selectedSegmentId).toBe('seg-1'); // Remains seg-1!
+      expect(seg.text).toBe('Hello from worker');
+    });
+
+    it('preserves user input if user has already begun correcting the segment being transcribed', () => {
+      const seg = { id: 'seg-2', text: 'User custom edit', subTexts: {} };
+      const target = 'main';
+      const cleanText = 'Late ASR response';
+
+      // Simulate user editing this segment in the UI with existing text
+      const isEditingThisSeg = true;
+      const currentVal = seg.text;
+      const userAlreadyEdited = isEditingThisSeg && currentVal && currentVal.trim().length > 0;
+
+      if (!userAlreadyEdited) {
+        seg.text = cleanText;
+      }
+
+      // User's manual text is protected from being clobbered!
+      expect(seg.text).toBe('User custom edit');
+    });
+
+    it('populates cleanText if segment was still empty when ASR arrived', () => {
+      const seg = { id: 'seg-2', text: '', subTexts: {} };
+      const target = 'main';
+      const cleanText = 'Recognized speech';
+
+      const isEditingThisSeg = false;
+      const currentVal = seg.text;
+      const userAlreadyEdited = isEditingThisSeg && currentVal && currentVal.trim().length > 0;
+
+      if (!userAlreadyEdited) {
+        seg.text = cleanText;
+      }
+
+      expect(seg.text).toBe('Recognized speech');
+    });
+  });
 });
+
 

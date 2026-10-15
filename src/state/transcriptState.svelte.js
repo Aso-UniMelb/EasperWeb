@@ -1665,15 +1665,40 @@ class TranscriptState {
     );
 
     if (seg) {
+      const activeEl = typeof document !== 'undefined' ? document.activeElement : null;
+      const isInput = activeEl && (activeEl.tagName === 'TEXTAREA' || activeEl.tagName === 'INPUT');
+      const selStart = isInput ? activeEl.selectionStart : null;
+      const selEnd = isInput ? activeEl.selectionEnd : null;
+
       const cleanText = cleanSpeechText(payload.text);
       const target = this.effectiveAsrOutputTarget;
-      if (target !== 'main') {
-        this.updateSegmentSubText(seg.id, target, cleanText);
-      } else {
-        seg.text = cleanText;
-        this.updateSegmentText(seg.id, cleanText);
+
+      // Check if user is currently actively editing this exact segment in the destination tier
+      const isEditingThisSeg =
+        isInput &&
+        (activeEl.closest?.(`#segment-item-${seg.id}`) ||
+          activeEl.getAttribute?.('data-tier') === (target === 'main' ? 'main' : String(target)));
+      const currentVal = target !== 'main' ? getSubText(seg, target) : seg.text;
+      const userAlreadyEdited = isEditingThisSeg && currentVal && currentVal.trim().length > 0;
+
+      if (!userAlreadyEdited) {
+        if (target !== 'main') {
+          this.updateSegmentSubText(seg.id, target, cleanText);
+        } else {
+          seg.text = cleanText;
+          this.updateSegmentText(seg.id, cleanText);
+        }
       }
-      this.selectSegment(seg.id, false);
+
+      // Restore active element focus and cursor position if disrupted, preventing auto-scroll
+      if (isInput && document.activeElement !== activeEl) {
+        try {
+          activeEl.focus({ preventScroll: true });
+          if (selStart !== null && selEnd !== null) {
+            activeEl.setSelectionRange(selStart, selEnd);
+          }
+        } catch (_) {}
+      }
 
       const timeRange = `[${formatTimeSec(payload.start)} - ${formatTimeSec(payload.end)}]`;
       const targetName = this.getAsrOutputTargetName(target);
@@ -1969,7 +1994,9 @@ class TranscriptState {
       end: seg.end,
       id: seg.id,
     };
-    this.selectSegment(seg.id, false);
+    if (!this.selectedSegmentId) {
+      this.selectSegment(seg.id, false);
+    }
     appState.statusMessage = `Preparing audio for segment [${formatTimeSec(seg.start)} - ${formatTimeSec(seg.end)}] using ${activeModelTitle}...`;
     requestAnimationFrame(() => this.drawVerticalWaveform());
 
