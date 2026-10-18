@@ -166,6 +166,7 @@ export function parseEaf(xmlString, fileName = 'unknown.eaf') {
     const parentRef = tierEl.getAttribute('PARENT_REF') || null;
     const linguisticType = tierEl.getAttribute('LINGUISTIC_TYPE_REF') || '';
     const participant = tierEl.getAttribute('PARTICIPANT') || '';
+    const annotator = tierEl.getAttribute('ANNOTATOR') || '';
 
     const rawAnnotations = [];
     const annotationNodes = tierEl.querySelectorAll('ANNOTATION');
@@ -260,6 +261,7 @@ export function parseEaf(xmlString, fileName = 'unknown.eaf') {
       parentRef,
       linguisticType,
       participant,
+      annotator,
       sampleText: processedAnnotations.find((a) => a.text && a.text.trim())?.text || '',
       annotations: processedAnnotations,
     });

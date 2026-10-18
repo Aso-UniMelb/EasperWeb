@@ -150,6 +150,31 @@
     };
   });
 
+  // When a project is opened, move scroll to the last selected segment
+  $effect(() => {
+    const targetId = transcriptState.pendingInitialScrollSegmentId;
+    if (
+      targetId &&
+      transcriptState.waveformContainerEl &&
+      transcriptState.waveformState?.duration &&
+      transcriptState.segments.some((s) => s.id === targetId)
+    ) {
+      transcriptState.pendingInitialScrollSegmentId = null;
+
+      const doScroll = (smooth = true) => {
+        transcriptState.scrollToSegment(targetId, {
+          smooth,
+          block: 'center',
+        });
+      };
+
+      requestAnimationFrame(() => {
+        doScroll(false);
+        setTimeout(() => doScroll(true), 60);
+      });
+    }
+  });
+
   // Redraw visible waveform tiles when zoom, height, active segment, or interval range changes
   $effect(() => {
     if (transcriptState.waveformWrapEl) {

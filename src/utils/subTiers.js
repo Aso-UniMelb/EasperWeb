@@ -330,6 +330,11 @@ export function normalizeSubTiers(raw, { sort = true } = {}) {
         ? String(item.lexiconField).trim()
         : '';
 
+    const annotator =
+      typeof item === 'object' && item.annotator != null
+        ? String(item.annotator).trim()
+        : '';
+
     out.push({
       id,
       name: name || `Sub-tier ${id}`,
@@ -337,6 +342,7 @@ export function normalizeSubTiers(raw, { sort = true } = {}) {
       lexicon,
       splitters,
       lexiconField,
+      annotator,
     });
   }
 
@@ -460,6 +466,7 @@ export function buildColumns(
       lexicon: [],
       splitters: DEFAULT_SPLITTERS,
       lexiconField: '',
+      annotator: '',
     },
     ...normalizeSubTiers(subTiers).map((t) => ({
       key: String(t.id),
@@ -468,6 +475,7 @@ export function buildColumns(
       lexicon: t.lexicon || [],
       splitters: t.splitters ?? DEFAULT_SPLITTERS,
       lexiconField: t.lexiconField || '',
+      annotator: t.annotator || '',
       isMain: false,
     })),
   ];

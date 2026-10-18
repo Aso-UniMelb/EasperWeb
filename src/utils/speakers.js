@@ -572,8 +572,8 @@ export function sortSegmentsChronologically(segments) {
  * @param {number} [options.duration=1]
  * @param {number} [options.totalHeight=1000]
  * @param {Object} [options.cardHeights={}] Measured card heights map (segmentId -> px)
- * @param {number} [options.defaultCardHeight=48] Fallback height before DOM measurement
- * @param {number} [options.gap=6] Gap between stacked cards
+ * @param {number} [options.defaultCardHeight=34] Fallback height before DOM measurement
+ * @param {number} [options.gap=2] Gap between stacked cards
  * @returns {Object} Map of segmentId -> { top, trueTop, isPushed, offset, cardH }
  */
 export function calculateStaggeredSegmentPositions(
@@ -583,8 +583,8 @@ export function calculateStaggeredSegmentPositions(
     duration = 1,
     totalHeight = 1000,
     cardHeights = {},
-    defaultCardHeight = 48,
-    gap = 6,
+    defaultCardHeight = 34,
+    gap = 2,
   } = {},
 ) {
   const result = {};

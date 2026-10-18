@@ -518,5 +518,31 @@ describe('Same-Speaker Overlap Prevention Rules', () => {
       expect(positions['seg-2'].cardH).toBe(50);
       expect(positions['seg-2'].isPushed).toBe(true);
     });
+
+    it('uses compact defaultCardHeight of 34px and gap of 2px to minimize margin between cards', () => {
+      const segments = [
+        { id: 'seg-1', speakerId: 1, start: 1.0, end: 2.0 },
+        { id: 'seg-2', speakerId: 2, start: 1.0, end: 2.0 },
+      ];
+      // Run with defaults (no cardHeights, no explicit defaultCardHeight/gap)
+      const positions = calculateStaggeredSegmentPositions(segments, {
+        startTime: 0,
+        duration: 10,
+        totalHeight: 1000, // 1.0s = 100px
+      });
+
+      expect(positions['seg-1'].cardH).toBe(34);
+      expect(positions['seg-1'].top).toBe(100);
+
+      // Seg 2 pushed with 2px gap: 100 + 34 + 2 = 136px
+      expect(positions['seg-2'].top).toBe(136);
+      expect(positions['seg-2'].cardH).toBe(34);
+      // Margin between bottom of seg-1 and top of seg-2 is exactly 2px
+      const marginBetween =
+        positions['seg-2'].top -
+        (positions['seg-1'].top + positions['seg-1'].cardH);
+      expect(marginBetween).toBe(2);
+    });
   });
 });
+

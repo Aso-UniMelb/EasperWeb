@@ -213,6 +213,7 @@ class ProjectState {
         numericId,
         title: cleanTitle,
         transcriber: cleanTranscriber,
+        mainTierTitle: '',
         audioFileName: audioFileName || 'recording-16khz.wav',
         audioDuration: Number(duration.toFixed(2)),
         audioFormat: 'WAV 16kHz Mono',
@@ -225,6 +226,7 @@ class ProjectState {
         segments: [],
         transcript: '',
         textDirection: transcriptState.textDirection || 'ltr',
+        lastSelectedSegmentId: null,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       };
@@ -265,6 +267,7 @@ class ProjectState {
   async createProjectFromElan({
     title,
     transcriber,
+    mainTierTitle = '',
     audioFileOrBlob,
     audioFileName,
     speakers,
@@ -308,6 +311,7 @@ class ProjectState {
         numericId,
         title: cleanTitle,
         transcriber: cleanTranscriber,
+        mainTierTitle: mainTierTitle || '',
         audioFileName: audioFileName || 'recording-16khz.wav',
         audioDuration: Number(duration.toFixed(2)),
         audioFormat: 'WAV 16kHz Mono',
@@ -320,6 +324,7 @@ class ProjectState {
         segments: Array.isArray(segments) ? segments : [],
         transcript: transcript || '',
         textDirection: transcriptState.textDirection || 'ltr',
+        lastSelectedSegmentId: Array.isArray(segments) && segments.length > 0 ? segments[0].id : null,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       };
@@ -490,6 +495,10 @@ class ProjectState {
         segments: $state.snapshot(transcriptState.segments || []),
         transcript: transcriptState.transcript || '',
         textDirection: transcriptState.textDirection || 'ltr',
+        lastSelectedSegmentId:
+          transcriptState.selectedSegmentId ||
+          this.activeProject.lastSelectedSegmentId ||
+          null,
         updatedAt: new Date().toISOString(),
       };
 
@@ -514,7 +523,7 @@ class ProjectState {
    */
   async updateProjectSettings(
     projectId,
-    { title, transcriber, speakers, subTiers, lexiconId },
+    { title, transcriber, mainTierTitle, speakers, subTiers, lexiconId },
   ) {
     try {
       const proj = await getProject(projectId);
@@ -593,6 +602,10 @@ class ProjectState {
         title: title !== undefined ? title.trim() : proj.title,
         transcriber:
           transcriber !== undefined ? transcriber.trim() : proj.transcriber,
+        mainTierTitle:
+          mainTierTitle !== undefined
+            ? mainTierTitle.trim()
+            : (proj.mainTierTitle || ''),
         speakers: newSpeakers,
         subTiers: newSubTiers,
         lexiconId: cleanLexId,
@@ -832,6 +845,10 @@ class ProjectState {
             (this.activeProjectId === proj.id
               ? transcriptState.textDirection
               : proj.textDirection) || 'ltr',
+          lastSelectedSegmentId:
+            (this.activeProjectId === proj.id
+              ? transcriptState.selectedSegmentId
+              : proj.lastSelectedSegmentId) || null,
           createdAt: proj.createdAt || new Date().toISOString(),
           updatedAt: new Date().toISOString(),
         },
@@ -936,6 +953,11 @@ class ProjectState {
             transcriptState.textDirection = projectData.textDirection;
             this.activeProject.textDirection = projectData.textDirection;
           }
+          if (projectData.lastSelectedSegmentId) {
+            this.activeProject.lastSelectedSegmentId = projectData.lastSelectedSegmentId;
+            transcriptState.selectedSegmentId = projectData.lastSelectedSegmentId;
+            transcriptState.pendingInitialScrollSegmentId = projectData.lastSelectedSegmentId;
+          }
 
           await this.persistActiveProjectNow();
           transcriptState.notifySegmentsChange();
@@ -1031,6 +1053,7 @@ class ProjectState {
         segments: Array.isArray(projectData.segments) ? projectData.segments : [],
         transcript: projectData.transcript || '',
         textDirection: projectData.textDirection || 'ltr',
+        lastSelectedSegmentId: projectData.lastSelectedSegmentId || (Array.isArray(projectData.segments) && projectData.segments.length > 0 ? projectData.segments[0].id : null),
         createdAt: projectData.createdAt || new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       };
@@ -1179,6 +1202,12 @@ class ProjectState {
     if (projectData.textDirection) {
       transcriptState.textDirection = projectData.textDirection;
       this.activeProject.textDirection = projectData.textDirection;
+    }
+
+    if (projectData.lastSelectedSegmentId) {
+      this.activeProject.lastSelectedSegmentId = projectData.lastSelectedSegmentId;
+      transcriptState.selectedSegmentId = projectData.lastSelectedSegmentId;
+      transcriptState.pendingInitialScrollSegmentId = projectData.lastSelectedSegmentId;
     }
 
     // 7. Persist immediately to IndexedDB and update waveform display

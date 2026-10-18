@@ -181,6 +181,7 @@ describe('subTiers utils', () => {
         lexicon: [],
         splitters: DEFAULT_SPLITTERS,
         lexiconField: '',
+        annotator: '',
       });
       expect(normalized[1]).toEqual({
         id: 2,
@@ -194,10 +195,11 @@ describe('subTiers utils', () => {
         ],
         splitters: DEFAULT_SPLITTERS,
         lexiconField: '',
+        annotator: '',
       });
     });
 
-    it('preserves custom splitters and lexiconField when specified', () => {
+    it('preserves custom splitters, lexiconField, and annotator when specified', () => {
       const raw = [
         {
           id: 1,
@@ -205,11 +207,13 @@ describe('subTiers utils', () => {
           type: 'word',
           splitters: '~ = :',
           lexiconField: 'Gloss',
+          annotator: 'Alice Linguist',
         },
       ];
       const normalized = normalizeSubTiers(raw);
       expect(normalized[0].splitters).toBe('~ = :');
       expect(normalized[0].lexiconField).toBe('Gloss');
+      expect(normalized[0].annotator).toBe('Alice Linguist');
     });
 
     it('defaults type to sentence and cleans string lexicons with labels', () => {

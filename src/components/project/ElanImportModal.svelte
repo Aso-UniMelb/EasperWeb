@@ -25,6 +25,7 @@
 
   let title = $state('');
   let lexiconId = $state('');
+  let mainTierTitle = $state('');
   let transcriber = $state(
     typeof window !== 'undefined'
       ? localStorage.getItem('easper_last_transcriber') || ''
@@ -51,6 +52,7 @@
     audioMatch = null;
     title = '';
     lexiconId = '';
+    mainTierTitle = '';
     speakers = [];
     subTiers = [];
     tierConfigs = [];
@@ -88,6 +90,9 @@
       }
       if (!transcriber.trim() && detected.suggestedTranscriber) {
         transcriber = detected.suggestedTranscriber;
+      }
+      if (!mainTierTitle.trim() && detected.suggestedMainTierTitle) {
+        mainTierTitle = detected.suggestedMainTierTitle;
       }
       speakers = detected.speakers;
       subTiers = detected.subTiers;
@@ -184,16 +189,10 @@
     while (nextId <= MAX_SUB_TIERS && used.has(nextId)) nextId++;
     if (nextId > MAX_SUB_TIERS) return;
 
-    const taken = new Set(
-      subTiers.map((t) => (t.name || '').trim().toLowerCase()),
-    );
-    const preset =
-      SUB_TIER_PRESETS.find((p) => !taken.has(p.toLowerCase())) ||
-      `Sub-tier ${nextId}`;
-
-    subTiers = [...subTiers, { id: nextId, name: preset }].sort(
-      (a, b) => a.id - b.id,
-    );
+    subTiers = [
+      ...subTiers,
+      { id: nextId, name: '', annotator: '' },
+    ].sort((a, b) => a.id - b.id);
   }
 
   let selectedSpeakerTierCount = $derived(
@@ -244,6 +243,7 @@
       await projectState.createProjectFromElan({
         title: title.trim() || eafFile.name.replace(/\.[^/.]+$/, ''),
         transcriber: transcriber.trim() || 'Transcriber',
+        mainTierTitle: mainTierTitle.trim(),
         audioFileOrBlob: audioFile,
         audioFileName: audioFile.name,
         speakers: compiled.speakers,
@@ -474,16 +474,6 @@
                 />
               </div>
               <div class="form-group">
-                <label for="elan-proj-transcriber">Transcriber Name</label>
-                <input
-                  id="elan-proj-transcriber"
-                  type="text"
-                  class="form-control"
-                  placeholder="e.g. Dr. Aris"
-                  bind:value={transcriber}
-                />
-              </div>
-              <div class="form-group">
                 <label for="elan-proj-lexicon">Spellcheck Lexicon (Optional)</label>
                 <select
                   id="elan-proj-lexicon"
@@ -503,12 +493,14 @@
             <!-- Step 3: Speakers & Sub-Tiers Configuration -->
             <div class="mapping-config-section">
               <div class="config-columns">
-                <!-- Speakers Column -->
+                <!-- Main Transcription Tiers Column -->
                 <div class="config-card">
                   <div class="config-card-header">
                     <div class="header-left">
                       <i class="fa-solid fa-users"></i>
-                      <strong>Project Speakers ({speakers.length}/5)</strong>
+                      <strong
+                        >Main Transcription Tiers ({speakers.length}/5)</strong
+                      >
                     </div>
                     {#if speakers.length < 5}
                       <button
@@ -520,6 +512,40 @@
                       </button>
                     {/if}
                   </div>
+
+                  <div class="card-config-fields">
+                    <div class="form-group-compact">
+                      <label
+                        for="elan-proj-main-tier"
+                        title="Prefix for root tiers in ELAN export (e.g. BIS@Speaker1)"
+                      >
+                        Main Tier Title
+                      </label>
+                      <input
+                        id="elan-proj-main-tier"
+                        type="text"
+                        class="form-control form-control-sm"
+                        placeholder="e.g. BIS or Transcription"
+                        bind:value={mainTierTitle}
+                      />
+                    </div>
+                    <div class="form-group-compact">
+                      <label
+                        for="elan-proj-transcriber"
+                        title="Transcriber / author of main tiers"
+                      >
+                        Transcriber
+                      </label>
+                      <input
+                        id="elan-proj-transcriber"
+                        type="text"
+                        class="form-control form-control-sm"
+                        placeholder="e.g. Alice Smith"
+                        bind:value={transcriber}
+                      />
+                    </div>
+                  </div>
+
                   <div class="items-list">
                     {#each speakers as spk (spk.id)}
                       {@const color = getSpeakerColor(spk.id)}
@@ -571,6 +597,11 @@
                         translation or gloss layers.
                       </p>
                     {:else}
+                      <div class="subtiers-header-mini">
+                        <span class="mini-th-id">#</span>
+                        <span class="mini-th-name">Sub-tier Name</span>
+                        <span class="mini-th-annotator">Annotator</span>
+                      </div>
                       {#each subTiers as st (st.id)}
                         <div class="item-row subtier-item">
                           <span class="subtier-num-badge">#{st.id}</span>
@@ -578,7 +609,14 @@
                             type="text"
                             class="form-control form-control-sm subtier-name-input"
                             bind:value={st.name}
-                            placeholder="Sub-tier {st.id} Name"
+                            placeholder="Sub-tier name"
+                          />
+                          <input
+                            type="text"
+                            class="form-control form-control-sm subtier-annotator-input"
+                            bind:value={st.annotator}
+                            placeholder="Annotator"
+                            title="Annotator for this sub-tier"
                           />
                         </div>
                       {/each}
@@ -650,6 +688,15 @@
                                 <span class="badge-participant">
                                   <i class="fa-solid fa-user"></i>
                                   {tier.participant}
+                                </span>
+                              {/if}
+                              {#if tier.annotator}
+                                <span
+                                  class="badge-annotator"
+                                  title="Annotator: {tier.annotator}"
+                                >
+                                  <i class="fa-solid fa-pen-nib"></i>
+                                  {tier.annotator}
                                 </span>
                               {/if}
                             </div>
@@ -1221,6 +1268,58 @@
     background: rgba(2, 132, 199, 0.1);
   }
 
+  .card-config-fields {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-bottom: 10px;
+    padding-bottom: 8px;
+    border-bottom: 1px dashed var(--border-color, #e2e8f0);
+  }
+
+  :global([data-theme='dark']) .card-config-fields {
+    border-bottom-color: #334155;
+  }
+
+  .form-group-compact {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+
+  .form-group-compact label {
+    font-size: 0.72rem;
+    font-weight: 600;
+    color: var(--text-muted, #64748b);
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+  }
+
+  .subtiers-header-mini {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.68rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    color: var(--text-muted, #64748b);
+    padding: 0 2px 2px 2px;
+  }
+
+  .mini-th-id {
+    width: 24px;
+    text-align: center;
+  }
+
+  .mini-th-name {
+    flex: 1.2;
+  }
+
+  .mini-th-annotator {
+    flex: 1;
+  }
+
   .items-list {
     display: flex;
     flex-direction: column;
@@ -1241,8 +1340,15 @@
     flex-shrink: 0;
   }
 
-  .spk-name-input,
+  .spk-name-input {
+    flex: 1;
+  }
+
   .subtier-name-input {
+    flex: 1.2;
+  }
+
+  .subtier-annotator-input {
     flex: 1;
   }
 
@@ -1392,6 +1498,22 @@
     font-size: 0.68rem;
     padding: 1px 5px;
     border-radius: 4px;
+  }
+
+  .badge-annotator {
+    background: #ecfdf5;
+    color: #065f46;
+    font-size: 0.68rem;
+    padding: 1px 5px;
+    border-radius: 4px;
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+  }
+
+  :global([data-theme='dark']) .badge-annotator {
+    background: rgba(16, 185, 129, 0.2);
+    color: #6ee7b7;
   }
 
   .tier-sample {

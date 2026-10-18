@@ -278,4 +278,133 @@ describe('ELAN export with word/morpheme sub-tiers', () => {
       'COME.PAST',
     ]);
   });
+
+  it('exports root transcription tiers with mainTierTitle prefix (e.g. BIS@Speaker1)', () => {
+    const segments = [
+      {
+        id: 'seg-1',
+        start: 0,
+        end: 2.0,
+        speaker: 'Speaker1',
+        speakerId: 1,
+        text: 'hello from speaker 1',
+        subTexts: {
+          '1': 'Translation for 1',
+        },
+      },
+      {
+        id: 'seg-2',
+        start: 2.5,
+        end: 4.5,
+        speaker: 'Speaker2',
+        speakerId: 2,
+        text: 'hello from speaker 2',
+        subTexts: {
+          '1': 'Translation for 2',
+        },
+      },
+    ];
+
+    const subTiers = [
+      { id: 1, name: 'Translation', type: 'sentence' },
+    ];
+
+    const speakers = [
+      { id: 1, name: 'Speaker1', initials: 'S1' },
+      { id: 2, name: 'Speaker2', initials: 'S2' },
+    ];
+
+    const xml = exportToEaf({
+      segments,
+      subTiers,
+      speakers,
+      mainTierTitle: 'BIS',
+      audioFileName: 'audio.wav',
+    });
+
+    const parsed = parseEaf(xml, 'main-tier-prefix.eaf');
+
+    // Root tiers must be BIS@Speaker1 and BIS@Speaker2
+    const bisSpk1Tier = parsed.tiers.find((t) => t.tierId === 'BIS@Speaker1');
+    const bisSpk2Tier = parsed.tiers.find((t) => t.tierId === 'BIS@Speaker2');
+
+    expect(bisSpk1Tier).toBeDefined();
+    expect(bisSpk2Tier).toBeDefined();
+
+    expect(bisSpk1Tier.participant).toBe('Speaker1');
+    expect(bisSpk2Tier.participant).toBe('Speaker2');
+
+    expect(bisSpk1Tier.annotations).toHaveLength(1);
+    expect(bisSpk1Tier.annotations[0].text).toBe('hello from speaker 1');
+
+    expect(bisSpk2Tier.annotations).toHaveLength(1);
+    expect(bisSpk2Tier.annotations[0].text).toBe('hello from speaker 2');
+
+    // Dependent Translation tiers should hang off the BIS@ root tiers
+    const trans1 = parsed.tiers.find((t) => t.tierId === 'Translation@Speaker1');
+    const trans2 = parsed.tiers.find((t) => t.tierId === 'Translation@Speaker2');
+
+    expect(trans1).toBeDefined();
+    expect(trans2).toBeDefined();
+    expect(trans1.parentRef).toBe('BIS@Speaker1');
+    expect(trans2.parentRef).toBe('BIS@Speaker2');
+
+    expect(trans1.annotations[0].text).toBe('Translation for 1');
+    expect(trans2.annotations[0].text).toBe('Translation for 2');
+  });
+
+  it('exports transcriber on main tiers and annotator on sub-tiers as ANNOTATOR tier attribute', () => {
+    const segments = [
+      {
+        id: 'seg-1',
+        start: 0,
+        end: 2.0,
+        speaker: 'Speaker1',
+        speakerId: 1,
+        text: 'test sentence',
+        subTexts: {
+          '1': 'sentence translation',
+        },
+      },
+    ];
+
+    const subTiers = [
+      { id: 1, name: 'Translation', type: 'sentence', annotator: 'Bob Linguist' },
+      { id: 2, name: 'Notes', type: 'sentence', annotator: '' },
+    ];
+
+    const speakers = [
+      { id: 1, name: 'Speaker1', initials: 'S1' },
+    ];
+
+    const xml = exportToEaf({
+      segments,
+      subTiers,
+      speakers,
+      mainTierTitle: 'BIS',
+      transcriber: 'Alice Transcriber',
+      audioFileName: 'audio.wav',
+    });
+
+    // Check XML string directly
+    expect(xml).toContain('<TIER TIER_ID="BIS@Speaker1" ANNOTATOR="Alice Transcriber" PARTICIPANT="Speaker1" LINGUISTIC_TYPE_REF="default-lt">');
+    expect(xml).toContain('<TIER TIER_ID="Translation@Speaker1" ANNOTATOR="Bob Linguist" PARENT_REF="BIS@Speaker1" LINGUISTIC_TYPE_REF="dependent-lt">');
+    // Tier with empty annotator does NOT have ANNOTATOR attribute
+    expect(xml).toContain('<TIER TIER_ID="Notes@Speaker1" PARENT_REF="BIS@Speaker1" LINGUISTIC_TYPE_REF="dependent-lt" />');
+
+    // Verify via parsed EAF object
+    const parsed = parseEaf(xml, 'annotator-test.eaf');
+    const mainTier = parsed.tiers.find((t) => t.tierId === 'BIS@Speaker1');
+    const transTier = parsed.tiers.find((t) => t.tierId === 'Translation@Speaker1');
+    const notesTier = parsed.tiers.find((t) => t.tierId === 'Notes@Speaker1');
+
+    expect(mainTier).toBeDefined();
+    expect(mainTier.annotator).toBe('Alice Transcriber');
+
+    expect(transTier).toBeDefined();
+    expect(transTier.annotator).toBe('Bob Linguist');
+
+    expect(notesTier).toBeDefined();
+    expect(notesTier.annotator).toBe('');
+  });
 });

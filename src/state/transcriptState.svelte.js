@@ -236,6 +236,7 @@ class TranscriptState {
   currentTranscribingSegment = $state(null);
   activeHoverSegmentId = $state(null);
   selectedSegmentId = $state(null);
+  pendingInitialScrollSegmentId = $state(null);
   hoveredSegmentId = $state(null);
   activeDragHandle = $state(null); // 'start' | 'end' | null
   hoveredDragHandle = $state(null); // 'start' | 'end' | null
@@ -698,8 +699,8 @@ class TranscriptState {
       duration: this.waveformState.duration || 1,
       totalHeight: this.waveformCalculatedHeight,
       cardHeights: this.cardHeights,
-      defaultCardHeight: 48,
-      gap: 6,
+      defaultCardHeight: 34,
+      gap: 2,
     });
   }
 
@@ -709,8 +710,8 @@ class TranscriptState {
     let maxBottom = baseH;
     for (const key in positions) {
       const pos = positions[key];
-      if (pos && pos.top + (pos.cardH || 48) + 40 > maxBottom) {
-        maxBottom = pos.top + (pos.cardH || 48) + 40;
+      if (pos && pos.top + (pos.cardH || 34) + 40 > maxBottom) {
+        maxBottom = pos.top + (pos.cardH || 34) + 40;
       }
     }
     return maxBottom;
@@ -718,30 +719,53 @@ class TranscriptState {
 
   selectSegment(segmentId, scrollIntoView = false) {
     this.selectedSegmentId = segmentId;
-    const seg = this.segments.find((s) => s.id === segmentId);
-    if (
-      seg &&
-      scrollIntoView &&
-      this.waveformContainerEl &&
-      this.waveformState?.duration
-    ) {
-      const startTime = this.waveformState.startTime || 0;
-      const targetY =
-        ((seg.start - startTime) / this.waveformState.duration) *
-        this.waveformCalculatedHeight;
-      const currentScroll = this.waveformContainerEl.scrollTop;
-      const clientHeight = this.waveformContainerEl.clientHeight;
-      if (
-        targetY < currentScroll + 40 ||
-        targetY > currentScroll + clientHeight - 80
-      ) {
-        this.waveformContainerEl.scrollTo({
-          top: Math.max(0, targetY - clientHeight / 3),
-          behavior: 'smooth',
-        });
-      }
+    if (projectState.activeProject) {
+      projectState.activeProject.lastSelectedSegmentId = segmentId;
+      projectState.saveCurrentProjectDebounced();
+    }
+    if (scrollIntoView) {
+      this.scrollToSegment(segmentId, { smooth: true, block: 'center' });
     }
     requestAnimationFrame(() => this.drawVerticalWaveform());
+  }
+
+  scrollToSegment(segmentId, options = {}) {
+    if (!segmentId) return;
+    const seg = this.segments.find((s) => s.id === segmentId);
+    if (!seg) return;
+
+    const behavior =
+      options.behavior || (options.smooth !== false ? 'smooth' : 'auto');
+
+    // 1. Try DOM element scrolling if segment card is stamped in DOM
+    const cardEl =
+      typeof document !== 'undefined'
+        ? document.getElementById(`segment-item-${segmentId}`)
+        : null;
+    if (cardEl && typeof cardEl.scrollIntoView === 'function') {
+      try {
+        cardEl.scrollIntoView({
+          behavior,
+          block: options.block || 'center',
+          inline: 'nearest',
+        });
+        return;
+      } catch (e) {
+        // Fallback to container scrollTo
+      }
+    }
+
+    // 2. Fallback: compute coordinate from timeline layout & scroll container
+    if (this.waveformContainerEl && this.waveformState?.duration) {
+      const targetY =
+        this.segmentLayoutPositions?.[segmentId]?.top ??
+        this.getSegmentTop(seg.start);
+      const clientHeight = this.waveformContainerEl.clientHeight || 500;
+      this.waveformContainerEl.scrollTo({
+        top: Math.max(0, targetY - clientHeight / 3),
+        behavior,
+      });
+    }
   }
 
   playSegmentAudio(segment, loop = false) {
@@ -3185,6 +3209,8 @@ class TranscriptState {
       segments: validSegments,
       chunks: validChunks,
       includeWordTier: this.timestampMode === 'word',
+      mainTierTitle: projectState.activeProject?.mainTierTitle || '',
+      transcriber: projectState.activeProject?.transcriber || '',
       speakers: projectState.activeProject?.speakers || [],
       subTiers: buildColumns(projectState.activeProject?.subTiers, {
         columnOrder: projectState.activeProject?.columnOrder,
@@ -3195,6 +3221,8 @@ class TranscriptState {
           name: c.name,
           type: c.type,
           lexicon: c.lexicon,
+          splitters: c.splitters,
+          annotator: c.annotator || '',
         })),
       author: projectState.activeProject?.transcriber || 'Easper',
     });
@@ -3240,6 +3268,7 @@ class TranscriptState {
         transcript: cleanSpeechText(this.transcript || this.fullResult?.text || ''),
         chunks: validChunks,
         textDirection: this.textDirection || 'ltr',
+        lastSelectedSegmentId: this.selectedSegmentId || activeProj?.lastSelectedSegmentId || null,
       },
       ...(this.fullResult || {}),
       text: cleanSpeechText(this.transcript || this.fullResult?.text || ''),
@@ -3361,7 +3390,17 @@ class TranscriptState {
     this.hasRunVad = false;
     this.currentTranscribingSegment = null;
     this.activeSnippetPlayId = null;
-    this.selectedSegmentId = this.segments.length > 0 ? this.segments[0].id : null;
+
+    const rememberedId = projectDoc?.lastSelectedSegmentId;
+    const targetSegmentId =
+      rememberedId && this.segments.some((s) => s.id === rememberedId)
+        ? rememberedId
+        : this.segments.length > 0
+          ? this.segments[0].id
+          : null;
+
+    this.selectedSegmentId = targetSegmentId;
+    this.pendingInitialScrollSegmentId = targetSegmentId;
     this.transcriptView = 'segments';
 
     // Route workflow step: if project is already segmented go to transcription, otherwise go to segmentation
@@ -3388,6 +3427,7 @@ class TranscriptState {
     this.hasRunVad = false;
     this.currentTranscribingSegment = null;
     this.selectedSegmentId = null;
+    this.pendingInitialScrollSegmentId = null;
     this.activeSnippetPlayId = null;
     this.asrOutputTarget = 'main';
     this.workflowStep = 'segment';

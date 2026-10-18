@@ -48,7 +48,6 @@ export function detectTierDefaults(eafData) {
   const tiers = eafData?.tiers || [];
   const baseName = (eafData?.fileName || 'ELAN Project').replace(/\.[^/.]+$/, '');
   const suggestedTitle = baseName;
-  const suggestedTranscriber = eafData?.author || '';
 
   // 1. Separate root tiers from dependent tiers
   const rootTiers = [];
@@ -62,6 +61,21 @@ export function detectTierDefaults(eafData) {
     }
   }
 
+  // Detect transcriber from root tiers' ANNOTATOR attribute or document author
+  const rootTierAnnotator =
+    rootTiers.find((t) => t.annotator?.trim())?.annotator?.trim();
+  const suggestedTranscriber = rootTierAnnotator || eafData?.author || '';
+
+  // Detect main tier title prefix (e.g. "BIS" from "BIS@Speaker1")
+  let suggestedMainTierTitle = '';
+  for (const t of rootTiers) {
+    const atMatch = t.tierId.match(/^([^@]+)@/);
+    if (atMatch) {
+      suggestedMainTierTitle = atMatch[1].trim();
+      break;
+    }
+  }
+
   // 2. Derive Speakers from Root Tiers (up to 5)
   const speakers = [];
   const rootTierToSpeakerId = new Map();
@@ -70,7 +84,16 @@ export function detectTierDefaults(eafData) {
   for (const t of rootTiers) {
     if (nextSpeakerId > 5) break;
 
-    const rawName = t.participant?.trim() || t.tierId?.trim() || `Speaker ${nextSpeakerId}`;
+    // If tierId is like "BIS@Speaker1", strip the prefix if participant is empty
+    let rawName = t.participant?.trim();
+    if (!rawName) {
+      const atMatch = t.tierId.match(/^([^@]+)@(.*)$/);
+      rawName =
+        atMatch && atMatch[2].trim() ? atMatch[2].trim() : t.tierId.trim();
+    }
+    if (!rawName) {
+      rawName = `Speaker ${nextSpeakerId}`;
+    }
     const initials = getSpeakerInitials(rawName, nextSpeakerId);
 
     speakers.push({
@@ -90,19 +113,26 @@ export function detectTierDefaults(eafData) {
   // 3. Detect Sub-Tiers from Dependent Tiers & Tier Names (e.g. Translation@Speaker)
   const detectedSubTierNames = new Set();
   const subTierMap = new Map(); // subTierName.toLowerCase() -> subTierId
+  const subTierAnnotatorMap = new Map(); // subTierName.toLowerCase() -> annotator
 
-  // Helper to register a sub-tier name
-  const registerSubTier = (rawName) => {
+  // Helper to register a sub-tier name and optional annotator
+  const registerSubTier = (rawName, annotator = '') => {
     const clean = (rawName || '').trim();
     if (!clean) return null;
     const lower = clean.toLowerCase();
     if (subTierMap.has(lower)) {
+      if (annotator?.trim() && !subTierAnnotatorMap.get(lower)) {
+        subTierAnnotatorMap.set(lower, annotator.trim());
+      }
       return subTierMap.get(lower);
     }
     if (detectedSubTierNames.size < MAX_SUB_TIERS) {
       const id = detectedSubTierNames.size + 1;
       detectedSubTierNames.add(clean);
       subTierMap.set(lower, id);
+      if (annotator?.trim()) {
+        subTierAnnotatorMap.set(lower, annotator.trim());
+      }
       return id;
     }
     return null;
@@ -113,10 +143,10 @@ export function detectTierDefaults(eafData) {
     // Pattern: "SubTierName@SpeakerName"
     const atMatch = t.tierId.match(/^([^@]+)@/);
     if (atMatch) {
-      registerSubTier(atMatch[1]);
+      registerSubTier(atMatch[1], t.annotator);
     } else if (t.tierId) {
       // Check if matches known presets or tier name
-      registerSubTier(t.tierId);
+      registerSubTier(t.tierId, t.annotator);
     }
   }
 
@@ -128,15 +158,16 @@ export function detectTierDefaults(eafData) {
         (p) => p.toLowerCase() === t.tierId.trim().toLowerCase(),
       );
       if (isPreset) {
-        registerSubTier(t.tierId.trim());
+        registerSubTier(t.tierId.trim(), t.annotator);
       }
     }
   }
 
-  // Build final subTiers array
+  // Build final subTiers array with annotator info preserved
   const subTiers = Array.from(detectedSubTierNames).map((name) => ({
     id: subTierMap.get(name.toLowerCase()),
     name,
+    annotator: subTierAnnotatorMap.get(name.toLowerCase()) || '',
   }));
 
   // 4. Build Tier Configuration List
@@ -183,6 +214,7 @@ export function detectTierDefaults(eafData) {
     return {
       tierId: t.tierId,
       participant: t.participant || '',
+      annotator: t.annotator || '',
       parentRef: t.parentRef || null,
       linguisticType: t.linguisticType || '',
       annotationCount,
@@ -197,6 +229,7 @@ export function detectTierDefaults(eafData) {
   return {
     suggestedTitle,
     suggestedTranscriber,
+    suggestedMainTierTitle,
     speakers,
     subTiers,
     tierConfigs,
