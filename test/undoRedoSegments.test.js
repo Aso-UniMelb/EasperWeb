@@ -91,6 +91,22 @@ describe('Segment Editing Undo / Redo Stack', () => {
       expect(transcriptState.segments[0].id).toBe(newSeg.id);
     });
 
+    it('creates segment with explicit speaker id and supports handleAddFromContextMenu', () => {
+      transcriptState.segments = [];
+      transcriptState.contextMenu = {
+        visible: true,
+        time: 8.5,
+        targetPillarSpeakerId: null,
+      };
+
+      // Call handleAddFromContextMenu with explicit speaker 2
+      transcriptState.handleAddFromContextMenu(2);
+      expect(transcriptState.contextMenu.visible).toBe(false);
+      expect(transcriptState.segments.length).toBe(1);
+      expect(transcriptState.segments[0].speakerId).toBe(2);
+      expect(transcriptState.segments[0].start).toBe(8.5);
+    });
+
     it('undos and redos deleteSegment', () => {
       const seg1 = { id: 'seg-1', start: 2.0, end: 5.0, speakerId: 1, text: 'Keep me' };
       const seg2 = { id: 'seg-2', start: 6.0, end: 9.0, speakerId: 2, text: 'Delete me' };

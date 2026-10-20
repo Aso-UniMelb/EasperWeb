@@ -881,17 +881,36 @@
       <i class="fa-solid fa-clock"></i>
       <span>Timeline {formatTimeSec(transcriptState.contextMenu.time)}</span>
     </div>
-    <button
-      type="button"
-      class="context-menu-item"
-      onclick={() => transcriptState.handleAddFromContextMenu()}
-      role="menuitem"
-    >
-      <i class="fa-solid fa-plus"></i>
-      <span
-        >Add Segment at {formatTimeSec(transcriptState.contextMenu.time)}</span
+    <div class="context-menu-item context-menu-add-row" role="menuitem">
+      <div
+        class="context-add-label-btn"
+        title="Add segment at {formatTimeSec(transcriptState.contextMenu.time)}"
       >
-    </button>
+        <i class="fa-solid fa-plus"></i>
+        <span>Add segment here for</span>
+      </div>
+      <div class="context-add-speakers-inline">
+        {#each projectState.activeProject?.speakers || [{ id: 1, name: 'Speaker 1', initials: 'S1' }] as spk (spk.id)}
+          {@const col = getSpeakerColor(spk.id)}
+          <button
+            type="button"
+            class="context-speaker-badge context-speaker-add-btn"
+            style="--spk-color: {col.primary};"
+            onclick={(e) => {
+              e.stopPropagation();
+              transcriptState.handleAddFromContextMenu(spk.id);
+            }}
+            title="Add segment for {spk.name ||
+              'Speaker ' + spk.id} ({spk.initials ||
+              'S' + spk.id}) at {formatTimeSec(
+              transcriptState.contextMenu.time,
+            )}"
+          >
+            {spk.initials || `S${spk.id}`}
+          </button>
+        {/each}
+      </div>
+    </div>
     <button
       type="button"
       class="context-menu-item"
@@ -905,7 +924,7 @@
       <div class="context-menu-divider"></div>
 
       <!-- Quick Speaker Assignment in Context Menu -->
-      <div class="context-menu-section-label">
+      <!-- <div class="context-menu-section-label">
         <i class="fa-solid fa-user-tag"></i>
         <span>Assign Speaker</span>
       </div>
@@ -932,7 +951,7 @@
             {spk.initials || `S${spk.id}`}
           </button>
         {/each}
-      </div>
+      </div> -->
 
       <div class="context-menu-divider"></div>
       <button
@@ -1320,6 +1339,71 @@
   .context-speaker-badge.assigned {
     border-color: #ffffff;
     box-shadow: 0 0 0 1.5px var(--spk-color);
+  }
+
+  .context-menu-add-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 8px;
+    cursor: default;
+  }
+
+  .context-add-label-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    background: transparent;
+    border: none;
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: inherit;
+    cursor: pointer;
+    padding: 2px 4px;
+    border-radius: 4px;
+    transition: all 0.12s ease;
+    white-space: nowrap;
+    text-align: left;
+  }
+
+  .context-add-label-btn:hover {
+    color: #0284c7;
+  }
+
+  .context-add-label-btn i {
+    font-size: 0.85rem;
+    width: 16px;
+    text-align: center;
+    color: #0284c7;
+  }
+
+  :global([data-theme='dark']) .context-add-label-btn:hover {
+    color: #38bdf8;
+  }
+
+  :global([data-theme='dark']) .context-add-label-btn i {
+    color: #38bdf8;
+  }
+
+  .context-add-speakers-inline {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    flex-shrink: 0;
+  }
+
+  .context-speaker-add-btn {
+    padding: 2px 6px;
+    font-size: 0.69rem;
+    font-weight: 700;
+    line-height: 1.1;
+    border-radius: 4px;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.15);
+  }
+
+  .context-speaker-add-btn:hover {
+    transform: scale(1.08);
+    filter: brightness(1.12);
   }
 
   /* History Controls (Undo / Redo) */

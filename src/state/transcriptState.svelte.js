@@ -987,7 +987,7 @@ class TranscriptState {
     requestAnimationFrame(() => this.drawVerticalWaveform());
   }
 
-  addNewSegment(startTime, defaultDuration = 2.0) {
+  addNewSegment(startTime, defaultDuration = 2.0, explicitSpeakerId = null) {
     this.closeContextMenu();
     if (!this.waveformState || !this.waveformState.duration) return null;
     const audioStart = this.waveformState.startTime || 0;
@@ -1017,7 +1017,9 @@ class TranscriptState {
     }
 
     let speakerId = 1;
-    if (this.selectedSegmentId) {
+    if (explicitSpeakerId != null) {
+      speakerId = Number(explicitSpeakerId);
+    } else if (this.selectedSegmentId) {
       const sel = this.segments.find((s) => s.id === this.selectedSegmentId);
       if (sel?.speakerId) {
         speakerId = Number(sel.speakerId);
@@ -1517,13 +1519,16 @@ class TranscriptState {
       this.contextMenu.visible = false;
       this.contextMenu.targetSegment = null;
       this.contextMenu.nextSegment = null;
+      this.contextMenu.targetPillarSpeakerId = null;
     }
   }
 
-  handleAddFromContextMenu() {
+  handleAddFromContextMenu(speakerId = null) {
     const t = this.contextMenu.time;
+    const resolvedSpeakerId =
+      speakerId != null ? speakerId : this.contextMenu.targetPillarSpeakerId;
     this.closeContextMenu();
-    this.addNewSegment(t);
+    this.addNewSegment(t, 2.0, resolvedSpeakerId);
   }
 
   handlePlayFromContextMenu() {
@@ -1976,6 +1981,7 @@ class TranscriptState {
       time,
       targetSegment: targetSeg || null,
       nextSegment: nextSeg || null,
+      targetPillarSpeakerId: targetPillar ? targetPillar.speakerId : null,
     };
   }
 
