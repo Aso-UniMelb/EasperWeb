@@ -8,9 +8,56 @@
   let { onClose = () => {}, onWorkerReset } = $props();
 
   const speakerCount = $derived(
-    Number(transcriptState.diarizationSpeakerCount),
+    Number(transcriptState.diarizationSpeakerCount) || 1,
   );
   const multiSpeaker = $derived(speakerCount > 1);
+
+  $effect(() => {
+    if (transcriptState.diarizationSpeakerCount === 'auto') {
+      transcriptState.diarizationSpeakerCount = 2;
+    }
+  });
+
+  const detectOverlap = $derived(
+    transcriptState.diarizationModel === 'pyannote',
+  );
+
+  function toggleDetectOverlap(e) {
+    transcriptState.diarizationModel = e.currentTarget.checked
+      ? 'pyannote'
+      : 'campplus';
+  }
+
+  const separationLabels = {
+    1: 'Low',
+    2: 'Relaxed',
+    3: 'Balanced',
+    4: 'High',
+    5: 'Maximum',
+  };
+
+  const separationLevel = $derived.by(() => {
+    const t = Number(transcriptState.diarizationThreshold);
+    if (t >= 0.15) return 1;
+    if (t >= 0.12) return 2;
+    if (t >= 0.09) return 3;
+    if (t >= 0.07) return 4;
+    return 5;
+  });
+
+  const separationHint = $derived(
+    separationLevel <= 2
+      ? 'tolerates vocal variation (whispers, shouts, intonation shifts)'
+      : separationLevel === 3
+        ? 'balanced voice separation for typical dialogue'
+        : 'separates subtle differences (similar pitch, relatives)',
+  );
+
+  function handleSeparationChange(e) {
+    const lvl = Number(e.currentTarget.value);
+    const map = { 1: 0.16, 2: 0.13, 3: 0.1, 4: 0.08, 5: 0.06 };
+    transcriptState.diarizationThreshold = map[lvl] ?? 0.1;
+  }
 
   const sensitivityHint = $derived(
     transcriptState.vadThreshold <= 0.35
@@ -36,300 +83,12 @@
 </script>
 
 <div class="inline-settings-panel segmentation-panel">
-  <!-- Panel Body -->
-  <div class="panel-body">
-    <!-- Settings Grid: 3-column responsive layout -->
-    <div class="settings-grid">
-      <!-- Col 1: Detection & Sensitivity -->
-      <div class="settings-col">
-        <div class="col-head">
-          <i class="fa-solid fa-microphone"></i>
-          <span>Listening &amp; Sensitivity</span>
-      </div>
-
-      <div class="setting-row">
-        <div class="setting-label-row">
-          <label for="inline-vad-thresh">Speech threshold</label>
-          <span class="setting-val"
-            >{Number(transcriptState.vadThreshold).toFixed(2)}</span
-          >
-        </div>
-        <input
-          id="inline-vad-thresh"
-          type="range"
-          min="0.2"
-          max="0.8"
-          step="0.05"
-          bind:value={transcriptState.vadThreshold}
-          disabled={appState.isProcessing}
-          class="setting-slider"
-        />
-        <div class="slider-hint">
-          <span>Sensitivity: <strong>{sensitivityHint}</strong></span>
-        </div>
-        {#if appState.showHelpText}
-          <p class="setting-help">
-            Lower threshold if quiet or distant speech is being missed; raise it
-            if background noise is falsely detected.
-          </p>
-        {/if}
-      </div>
-
-      <div class="setting-row">
-        <div class="setting-label-row">
-          <label for="inline-vad-silence">Pause needed to end utterance</label>
-          <span class="setting-val">{transcriptState.vadMinSilenceMs} ms</span>
-        </div>
-        <input
-          id="inline-vad-silence"
-          type="range"
-          min="100"
-          max="1000"
-          step="50"
-          bind:value={transcriptState.vadMinSilenceMs}
-          disabled={appState.isProcessing || multiSpeaker}
-          class="setting-slider"
-        />
-        {#if appState.showHelpText}
-          <p class="setting-help">
-            Silence longer than this marks a new segment. Shorter values produce
-            more, smaller segments.
-          </p>
-        {/if}
-      </div>
-
-      <div class="setting-row">
-        <div class="setting-label-row">
-          <label for="inline-vad-pad">Edge padding</label>
-          <span class="setting-val">{transcriptState.vadSpeechPadMs} ms</span>
-        </div>
-        <input
-          id="inline-vad-pad"
-          type="range"
-          min="20"
-          max="200"
-          step="10"
-          bind:value={transcriptState.vadSpeechPadMs}
-          disabled={appState.isProcessing || multiSpeaker}
-          class="setting-slider"
-        />
-        {#if appState.showHelpText}
-          <p class="setting-help">
-            Extra audio preserved before and after each segment to prevent
-            clipping word boundaries.
-          </p>
-        {/if}
-      </div>
+  <div class="side-panel-header">
+    <div class="side-panel-title">
+      <i class="fa-solid fa-scissors"></i>
+      <span>Auto Segmentation</span>
     </div>
-
-    <!-- Col 2: Segment Boundaries & Tidying -->
-    <div class="settings-col">
-      <div class="col-head">
-        <i class="fa-solid fa-broom"></i>
-        <span>Segment Tidying</span>
-      </div>
-
-      <div class="setting-row">
-        <div class="setting-label-row">
-          <label for="inline-vad-min-seg">Drop segments shorter than</label>
-          <span class="setting-val"
-            >{Number(transcriptState.vadMinSegmentS).toFixed(1)} s</span
-          >
-        </div>
-        <input
-          id="inline-vad-min-seg"
-          type="range"
-          min="0.1"
-          max="1.0"
-          step="0.1"
-          bind:value={transcriptState.vadMinSegmentS}
-          disabled={appState.isProcessing}
-          class="setting-slider"
-        />
-        {#if appState.showHelpText}
-          <p class="setting-help">
-            Discards brief noise spikes below this duration.
-          </p>
-        {/if}
-      </div>
-
-      <div class="setting-row">
-        <div class="setting-label-row">
-          <label for="inline-vad-min-sil">Join segments closer than</label>
-          <span class="setting-val"
-            >{Number(transcriptState.vadMinSilenceS).toFixed(1)} s</span
-          >
-        </div>
-        <input
-          id="inline-vad-min-sil"
-          type="range"
-          min="0.2"
-          max="2.0"
-          step="0.1"
-          bind:value={transcriptState.vadMinSilenceS}
-          disabled={appState.isProcessing}
-          class="setting-slider"
-        />
-        {#if appState.showHelpText}
-          <p class="setting-help">
-            Adjacent segments closer than this duration are automatically merged
-            into one.
-          </p>
-        {/if}
-      </div>
-
-      <div class="setting-row">
-        <div class="setting-label-row">
-          <label for="inline-vad-max-seg">Split segments longer than</label>
-          <span class="setting-val">{transcriptState.vadMaxSegmentS} s</span>
-        </div>
-        <input
-          id="inline-vad-max-seg"
-          type="range"
-          min="10"
-          max="30"
-          step="5"
-          bind:value={transcriptState.vadMaxSegmentS}
-          disabled={appState.isProcessing}
-          class="setting-slider"
-        />
-        {#if appState.showHelpText}
-          <p class="setting-help">
-            Caps maximum segment length so utterances fit cleanly into
-            transcription model context windows.
-          </p>
-        {/if}
-      </div>
-    </div>
-
-    <!-- Col 3: Speakers & Portion -->
-    <div class="settings-col">
-      <div class="col-head">
-        <i class="fa-solid fa-users"></i>
-        <span>Speakers &amp; Audio Range</span>
-      </div>
-
-      <div class="setting-row">
-        <div class="setting-label-row">
-          <label for="inline-diar-speakers">Voices in recording</label>
-        </div>
-        <select
-          id="inline-diar-speakers"
-          class="setting-select"
-          bind:value={transcriptState.diarizationSpeakerCount}
-          disabled={appState.isProcessing}
-        >
-          <option value={1}>1 speaker</option>
-          <option value={2}>2 speakers</option>
-          <option value={3}>3 speakers</option>
-          <option value={4}>4 speakers</option>
-          <option value={5}>5 speakers</option>
-        </select>
-        {#if appState.showHelpText}
-          <p class="setting-help">
-            {#if multiSpeaker}
-              Easper clusters voices using CAM++ neural embeddings into {speakerCount}
-              speaker tracks.
-            {:else}
-              Utterances assigned to Speaker 1. Select 2+ to enable speaker
-              separation.
-            {/if}
-          </p>
-        {/if}
-      </div>
-
-      {#if multiSpeaker && transcriptState.segments.length > 0}
-        <div class="setting-row" style="margin-top: 6px;">
-          <button
-            type="button"
-            class="btn-diarize-action"
-            onclick={() => transcriptState.handleDiarizeSegments()}
-            disabled={appState.isProcessing || transcriptState.isDiarizing}
-            title="Sort speakers on already segmented utterances without re-cutting audio"
-          >
-            {#if transcriptState.isDiarizing}
-              <i class="fa-solid fa-spinner fa-spin"></i>
-              <span
-                >Diarizing {transcriptState.segments.length} segments...</span
-              >
-            {:else}
-              <i class="fa-solid fa-people-arrows"></i>
-              <span>Diarize existing segments</span>
-            {/if}
-          </button>
-        </div>
-      {/if}
-
-      <!-- Interval Picker in Segmentation Panel -->
-      {#if audioState.totalAudioDuration > 0}
-        <div class="setting-row portion-box">
-          <div class="setting-label-row">
-            <span class="portion-label">
-              <i class="fa-solid fa-clock"></i> Portion to segment
-            </span>
-            {#if audioState.isIntervalSelected}
-              <button
-                type="button"
-                class="btn-reset-interval"
-                onclick={() => audioState.resetInterval()}
-                title="Use entire audio recording"
-              >
-                Reset to full
-              </button>
-            {/if}
-          </div>
-          <IntervalPicker />
-        </div>
-      {/if}
-    </div>
-  </div>
-
-  <!-- Action Bar / Footer inside panel body -->
-  <div class="panel-action-bar panel-footer">
-    <div class="footer-status">
-      {#if !hasAudio}
-        <span class="status-badge status-warning">
-          <i class="fa-solid fa-triangle-exclamation"></i>
-          Load an audio file to run segmentation
-        </span>
-      {:else if audioState.isIntervalSelected}
-        <span class="status-badge status-info">
-          <i class="fa-solid fa-crop-simple"></i>
-          Selection active: {audioState.audioRangeStart.toFixed(1)}s &ndash; {audioState.audioRangeEnd.toFixed(
-            1,
-          )}s ({Math.max(
-            0,
-            audioState.audioRangeEnd - audioState.audioRangeStart,
-          ).toFixed(1)}s)
-        </span>
-      {:else}
-        <span class="status-badge status-neutral">
-          <i class="fa-solid fa-wave-square"></i>
-          Target: Full recording ({audioState.totalAudioDuration.toFixed(1)}s)
-        </span>
-      {/if}
-
-      {#if transcriptState.segments.length > 0}
-        <span class="status-badge status-pill">
-          {transcriptState.segments.length} segment{transcriptState.segments
-            .length === 1
-            ? ''
-            : 's'}
-        </span>
-      {/if}
-
-      {#if segmentsInIntervalCount > 0}
-        <span
-          class="status-badge status-warning"
-          title="{segmentsInIntervalCount} existing segment(s) in this interval will be replaced upon confirmation"
-        >
-          <i class="fa-solid fa-triangle-exclamation"></i>
-          {segmentsInIntervalCount} to replace
-        </span>
-      {/if}
-    </div>
-
-    <div class="footer-actions">
+    <div class="side-panel-header-actions">
       <button
         type="button"
         class="panel-tool-btn {appState.showHelpText ? 'active' : ''}"
@@ -354,37 +113,6 @@
         <span>Reset</span>
       </button>
 
-      {#if appState.isProcessing && appState.activeAction === 'segment'}
-        <button
-          type="button"
-          class="btn-stop-action"
-          onclick={() => transcriptState.stopTranscription(onWorkerReset)}
-          title="Stop segmentation process"
-        >
-          <i class="fa-solid fa-stop"></i>
-          <span>Stop</span>
-        </button>
-      {/if}
-
-      <button
-        type="button"
-        class="btn-run-action btn-run-segment"
-        onclick={() => transcriptState.handleSegmentOnly()}
-        disabled={appState.isProcessing || !hasAudio}
-        title="Run Silero Voice Activity Detection"
-      >
-        {#if appState.isProcessing && appState.activeAction === 'segment'}
-          <i class="fa-solid fa-spinner fa-spin"></i>
-          <span>Segmenting Audio...</span>
-        {:else if audioState.isIntervalSelected}
-          <i class="fa-solid fa-scissors"></i>
-          <span>Segment Selection</span>
-        {:else}
-          <i class="fa-solid fa-scissors"></i>
-          <span>Run Automatic Segmentation</span>
-        {/if}
-      </button>
-
       <button
         type="button"
         class="panel-close-btn"
@@ -396,7 +124,514 @@
       </button>
     </div>
   </div>
-</div>
+
+  <!-- Panel Body -->
+  <div class="panel-body">
+    <!-- Settings Grid -->
+    <div class="settings-grid">
+      <!-- 1) Range -->
+      {#if audioState.totalAudioDuration > 0}
+        <div class="settings-col">
+          <div class="col-head">
+            <i class="fa-solid fa-clock"></i>
+            <span>Range</span>
+            {#if audioState.isIntervalSelected}
+              <button
+                type="button"
+                class="btn-reset-interval"
+                onclick={() => audioState.resetInterval()}
+                title="Use entire audio recording"
+              >
+                Reset to full
+              </button>
+            {/if}
+          </div>
+          <div class="setting-row">
+            <IntervalPicker />
+          </div>
+        </div>
+      {/if}
+
+      <!-- 2) Speaker Separation -->
+      <div class="settings-col">
+        <div class="col-head">
+          <i class="fa-solid fa-users"></i>
+          <span>Speaker Separation</span>
+        </div>
+
+        <div class="setting-row">
+          <div class="setting-inline-row">
+            <label for="inline-diar-speakers">Expected speakers</label>
+            <select
+              id="inline-diar-speakers"
+              class="setting-select setting-select-inline"
+              bind:value={transcriptState.diarizationSpeakerCount}
+              disabled={appState.isProcessing}
+            >
+              <option value={1}>1 speaker</option>
+              <option value={2}>2 speakers</option>
+              <option value={3}>3 speakers</option>
+              <option value={4}>4 speakers</option>
+              <option value={5}>5 speakers</option>
+            </select>
+          </div>
+          {#if appState.showHelpText}
+            <p class="setting-help">
+              {#if multiSpeaker}
+                Separates speech into {speakerCount} participant tracks.
+              {:else}
+                All speech assigned to Speaker 1. Select 2 or more to enable
+                speaker separation.
+              {/if}
+            </p>
+          {/if}
+        </div>
+
+        {#if multiSpeaker}
+          <!-- Overlap detection toggle -->
+          <div class="setting-row">
+            <div class="setting-inline-row">
+              <label for="inline-diar-overlap" class="setting-checkbox-label">
+                <input
+                  id="inline-diar-overlap"
+                  type="checkbox"
+                  checked={detectOverlap}
+                  onchange={toggleDetectOverlap}
+                  disabled={appState.isProcessing}
+                  class="setting-checkbox"
+                />
+                <span>Detect overlapping speech</span>
+              </label>
+            </div>
+            {#if appState.showHelpText}
+              <p class="setting-help">
+                Identifies simultaneous speech when participants talk over each
+                other, creating parallel overlapping tiers.
+              </p>
+            {/if}
+          </div>
+
+          <!-- Separation sensitivity slider -->
+          <div class="setting-row">
+            <div class="setting-inline-row">
+              <label for="inline-diar-separation">Separation sensitivity</label>
+              <div class="setting-control-right">
+                <span class="setting-val"
+                  >{separationLabels[separationLevel] || 'Balanced'}</span
+                >
+                <input
+                  id="inline-diar-separation"
+                  type="range"
+                  min="1"
+                  max="5"
+                  step="1"
+                  value={separationLevel}
+                  oninput={handleSeparationChange}
+                  disabled={appState.isProcessing}
+                  class="setting-slider"
+                  title="Separation sensitivity: {separationHint}"
+                />
+              </div>
+            </div>
+            {#if appState.showHelpText}
+              <p class="setting-help">
+                Increase sensitivity if speakers sound similar and get merged into one person; decrease sensitivity if one speaker with varied pitch gets split into multiple people.
+              </p>
+            {/if}
+          </div>
+
+          <!-- Progressive Disclosure: Advanced Acoustic Settings -->
+          <details class="diar-advanced-details">
+            <summary class="diar-advanced-summary">
+              <i class="fa-solid fa-sliders"></i>
+              <span>Advanced acoustic parameters</span>
+            </summary>
+            <div class="diar-advanced-content">
+              <div class="setting-row">
+                <div class="setting-inline-row">
+                  <label for="inline-diar-model-adv">Diarization engine</label>
+                  <select
+                    id="inline-diar-model-adv"
+                    class="setting-select setting-select-inline"
+                    bind:value={transcriptState.diarizationModel}
+                    disabled={appState.isProcessing}
+                  >
+                    <option value="campplus">CAM++ (Fast Turn-Level)</option>
+                    <option value="pyannote">PyAnnote + CAM++ (Overlaps)</option
+                    >
+                  </select>
+                </div>
+              </div>
+
+              <div class="setting-row">
+                <div class="setting-inline-row">
+                  <label for="inline-diar-raw-thresh">Clustering distance</label
+                  >
+                  <div class="setting-control-right">
+                    <span class="setting-val"
+                      >{Number(transcriptState.diarizationThreshold).toFixed(
+                        2,
+                      )}</span
+                    >
+                    <input
+                      id="inline-diar-raw-thresh"
+                      type="range"
+                      min="0.04"
+                      max="0.25"
+                      step="0.01"
+                      bind:value={transcriptState.diarizationThreshold}
+                      disabled={appState.isProcessing}
+                      class="setting-slider"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {#if transcriptState.diarizationModel === 'pyannote'}
+                <div class="setting-row">
+                  <div class="setting-inline-row">
+                    <label for="inline-pyannote-raw-thresh"
+                      >Speech activation</label
+                    >
+                    <div class="setting-control-right">
+                      <span class="setting-val"
+                        >{Number(transcriptState.pyannoteThreshold).toFixed(
+                          2,
+                        )}</span
+                      >
+                      <input
+                        id="inline-pyannote-raw-thresh"
+                        type="range"
+                        min="0.20"
+                        max="0.80"
+                        step="0.05"
+                        bind:value={transcriptState.pyannoteThreshold}
+                        disabled={appState.isProcessing}
+                        class="setting-slider"
+                      />
+                    </div>
+                  </div>
+                </div>
+              {/if}
+            </div>
+          </details>
+        {/if}
+
+        {#if multiSpeaker && transcriptState.segments.length > 0}
+          <div class="setting-row" style="margin-top: 4px;">
+            <button
+              type="button"
+              class="btn-diarize-action"
+              onclick={() => transcriptState.handleDiarizeSegments()}
+              disabled={appState.isProcessing || transcriptState.isDiarizing}
+              title="Identify and assign speakers on already segmented utterances"
+            >
+              {#if transcriptState.isDiarizing}
+                <i class="fa-solid fa-spinner fa-spin"></i>
+                <span
+                  >Identifying speakers in {transcriptState.segments.length} segments...</span
+                >
+              {:else}
+                <i class="fa-solid fa-people-arrows"></i>
+                <span>Separate Speakers in Transcript</span>
+              {/if}
+            </button>
+          </div>
+        {/if}
+      </div>
+
+      <!-- 3) Listening & Sensitivity -->
+      <div class="settings-col">
+        <div class="col-head">
+          <i class="fa-solid fa-microphone"></i>
+          <span>Listening &amp; Sensitivity</span>
+        </div>
+
+        <div class="setting-row">
+          <div class="setting-inline-row">
+            <label for="inline-vad-thresh">Speech threshold</label>
+            <div class="setting-control-right">
+              <span class="setting-val"
+                >{Number(transcriptState.vadThreshold).toFixed(2)}</span
+              >
+              <input
+                id="inline-vad-thresh"
+                type="range"
+                min="0.2"
+                max="0.8"
+                step="0.05"
+                bind:value={transcriptState.vadThreshold}
+                disabled={appState.isProcessing}
+                class="setting-slider"
+                title="Sensitivity: {sensitivityHint}"
+              />
+            </div>
+          </div>
+          {#if appState.showHelpText}
+            <p class="setting-help">
+              Sensitivity: <strong>{sensitivityHint}</strong>. Lower threshold
+              if quiet or distant speech is being missed; raise it if background
+              noise is falsely detected.
+            </p>
+          {/if}
+        </div>
+
+        <div class="setting-row">
+          <div class="setting-inline-row">
+            <label for="inline-vad-silence">Pause to end utterance</label>
+            <div class="setting-control-right">
+              <span class="setting-val"
+                >{transcriptState.vadMinSilenceMs} ms</span
+              >
+              <input
+                id="inline-vad-silence"
+                type="range"
+                min="100"
+                max="1000"
+                step="50"
+                bind:value={transcriptState.vadMinSilenceMs}
+                disabled={appState.isProcessing}
+                class="setting-slider"
+              />
+            </div>
+          </div>
+          {#if appState.showHelpText}
+            <p class="setting-help">
+              Silence longer than this marks a new segment. Shorter values
+              produce more, smaller segments.
+            </p>
+          {/if}
+        </div>
+
+        <div class="setting-row">
+          <div class="setting-inline-row">
+            <label for="inline-vad-pad">Edge padding</label>
+            <div class="setting-control-right">
+              <span class="setting-val"
+                >{transcriptState.vadSpeechPadMs} ms</span
+              >
+              <input
+                id="inline-vad-pad"
+                type="range"
+                min="20"
+                max="200"
+                step="10"
+                bind:value={transcriptState.vadSpeechPadMs}
+                disabled={appState.isProcessing}
+                class="setting-slider"
+              />
+            </div>
+          </div>
+          {#if appState.showHelpText}
+            <p class="setting-help">
+              Extra audio preserved before and after each segment to prevent
+              clipping word boundaries.
+            </p>
+          {/if}
+        </div>
+      </div>
+
+      <!-- 4) Segment Tidying -->
+      <div class="settings-col">
+        <div class="col-head">
+          <i class="fa-solid fa-broom"></i>
+          <span>Segment Tidying</span>
+        </div>
+
+        <div class="setting-row">
+          <div class="setting-inline-row">
+            <label for="inline-vad-min-seg">Drop shorter than</label>
+            <div class="setting-control-right">
+              <span class="setting-val"
+                >{Number(transcriptState.vadMinSegmentS).toFixed(1)} s</span
+              >
+              <input
+                id="inline-vad-min-seg"
+                type="range"
+                min="0.1"
+                max="1.0"
+                step="0.1"
+                bind:value={transcriptState.vadMinSegmentS}
+                disabled={appState.isProcessing}
+                class="setting-slider"
+              />
+            </div>
+          </div>
+          {#if appState.showHelpText}
+            <p class="setting-help">
+              Discards brief noise spikes below this duration.
+            </p>
+          {/if}
+        </div>
+
+        <div class="setting-row">
+          <div class="setting-inline-row">
+            <label for="inline-vad-min-sil">Join closer than</label>
+            <div class="setting-control-right">
+              <span class="setting-val"
+                >{Number(transcriptState.vadMinSilenceS).toFixed(1)} s</span
+              >
+              <input
+                id="inline-vad-min-sil"
+                type="range"
+                min="0.2"
+                max="2.0"
+                step="0.1"
+                bind:value={transcriptState.vadMinSilenceS}
+                disabled={appState.isProcessing}
+                class="setting-slider"
+              />
+            </div>
+          </div>
+          {#if appState.showHelpText}
+            <p class="setting-help">
+              Adjacent segments closer than this duration are automatically
+              merged into one.
+            </p>
+          {/if}
+        </div>
+
+        <div class="setting-row">
+          <div class="setting-inline-row">
+            <label for="inline-vad-max-seg">Split longer than</label>
+            <div class="setting-control-right">
+              <span class="setting-val">{transcriptState.vadMaxSegmentS} s</span
+              >
+              <input
+                id="inline-vad-max-seg"
+                type="range"
+                min="10"
+                max="30"
+                step="5"
+                bind:value={transcriptState.vadMaxSegmentS}
+                disabled={appState.isProcessing}
+                class="setting-slider"
+              />
+            </div>
+          </div>
+          {#if appState.showHelpText}
+            <p class="setting-help">
+              Caps maximum segment length so utterances fit cleanly into
+              transcription model context windows.
+            </p>
+          {/if}
+        </div>
+      </div>
+    </div>
+
+    <!-- Action Bar / Footer inside panel body -->
+    <div class="panel-action-bar panel-footer">
+      <div class="footer-status">
+        {#if !hasAudio}
+          <span class="status-badge status-warning">
+            <i class="fa-solid fa-triangle-exclamation"></i>
+            Load an audio file to run segmentation
+          </span>
+        {:else if audioState.isIntervalSelected}
+          <span class="status-badge status-info">
+            <i class="fa-solid fa-crop-simple"></i>
+            Selection active: {audioState.audioRangeStart.toFixed(1)}s &ndash; {audioState.audioRangeEnd.toFixed(
+              1,
+            )}s ({Math.max(
+              0,
+              audioState.audioRangeEnd - audioState.audioRangeStart,
+            ).toFixed(1)}s)
+          </span>
+        {:else}
+          <span class="status-badge status-neutral">
+            <i class="fa-solid fa-wave-square"></i>
+            Target: Full recording ({audioState.totalAudioDuration.toFixed(1)}s)
+          </span>
+        {/if}
+
+        {#if transcriptState.segments.length > 0}
+          <span class="status-badge status-pill">
+            {transcriptState.segments.length} segment{transcriptState.segments
+              .length === 1
+              ? ''
+              : 's'}
+          </span>
+        {/if}
+
+        {#if segmentsInIntervalCount > 0}
+          <span
+            class="status-badge status-warning"
+            title="{segmentsInIntervalCount} existing segment(s) in this interval will be replaced upon confirmation"
+          >
+            <i class="fa-solid fa-triangle-exclamation"></i>
+            {segmentsInIntervalCount} to replace
+          </span>
+        {/if}
+      </div>
+
+      <div class="footer-actions">
+        <button
+          type="button"
+          class="panel-tool-btn {appState.showHelpText ? 'active' : ''}"
+          onclick={() => appState.toggleHelpText()}
+          title={appState.showHelpText
+            ? 'Hide descriptive help text'
+            : 'Show descriptive help text'}
+          aria-pressed={appState.showHelpText}
+        >
+          <i class="fa-regular fa-circle-question"></i>
+          <span>Help</span>
+        </button>
+
+        <button
+          type="button"
+          class="panel-tool-btn"
+          onclick={() => transcriptState.resetVadDiarizationDefaults()}
+          disabled={appState.isProcessing}
+          title="Reset segmentation settings to defaults"
+        >
+          <i class="fa-solid fa-rotate-left"></i>
+          <span>Reset</span>
+        </button>
+
+        {#if appState.isProcessing && appState.activeAction === 'segment'}
+          <button
+            type="button"
+            class="btn-stop-action"
+            onclick={() => transcriptState.stopTranscription(onWorkerReset)}
+            title="Stop segmentation process"
+          >
+            <i class="fa-solid fa-stop"></i>
+            <span>Stop</span>
+          </button>
+        {/if}
+
+        <button
+          type="button"
+          class="btn-run-action btn-run-segment"
+          onclick={() => transcriptState.handleSegmentOnly()}
+          disabled={appState.isProcessing || !hasAudio}
+          title="Run Silero Voice Activity Detection"
+        >
+          {#if appState.isProcessing && appState.activeAction === 'segment'}
+            <i class="fa-solid fa-spinner fa-spin"></i>
+            <span>Segmenting Audio...</span>
+          {:else if audioState.isIntervalSelected}
+            <i class="fa-solid fa-scissors"></i>
+            <span>Segment Selection</span>
+          {:else}
+            <i class="fa-solid fa-scissors"></i>
+            <span>Run Automatic Segmentation</span>
+          {/if}
+        </button>
+
+        <button
+          type="button"
+          class="panel-close-btn"
+          onclick={onClose}
+          title="Close settings panel"
+          aria-label="Close"
+        >
+          <i class="fa-solid fa-xmark"></i>
+        </button>
+      </div>
+    </div>
+  </div>
 
   <!-- Messages / Progress Alerts if any -->
   {#if appState.errorMessage}
@@ -512,32 +747,32 @@
   .panel-body {
     display: flex;
     flex-direction: column;
-    gap: 12px;
-    padding: 12px 14px;
+    gap: 8px;
+    padding: 8px 12px;
     background: transparent;
   }
 
   .settings-grid {
     display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 16px;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 10px;
   }
 
   @media (max-width: 900px) {
     .settings-grid {
       grid-template-columns: 1fr;
-      gap: 12px;
+      gap: 8px;
     }
   }
 
   .settings-col {
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: 6px;
     background: var(--bg-card, #ffffff);
     border: 1px solid var(--border-color, #e2e8f0);
     border-radius: 6px;
-    padding: 10px 12px;
+    padding: 8px 10px;
   }
 
   :global([data-theme='dark']) .settings-col {
@@ -548,13 +783,13 @@
   .col-head {
     display: flex;
     align-items: center;
-    gap: 7px;
-    font-size: 0.77rem;
+    gap: 6px;
+    font-size: 0.72rem;
     font-weight: 700;
     text-transform: uppercase;
-    letter-spacing: 0.5px;
+    letter-spacing: 0.4px;
     color: var(--text-muted, #64748b);
-    padding-bottom: 6px;
+    padding-bottom: 4px;
     border-bottom: 1px solid var(--border-color, #e2e8f0);
   }
 
@@ -573,28 +808,48 @@
   .setting-row {
     display: flex;
     flex-direction: column;
-    gap: 3px;
+    gap: 2px;
   }
 
-  .setting-label-row {
+  .setting-inline-row {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    font-size: 0.78rem;
+    gap: 8px;
+    min-height: 22px;
+    font-size: 0.76rem;
     font-weight: 600;
     color: var(--text-color, #1e293b);
   }
 
-  :global([data-theme='dark']) .setting-label-row {
+  :global([data-theme='dark']) .setting-inline-row {
     color: #e2e8f0;
+  }
+
+  .setting-inline-row label {
+    flex: 1 1 auto;
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    cursor: pointer;
+  }
+
+  .setting-control-right {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
   }
 
   .setting-val {
     font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
       monospace;
-    font-size: 0.74rem;
+    font-size: 0.72rem;
     font-weight: 700;
     color: var(--primary-color, #0284c7);
+    min-width: 58px;
+    text-align: right;
   }
 
   :global([data-theme='dark']) .setting-val {
@@ -602,34 +857,35 @@
   }
 
   .setting-slider {
-    width: 100%;
+    width: 80px;
+    flex-shrink: 0;
     accent-color: var(--primary-color, #0284c7);
     cursor: pointer;
     height: 5px;
-  }
-
-  .slider-hint {
-    font-size: 0.7rem;
-    color: var(--text-muted, #64748b);
-    display: flex;
-    justify-content: flex-end;
+    margin: 0;
   }
 
   .setting-help {
-    margin: 2px 0 0;
-    font-size: 0.7rem;
-    line-height: 1.35;
+    margin: 1px 0 0;
+    font-size: 0.68rem;
+    line-height: 1.3;
     color: var(--text-muted, #64748b);
   }
 
   .setting-select {
     width: 100%;
-    padding: 5px 8px;
-    font-size: 0.79rem;
+    padding: 3px 6px;
+    font-size: 0.76rem;
     border: 1px solid var(--border-color, #cbd5e1);
     border-radius: 5px;
     background: var(--bg-card, #ffffff);
     color: var(--text-heading, #0f172a);
+  }
+
+  .setting-select-inline {
+    width: auto;
+    max-width: 185px;
+    flex: 0 1 185px;
   }
 
   :global([data-theme='dark']) .setting-select {
@@ -638,13 +894,82 @@
     color: #f1f5f9;
   }
 
+  .setting-checkbox-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    cursor: pointer;
+    font-size: 0.76rem;
+    font-weight: 600;
+    color: var(--text-color, #1e293b);
+    user-select: none;
+  }
+
+  :global([data-theme='dark']) .setting-checkbox-label {
+    color: #e2e8f0;
+  }
+
+  .setting-checkbox {
+    cursor: pointer;
+    accent-color: var(--primary-color, #0284c7);
+    width: 14px;
+    height: 14px;
+    margin: 0;
+  }
+
+  .diar-advanced-details {
+    margin-top: 4px;
+    border: 1px dashed var(--border-color, #cbd5e1);
+    border-radius: 5px;
+    padding: 4px 6px;
+    background: rgba(0, 0, 0, 0.015);
+  }
+
+  :global([data-theme='dark']) .diar-advanced-details {
+    border-color: #334155;
+    background: rgba(255, 255, 255, 0.02);
+  }
+
+  .diar-advanced-summary {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 0.69rem;
+    font-weight: 600;
+    color: var(--text-muted, #64748b);
+    cursor: pointer;
+    user-select: none;
+    padding: 2px 0;
+  }
+
+  .diar-advanced-summary:hover {
+    color: var(--primary-color, #0284c7);
+  }
+
+  :global([data-theme='dark']) .diar-advanced-summary:hover {
+    color: #38bdf8;
+  }
+
+  .diar-advanced-content {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-top: 6px;
+    padding-top: 6px;
+    border-top: 1px solid var(--border-color, #e2e8f0);
+  }
+
+  :global([data-theme='dark']) .diar-advanced-content {
+    border-top-color: #334155;
+  }
+
   .btn-diarize-action {
     display: inline-flex;
     align-items: center;
     justify-content: center;
     gap: 6px;
-    padding: 6px 10px;
-    font-size: 0.76rem;
+    padding: 5px 8px;
+    font-size: 0.74rem;
     font-weight: 600;
     background: #ede9fe;
     border: 1px solid #ddd6fe;
@@ -665,27 +990,14 @@
     color: #c084fc;
   }
 
-  .portion-box {
-    margin-top: 4px;
-    padding-top: 6px;
-    border-top: 1px dashed var(--border-color, #cbd5e1);
-  }
-
-  :global([data-theme='dark']) .portion-box {
-    border-top-color: #334155;
-  }
-
-  .portion-label {
-    font-size: 0.75rem;
-    font-weight: 700;
-    color: var(--text-muted, #64748b);
-  }
-
   .btn-reset-interval {
+    margin-left: auto;
     background: transparent;
     border: none;
     font-size: 0.69rem;
     font-weight: 600;
+    text-transform: none;
+    letter-spacing: normal;
     color: var(--primary-color, #0284c7);
     cursor: pointer;
     padding: 0;
@@ -698,8 +1010,8 @@
     align-items: center;
     justify-content: space-between;
     flex-wrap: wrap;
-    gap: 10px;
-    padding-top: 10px;
+    gap: 8px;
+    padding-top: 8px;
     border-top: 1px solid var(--border-color, #cbd5e1);
     background: transparent;
   }
@@ -713,7 +1025,7 @@
   .footer-status {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 6px;
     flex-wrap: wrap;
   }
 
@@ -721,8 +1033,8 @@
     display: inline-flex;
     align-items: center;
     gap: 5px;
-    font-size: 0.74rem;
-    padding: 3px 7px;
+    font-size: 0.72rem;
+    padding: 2px 6px;
     border-radius: 4px;
     font-weight: 600;
   }
@@ -766,8 +1078,8 @@
     display: inline-flex;
     align-items: center;
     gap: 7px;
-    padding: 7px 16px;
-    font-size: 0.82rem;
+    padding: 6px 14px;
+    font-size: 0.8rem;
     font-weight: 700;
     color: #ffffff;
     background: #0284c7;
@@ -794,8 +1106,8 @@
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    padding: 7px 14px;
-    font-size: 0.82rem;
+    padding: 6px 12px;
+    font-size: 0.8rem;
     font-weight: 700;
     color: #ffffff;
     background: #ef4444;
@@ -813,8 +1125,8 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 8px 14px;
-    font-size: 0.78rem;
+    padding: 6px 12px;
+    font-size: 0.76rem;
     font-weight: 600;
     border-top: 1px solid transparent;
   }
@@ -827,5 +1139,110 @@
 
   :global([data-theme='dark']) .alert-danger {
     color: #f87171;
+  }
+
+  .side-panel-header {
+    display: none;
+  }
+
+  @media (min-width: 1081px) {
+    .inline-settings-panel {
+      height: 100%;
+      max-height: 100%;
+      min-height: 0;
+      border-radius: 8px;
+      border-top: 2px solid var(--primary-color, #0284c7);
+      border-bottom: 1px solid var(--border-color, #cbd5e1);
+      overflow: hidden;
+    }
+
+    :global([data-theme='dark']) .inline-settings-panel {
+      border-top-color: #38bdf8;
+      border-bottom-color: #334155;
+    }
+
+    .side-panel-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 8px 12px;
+      background: var(--bg-card, #ffffff);
+      border-bottom: 1px solid var(--border-color, #cbd5e1);
+      flex-shrink: 0;
+    }
+
+    :global([data-theme='dark']) .side-panel-header {
+      background: #1e293b;
+      border-bottom-color: #334155;
+    }
+
+    .side-panel-title {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.84rem;
+      font-weight: 700;
+      color: var(--text-heading, #0f172a);
+    }
+
+    :global([data-theme='dark']) .side-panel-title {
+      color: #f8fafc;
+    }
+
+    .side-panel-title i {
+      color: var(--primary-color, #0284c7);
+    }
+
+    :global([data-theme='dark']) .side-panel-title i {
+      color: #38bdf8;
+    }
+
+    .side-panel-header-actions {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .panel-body {
+      flex: 1;
+      min-height: 0;
+      overflow: hidden;
+      padding: 8px 10px;
+      gap: 6px;
+    }
+
+    .settings-grid {
+      grid-template-columns: 1fr;
+      gap: 6px;
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto;
+      padding-right: 2px;
+      scrollbar-width: thin;
+      align-content: start;
+    }
+
+    .panel-footer {
+      flex-shrink: 0;
+      flex-direction: column;
+      align-items: stretch;
+      gap: 6px;
+      padding-top: 6px;
+    }
+
+    .footer-actions {
+      width: 100%;
+    }
+
+    .footer-actions .panel-tool-btn,
+    .footer-actions .panel-close-btn {
+      display: none;
+    }
+
+    .footer-actions .btn-run-action {
+      flex: 1;
+      justify-content: center;
+    }
   }
 </style>

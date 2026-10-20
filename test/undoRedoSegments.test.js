@@ -201,6 +201,47 @@ describe('Segment Editing Undo / Redo Stack', () => {
       expect(transcriptState.segments[0].end).toBe(9.0);
     });
 
+    it('only merges with next segment of the same speaker and preserves overlapping segments of other speakers', () => {
+      const segA_spk1 = { id: 's1-a', start: 2.0, end: 5.0, duration: 3.0, speakerId: 1, text: 'First part' };
+      const seg_spk2 = { id: 's2-overlap', start: 3.0, end: 6.0, duration: 3.0, speakerId: 2, text: 'Overlapping cross-talk' };
+      const segB_spk1 = { id: 's1-b', start: 7.0, end: 10.0, duration: 3.0, speakerId: 1, text: 'Second part' };
+
+      transcriptState.segments = [segA_spk1, seg_spk2, segB_spk1];
+
+      // getNextSegment on s1-a must return s1-b, ignoring the overlapping speaker 2 segment
+      const nextForS1 = transcriptState.getNextSegment('s1-a');
+      expect(nextForS1).not.toBeNull();
+      expect(nextForS1.id).toBe('s1-b');
+      expect(nextForS1.speakerId).toBe(1);
+
+      // Next segment for s2-overlap should be null since it has no second segment
+      expect(transcriptState.getNextSegment('s2-overlap')).toBeNull();
+
+      // Merge s1-a: should merge with s1-b, leaving s2-overlap completely intact
+      const merged = transcriptState.mergeSegmentWithNext('s1-a');
+      expect(merged).not.toBeNull();
+      expect(merged.start).toBe(2.0);
+      expect(merged.end).toBe(10.0);
+      expect(merged.text).toBe('First part Second part');
+      expect(merged.speakerId).toBe(1);
+
+      // Remaining segments must be 2: the merged S1 segment and the untouched S2 overlap
+      expect(transcriptState.segments.length).toBe(2);
+      const s2Seg = transcriptState.segments.find((s) => s.id === 's2-overlap');
+      expect(s2Seg).toBeDefined();
+      expect(s2Seg.start).toBe(3.0);
+      expect(s2Seg.end).toBe(6.0);
+      expect(s2Seg.speakerId).toBe(2);
+      expect(s2Seg.text).toBe('Overlapping cross-talk');
+
+      // Undo should restore all three segments
+      transcriptState.undo();
+      expect(transcriptState.segments.length).toBe(3);
+      expect(transcriptState.segments.find((s) => s.id === 's1-a')).toBeDefined();
+      expect(transcriptState.segments.find((s) => s.id === 's1-b')).toBeDefined();
+      expect(transcriptState.segments.find((s) => s.id === 's2-overlap')).toBeDefined();
+    });
+
     it('undos boundary modifications using prior gesture snapshot', () => {
       const seg = { id: 'seg-1', start: 2.0, end: 5.0, duration: 3.0, speakerId: 1 };
       transcriptState.segments = [seg];

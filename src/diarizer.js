@@ -189,6 +189,34 @@ export async function getDiarizerSession(modelData = null) {
 }
 
 /**
+ * Ensures audio has at least minDurationSec by loop-padding / tiling.
+ * CAM++ uses 52 CAM layers containing AveragePool(kernel_shape=[100], strides=[100], ceil_mode=1).
+ * When audio has fewer than ~200 frames (< 2.0s), the pooling statistics are severely distorted,
+ * causing different-length utterances of the SAME speaker to appear distant in embedding space.
+ * Loop-padding preserves speaker formants, pitch, and timbre identically without injecting
+ * zero-energy frames that corrupt cepstral mean/variance normalization (CMVN).
+ *
+ * @param {Float32Array} audioFloat32 16kHz mono audio samples
+ * @param {number} [minDurationSec=2.5] Minimum duration in seconds
+ * @param {number} [sampleRate=16000] Sample rate
+ * @returns {Float32Array} Padded or original audio
+ */
+export function ensureMinAudioDuration(audioFloat32, minDurationSec = 2.5, sampleRate = 16000) {
+  if (!audioFloat32 || audioFloat32.length === 0) return audioFloat32;
+  const minSamples = Math.ceil(minDurationSec * sampleRate);
+  if (audioFloat32.length >= minSamples) return audioFloat32;
+
+  const padded = new Float32Array(minSamples);
+  let offset = 0;
+  while (offset < minSamples) {
+    const chunk = audioFloat32.subarray(0, Math.min(audioFloat32.length, minSamples - offset));
+    padded.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return padded;
+}
+
+/**
  * Extracts a speaker embedding vector for an audio segment.
  * Automatically adapts between FBank-input models (e.g. CAM++ / ECAPA-TDNN) and raw waveform models.
  *
@@ -206,6 +234,10 @@ export async function extractSpeakerEmbedding(audioFloat32, session) {
     return null;
   }
 
+  // Duration-normalize audio to at least 2.5s via periodic loop-padding so the 52 CAM pooling
+  // layers (kernel_shape=[100] frames) have sufficient temporal receptive field.
+  const inputAudio = ensureMinAudioDuration(audioFloat32, 2.5, 16000);
+
   const inputNames = session.inputNames || ['x'];
   const firstInput = inputNames[0] || 'x';
   const feeds = {};
@@ -220,11 +252,11 @@ export async function extractSpeakerEmbedding(audioFloat32, session) {
       firstInput.toLowerCase().includes('speech');
 
     if (isWaveformInput) {
-      inputTensor = new ort.Tensor('float32', audioFloat32, [1, audioFloat32.length]);
+      inputTensor = new ort.Tensor('float32', inputAudio, [1, inputAudio.length]);
       feeds[firstInput] = inputTensor;
     } else {
       // Standard 80-dim log-mel FBANK features
-      const fbank = extractFbank(audioFloat32, {
+      const fbank = extractFbank(inputAudio, {
         sampleRate: 16000,
         frameLengthMs: 25,
         frameShiftMs: 10,

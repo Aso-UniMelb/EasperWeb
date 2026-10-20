@@ -262,11 +262,11 @@ export function agglomerativeClustering(embeddings, options = {}) {
  * 
  * @param {Array<Object>} segments Segments with { id, start, end, duration }
  * @param {Array<number>} labels Cluster labels per segment
- * @param {number} [minDurationS=0.8] Minimum duration to trust short segment speaker label
- * @param {number} [maxSilenceS=0.6] Maximum silence pause between segments to allow bridge smoothing
+ * @param {number} [minDurationS=0.4] Minimum duration to trust short segment speaker label
+ * @param {number} [maxSilenceS=0.4] Maximum silence pause between segments to allow bridge smoothing
  * @returns {Array<number>} Smoothed cluster labels
  */
-export function smoothSpeakerLabels(segments, labels, minDurationS = 0.8, maxSilenceS = 0.6) {
+export function smoothSpeakerLabels(segments, labels, minDurationS = 0.4, maxSilenceS = 0.4) {
   if (!segments || segments.length <= 2 || labels.length !== segments.length) {
     return [...labels];
   }
@@ -532,4 +532,269 @@ export function diarizeAndAssignSpeakers(segments, embeddings, options = {}) {
     };
   });
 }
+
+/**
+ * Calculates the Root Mean Square (RMS) energy of an audio sample array.
+ * @param {Float32Array|Array<number>} samples
+ * @returns {number}
+ */
+export function calculateAudioRms(samples) {
+  if (!samples || samples.length === 0) return 0;
+  let sumSq = 0;
+  for (let i = 0; i < samples.length; i++) {
+    sumSq += samples[i] * samples[i];
+  }
+  return Math.sqrt(sumSq / samples.length);
+}
+
+/**
+ * Prepares utterance-level chunks for speaker diarization.
+ * Utterances <= maxChunkDuration are kept whole (delivering maximum embedding stability).
+ * Long utterances (> maxChunkDuration) are divided into sub-chunks to enable speaker turn detection.
+ *
+ * @param {Array<Object>} segments Array of segment objects with { start, end }
+ * @param {Object} [options]
+ * @param {number} [options.maxChunkDuration=6.0] Maximum duration before slicing into sub-chunks
+ * @param {number} [options.subChunkDuration=3.0] Duration of sub-chunks for long segments
+ * @returns {Array<Object>}
+ */
+export function prepareUtteranceChunks(segments, options = {}) {
+  const { maxChunkDuration = 6.0, subChunkDuration = 3.0 } = options;
+  if (!Array.isArray(segments) || segments.length === 0) return [];
+
+  const chunks = [];
+  for (let i = 0; i < segments.length; i++) {
+    const seg = segments[i];
+    const startSec = Math.max(0, seg.start ?? 0);
+    const endSec = Math.max(startSec + 0.1, seg.end ?? (startSec + 1));
+    const duration = endSec - startSec;
+
+    if (duration <= maxChunkDuration) {
+      chunks.push({
+        chunkIndex: chunks.length,
+        start: Number(startSec.toFixed(3)),
+        end: Number(endSec.toFixed(3)),
+        duration: Number(duration.toFixed(3)),
+        segIdx: i,
+        segId: seg.id,
+        isSubChunk: false,
+        subIdx: 0,
+        originalSeg: seg,
+      });
+    } else {
+      // Long segment (> maxChunkDuration): slice into sub-chunks so speaker transitions can be detected
+      let currStart = startSec;
+      let subIdx = 0;
+      while (currStart < endSec) {
+        const nextEnd = Math.min(endSec, currStart + subChunkDuration);
+        chunks.push({
+          chunkIndex: chunks.length,
+          start: Number(currStart.toFixed(3)),
+          end: Number(nextEnd.toFixed(3)),
+          duration: Number((nextEnd - currStart).toFixed(3)),
+          segIdx: i,
+          segId: seg.id,
+          isSubChunk: true,
+          subIdx,
+          originalSeg: seg,
+        });
+        currStart = nextEnd;
+        subIdx++;
+      }
+    }
+  }
+
+  return chunks;
+}
+
+/**
+ * Reconciles chunk cluster labels back to segments.
+ * Segments with multiple sub-chunks that share the same cluster remain intact.
+ * Segments with multiple sub-chunks that have different clusters are cleanly split at turn boundaries.
+ *
+ * @param {Array<Object>} chunks Chunks emitted by prepareUtteranceChunks
+ * @param {Array<number>} chunkLabels Cluster label per chunk
+ * @param {Array<Object>} originalSegments Original input segments
+ * @returns {Array<Object>}
+ */
+export function reconcileUtteranceSegments(chunks, chunkLabels, originalSegments) {
+  if (!originalSegments || originalSegments.length === 0) return [];
+  if (!chunks || chunks.length === 0 || !chunkLabels) {
+    return originalSegments.map((s) => ({ ...s, cluster: 0 }));
+  }
+
+  // Group chunk labels by original segment index
+  const chunksBySeg = new Map();
+  for (let i = 0; i < chunks.length; i++) {
+    const ch = chunks[i];
+    const lbl = chunkLabels[i] ?? 0;
+    if (!chunksBySeg.has(ch.segIdx)) {
+      chunksBySeg.set(ch.segIdx, []);
+    }
+    chunksBySeg.get(ch.segIdx).push({ ...ch, cluster: lbl });
+  }
+
+  const outSegments = [];
+  for (let i = 0; i < originalSegments.length; i++) {
+    const seg = originalSegments[i];
+    const segChunks = chunksBySeg.get(i) || [];
+
+    if (segChunks.length <= 1) {
+      const cluster = segChunks.length === 1 ? segChunks[0].cluster : 0;
+      outSegments.push({
+        ...seg,
+        cluster,
+      });
+      continue;
+    }
+
+    // Multiple sub-chunks: check if all have the same cluster or if there is a speaker turn
+    const firstCluster = segChunks[0].cluster;
+    const allSame = segChunks.every((c) => c.cluster === firstCluster);
+
+    if (allSame) {
+      outSegments.push({
+        ...seg,
+        cluster: firstCluster,
+      });
+      continue;
+    }
+
+    // Turn detected: merge contiguous sub-chunks with same cluster and split the segment
+    const groupedParts = [];
+    let currentPart = {
+      start: segChunks[0].start,
+      end: segChunks[0].end,
+      cluster: segChunks[0].cluster,
+    };
+
+    for (let cIdx = 1; cIdx < segChunks.length; cIdx++) {
+      const ch = segChunks[cIdx];
+      if (ch.cluster === currentPart.cluster) {
+        currentPart.end = ch.end;
+      } else {
+        groupedParts.push(currentPart);
+        currentPart = {
+          start: ch.start,
+          end: ch.end,
+          cluster: ch.cluster,
+        };
+      }
+    }
+    groupedParts.push(currentPart);
+
+    // Ensure seamless boundaries covering the exact original segment span
+    groupedParts[0].start = seg.start;
+    for (let k = 0; k < groupedParts.length - 1; k++) {
+      const mid = Number(((groupedParts[k].end + groupedParts[k + 1].start) / 2).toFixed(2));
+      groupedParts[k].end = mid;
+      groupedParts[k + 1].start = mid;
+    }
+    groupedParts[groupedParts.length - 1].end = seg.end;
+
+    // Split text proportionally if text exists
+    const origText = String(seg.text || '').trim();
+    const words = origText ? origText.split(/\s+/) : [];
+    const totalDur = seg.end - seg.start;
+
+    let wordOffset = 0;
+    for (let pIdx = 0; pIdx < groupedParts.length; pIdx++) {
+      const part = groupedParts[pIdx];
+      const partDur = part.end - part.start;
+      let partText = '';
+
+      if (words.length > 0) {
+        const wordCountForPart =
+          pIdx === groupedParts.length - 1
+            ? words.length - wordOffset
+            : Math.max(1, Math.round((partDur / totalDur) * words.length));
+        partText = words.slice(wordOffset, wordOffset + wordCountForPart).join(' ');
+        wordOffset += wordCountForPart;
+      }
+
+      const partId = pIdx === 0 ? seg.id : `${seg.id}-${pIdx + 1}`;
+      outSegments.push({
+        ...seg,
+        id: partId,
+        start: Number(part.start.toFixed(2)),
+        end: Number(part.end.toFixed(2)),
+        duration: Number((part.end - part.start).toFixed(2)),
+        text: partText,
+        cluster: part.cluster,
+      });
+    }
+  }
+
+  return outSegments;
+}
+
+/**
+ * Full utterance-level diarization pipeline:
+ * clusters embeddings, reconciles chunks, applies smoothing, and assigns speaker metadata.
+ *
+ * @param {Object} params
+ * @param {Array<Object>} params.chunks
+ * @param {Array<Float32Array>} params.chunkEmbeddings
+ * @param {Array<Object>} params.originalSegments
+ * @param {number} [params.speakerCount=2]
+ * @param {Array<Object>} [params.projectSpeakers=[]]
+ * @returns {Array<Object>} Diarized segments with speakerId and speaker name
+ */
+export function diarizeUtterances({
+  chunks = [],
+  chunkEmbeddings = [],
+  originalSegments = [],
+  speakerCount = 2,
+  threshold = 0.70,
+  projectSpeakers = [],
+  distanceSpace = 'cosine',
+  smoothMinDuration = 0.4,
+} = {}) {
+  if (!originalSegments || originalSegments.length === 0) return [];
+  if (!chunkEmbeddings || chunkEmbeddings.length === 0) {
+    return originalSegments;
+  }
+
+  // 1. Cluster embeddings with AHC on direct cosine distance (unbiased by speaker duration)
+  const isAuto = speakerCount === 'auto' || speakerCount === 0 || speakerCount == null;
+  const numParsed = isAuto ? null : Number(speakerCount);
+  const targetK = numParsed && !isNaN(numParsed) && numParsed >= 1 ? Math.min(5, Math.floor(numParsed)) : null;
+  const targetClusters = targetK ? Math.min(chunkEmbeddings.length, targetK) : null;
+
+  const rawLabels = agglomerativeClustering(chunkEmbeddings, {
+    targetClusters,
+    threshold: Number(threshold) || 0.70,
+    distanceSpace,
+  });
+
+  // 2. Reconcile chunks back to segments (splitting turns if sub-chunks differ)
+  const reconciledSegments = reconcileUtteranceSegments(chunks, rawLabels, originalSegments);
+
+  // 3. Temporal smoothing on short flanked segments
+  const clusterLabels = reconciledSegments.map((s) => s.cluster ?? 0);
+  const smoothedLabels = smoothSpeakerLabels(reconciledSegments, clusterLabels, smoothMinDuration);
+
+  // 4. Map cluster IDs (0..K-1) to speaker IDs (1..5) and names
+  const spkMap = new Map();
+  if (Array.isArray(projectSpeakers)) {
+    for (const spk of projectSpeakers) {
+      if (spk && spk.id != null) spkMap.set(Number(spk.id), spk);
+    }
+  }
+
+  return reconciledSegments.map((seg, idx) => {
+    const clusterId = smoothedLabels[idx] ?? 0;
+    const speakerId = Math.min(5, clusterId + 1);
+    const matched = spkMap.get(speakerId);
+    const speakerName = matched?.name || `Speaker ${speakerId}`;
+
+    const { cluster, ...rest } = seg;
+    return {
+      ...rest,
+      speakerId,
+      speaker: speakerName,
+    };
+  });
+}
+
 

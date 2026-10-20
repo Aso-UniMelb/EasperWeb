@@ -22,7 +22,6 @@
 
   let { onWorkerReset } = $props();
 
-  let activeDrawer = $state(null); // 'segmentation' | 'recognition' | 'tagging' | 'find-replace' | null
   let waveformDualWrapperEl = $state(null);
 
   let projectSpeakers = $derived(
@@ -35,49 +34,6 @@
   let pillarLayout = $derived(
     getWaveformPillarLayout(sidebarWidth, projectSpeakers),
   );
-
-  let isAutomationMenuOpen = $state(false);
-  let automationMenuContainer = $state(null);
-
-  function toggleDrawer(name) {
-    activeDrawer = activeDrawer === name ? null : name;
-  }
-
-  function toggleAutomationMenu() {
-    isAutomationMenuOpen = !isAutomationMenuOpen;
-  }
-
-  function selectAutomationTool(tool) {
-    toggleDrawer(tool);
-    isAutomationMenuOpen = false;
-  }
-
-  $effect(() => {
-    if (!isAutomationMenuOpen) return;
-
-    function handlePointerDown(e) {
-      if (
-        automationMenuContainer &&
-        !automationMenuContainer.contains(e.target)
-      ) {
-        isAutomationMenuOpen = false;
-      }
-    }
-
-    function handleKeyDown(e) {
-      if (e.key === 'Escape') {
-        isAutomationMenuOpen = false;
-      }
-    }
-
-    window.addEventListener('pointerdown', handlePointerDown);
-    window.addEventListener('keydown', handleKeyDown);
-
-    return () => {
-      window.removeEventListener('pointerdown', handlePointerDown);
-      window.removeEventListener('keydown', handleKeyDown);
-    };
-  });
 
   // Ctrl + Scroll / Cmd + Scroll to adjust vertical zoom while keeping playhead visible
   $effect(() => {
@@ -179,6 +135,7 @@
   $effect(() => {
     if (transcriptState.waveformWrapEl) {
       const _currentH = transcriptState.waveformCalculatedHeight;
+      const _hZoom = transcriptState.waveformHorizontalZoom;
       const _tiles = transcriptState.visibleWaveformTiles;
       const _activeSeg = transcriptState.currentTranscribingSegment;
       const _rangeStart = audioState.audioRangeStart;
@@ -325,7 +282,12 @@
 </script>
 
 <!-- Dual-Column Layout: Fixed Header (Play, Zoom, Add Segment) + Scrollable Container -->
-<div class="waveform-dual-wrapper" bind:this={waveformDualWrapperEl}>
+<div
+  class="waveform-dual-wrapper {transcriptState.activeDrawer
+    ? 'has-automation-panel'
+    : ''}"
+  bind:this={waveformDualWrapperEl}
+>
   <div class="waveform-dual-header-bar">
     <!-- Play / Pause Button -->
     <button
@@ -368,6 +330,30 @@
       />
       <span class="waveform-zoom-badge">
         {transcriptState.WAVEFORM_SCALE_PX_PER_SEC}
+      </span>
+    </div>
+
+    <!-- Horizontal Zoom (Signal Power) Control -->
+    <div
+      class="waveform-power-control"
+      title="Horizontal Zoom (Signal Power): {transcriptState.waveformHorizontalZoom.toFixed(
+        1,
+      )}x (range: 1.0x – 10.0x)"
+    >
+      <i class="fa-solid fa-wave-square power-icon"></i>
+      <input
+        type="range"
+        min="1"
+        max="10"
+        step="0.5"
+        value={transcriptState.waveformHorizontalZoom}
+        oninput={(e) =>
+          transcriptState.setHorizontalZoom(Number(e.target.value))}
+        class="waveform-power-slider"
+        aria-label="Horizontal zoom (signal power) for waveform canvas"
+      />
+      <span class="waveform-power-badge">
+        {transcriptState.waveformHorizontalZoom.toFixed(1)}x
       </span>
     </div>
 
@@ -428,170 +414,6 @@
 
     <div class="header-action-divider"></div>
 
-    <!-- Automation Tools Dropdown Collection -->
-    <div
-      class="automation-dropdown-container"
-      bind:this={automationMenuContainer}
-    >
-      <button
-        type="button"
-        class="btn-automation-menu-trigger {isAutomationMenuOpen
-          ? 'active'
-          : ''} {activeDrawer ? 'drawer-active' : ''}"
-        onclick={toggleAutomationMenu}
-        aria-expanded={isAutomationMenuOpen}
-        title="Automation tools: Auto Segmentation, Speech Recognition, and Auto Tagging"
-      >
-        <i class="fa-solid fa-wand-magic-sparkles"></i>
-        <span>Automation Tools</span>
-        <!-- {#if activeDrawer}
-          <span class="active-drawer-pill">
-            {activeDrawer === 'segmentation'
-              ? 'Segmentation'
-              : activeDrawer === 'recognition'
-                ? 'Recognition'
-                : 'Tagging'}
-          </span>
-        {/if} -->
-        <!-- {#if transcriptState.emptySegmentsCount > 0 && !activeDrawer}
-          <span
-            class="tool-count-badge"
-            title="{transcriptState.emptySegmentsCount} empty segments awaiting speech recognition"
-          >
-            {transcriptState.emptySegmentsCount}
-          </span>
-        {/if} -->
-        <i
-          class="fa-solid fa-chevron-down caret-icon {isAutomationMenuOpen
-            ? 'rotated'
-            : ''}"
-        ></i>
-      </button>
-
-      {#if isAutomationMenuOpen}
-        <div class="automation-dropdown-menu" role="menu">
-          <div class="dropdown-category-title">
-            <i class="fa-solid fa-bolt"></i>
-            <span>AI &amp; Automation</span>
-          </div>
-
-          <!-- Auto Segmentation -->
-          <button
-            type="button"
-            class="automation-menu-item {activeDrawer === 'segmentation'
-              ? 'active-item'
-              : ''}"
-            role="menuitem"
-            onclick={() => selectAutomationTool('segmentation')}
-            title="Automatic speech segmentation (Silero VAD or uniform intervals)"
-          >
-            <div class="item-icon-box icon-segmentation">
-              <i class="fa-solid fa-scissors"></i>
-            </div>
-            <div class="item-text-box">
-              <div class="item-title-row">
-                <span class="item-title">Auto Segmentation</span>
-                {#if activeDrawer === 'segmentation'}
-                  <span class="item-status-pill">Active</span>
-                {/if}
-              </div>
-              <div class="item-desc">
-                Detect speech boundaries with Silero VAD or uniform intervals
-              </div>
-            </div>
-          </button>
-
-          <!-- Speech Recognition -->
-          <button
-            type="button"
-            class="automation-menu-item {activeDrawer === 'recognition'
-              ? 'active-item'
-              : ''}"
-            role="menuitem"
-            onclick={() => selectAutomationTool('recognition')}
-            title="Speech recognition model settings and execution"
-          >
-            <div class="item-icon-box icon-recognition">
-              <i class="fa-solid fa-brain"></i>
-            </div>
-            <div class="item-text-box">
-              <div class="item-title-row">
-                <span class="item-title">Speech Recognition</span>
-                {#if transcriptState.emptySegmentsCount > 0}
-                  <span
-                    class="tool-count-badge"
-                    title="{transcriptState.emptySegmentsCount} segments awaiting transcription"
-                  >
-                    {transcriptState.emptySegmentsCount}
-                  </span>
-                {/if}
-                {#if activeDrawer === 'recognition'}
-                  <span class="item-status-pill">Active</span>
-                {/if}
-              </div>
-              <div class="item-desc">
-                Transcribe speech to text using Whisper ONNX models
-              </div>
-            </div>
-          </button>
-
-          <!-- Auto Tagging -->
-          <button
-            type="button"
-            class="automation-menu-item {activeDrawer === 'tagging'
-              ? 'active-item'
-              : ''}"
-            role="menuitem"
-            onclick={() => selectAutomationTool('tagging')}
-            title="Automatically tag word-level sub-tiers from active lexicon"
-          >
-            <div class="item-icon-box icon-tagging">
-              <i class="fa-solid fa-tags"></i>
-            </div>
-            <div class="item-text-box">
-              <div class="item-title-row">
-                <span class="item-title">Auto Tagging</span>
-                {#if activeDrawer === 'tagging'}
-                  <span class="item-status-pill">Active</span>
-                {/if}
-              </div>
-              <div class="item-desc">
-                Automatically annotate word tokens from project lexicons
-              </div>
-            </div>
-          </button>
-
-          <!-- Find & Replace -->
-          <button
-            type="button"
-            class="automation-menu-item {activeDrawer === 'find-replace'
-              ? 'active-item'
-              : ''}"
-            role="menuitem"
-            onclick={() => selectAutomationTool('find-replace')}
-            title="Find and replace text across transcription tiers and sub-tiers"
-          >
-            <div class="item-icon-box icon-find-replace">
-              <i class="fa-solid fa-arrow-right-arrow-left"></i>
-            </div>
-            <div class="item-text-box">
-              <div class="item-title-row">
-                <span class="item-title">Find &amp; Replace</span>
-                {#if activeDrawer === 'find-replace'}
-                  <span class="item-status-pill">Active</span>
-                {/if}
-              </div>
-              <div class="item-desc">
-                Search and replace text in main transcription and sub-tiers
-              </div>
-            </div>
-          </button>
-        </div>
-      {/if}
-    </div>
-
-    <div class="header-action-divider"></div>
-
     <!-- Writing Direction Toggle (LTR <-> RTL) -->
     <button
       type="button"
@@ -632,21 +454,29 @@
     {/if}
   </div>
 
-  <!-- Inline Settings Panel Drawer opens above transcript-dual-container -->
-  {#if activeDrawer === 'segmentation'}
-    <SegmentationSettingsPanel
-      onClose={() => (activeDrawer = null)}
-      {onWorkerReset}
-    />
-  {:else if activeDrawer === 'recognition'}
-    <SpeechRecognitionSettingsPanel
-      onClose={() => (activeDrawer = null)}
-      {onWorkerReset}
-    />
-  {:else if activeDrawer === 'tagging'}
-    <AutoTaggingSettingsPanel onClose={() => (activeDrawer = null)} />
-  {:else if activeDrawer === 'find-replace'}
-    <FindAndReplacePanel onClose={() => (activeDrawer = null)} />
+  <!-- Settings Panel Drawer: opens as a side panel on wide screens, or inline above transcript on narrower screens -->
+  {#if transcriptState.activeDrawer}
+    <aside class="automation-panel-slot" aria-label="Automation Tool Settings">
+      {#if transcriptState.activeDrawer === 'segmentation'}
+        <SegmentationSettingsPanel
+          onClose={() => (transcriptState.activeDrawer = null)}
+          {onWorkerReset}
+        />
+      {:else if transcriptState.activeDrawer === 'recognition'}
+        <SpeechRecognitionSettingsPanel
+          onClose={() => (transcriptState.activeDrawer = null)}
+          {onWorkerReset}
+        />
+      {:else if transcriptState.activeDrawer === 'tagging'}
+        <AutoTaggingSettingsPanel
+          onClose={() => (transcriptState.activeDrawer = null)}
+        />
+      {:else if transcriptState.activeDrawer === 'find-replace'}
+        <FindAndReplacePanel
+          onClose={() => (transcriptState.activeDrawer = null)}
+        />
+      {/if}
+    </aside>
   {/if}
 
   <div
@@ -1459,15 +1289,6 @@
     cursor: not-allowed;
   }
 
-  .tool-count-badge {
-    font-size: 0.65rem;
-    font-weight: 700;
-    padding: 1px 5px;
-    border-radius: 10px;
-    background: rgba(245, 158, 11, 0.2);
-    color: #b45309;
-  }
-
   :global([data-theme='dark']) .btn-header-tool {
     background-color: rgba(30, 41, 59, 0.8);
     border-color: #475569;
@@ -1478,10 +1299,5 @@
     background-color: #334155;
     border-color: #38bdf8;
     color: #38bdf8;
-  }
-
-  :global([data-theme='dark']) .tool-count-badge {
-    background: rgba(245, 158, 11, 0.25);
-    color: #fbbf24;
   }
 </style>

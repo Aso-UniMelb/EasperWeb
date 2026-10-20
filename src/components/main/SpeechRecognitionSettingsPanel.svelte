@@ -8,6 +8,7 @@
     normalizeSubTiers,
     SUB_TIER_TYPE_SENTENCE,
   } from '../../utils/subTiers.js';
+  import IntervalPicker from './IntervalPicker.svelte';
 
   let { onClose = () => {}, onWorkerReset } = $props();
 
@@ -18,7 +19,8 @@
   const hasAudio = $derived(
     Boolean(audioState.selectedFile || audioState.currentAudioUrl),
   );
-  const emptyCount = $derived(transcriptState.emptySegmentsCount);
+  const emptyCount = $derived(transcriptState.emptySegmentsInSelectedRangeCount);
+  const rangeTotalCount = $derived(transcriptState.segmentsInSelectedRange.length);
   const totalCount = $derived(transcriptState.segments.length);
 
   const selectedModel = $derived(
@@ -48,6 +50,22 @@
 </script>
 
 <div class="inline-settings-panel recognition-panel">
+  <div class="side-panel-header">
+    <div class="side-panel-title">
+      <i class="fa-solid fa-brain"></i>
+      <span>Speech Recognition</span>
+    </div>
+    <button
+      type="button"
+      class="panel-close-btn"
+      onclick={onClose}
+      title="Close settings panel"
+      aria-label="Close"
+    >
+      <i class="fa-solid fa-xmark"></i>
+    </button>
+  </div>
+
   <!-- Panel Body -->
   <div class="panel-body">
     {#if modelState.models.length === 0}
@@ -249,6 +267,27 @@
           </select>
         </div>
 
+        <!-- Audio Range Selection -->
+        {#if audioState.totalAudioDuration > 0}
+          <div class="range-select-container">
+            <div class="range-head">
+              <i class="fa-solid fa-clock"></i>
+              <span>Range</span>
+              {#if audioState.isIntervalSelected}
+                <button
+                  type="button"
+                  class="btn-reset-interval"
+                  onclick={() => audioState.resetInterval()}
+                  title="Use entire audio recording"
+                >
+                  Reset to full
+                </button>
+              {/if}
+            </div>
+            <IntervalPicker />
+          </div>
+        {/if}
+
         <!-- Action & Live Status -->
         <div class="action-container">
           <div class="status-box">
@@ -258,6 +297,8 @@
                 <span
                   >Transcribing{selectedTargetTier
                     ? ` into ${selectedTargetTier.name}`
+                    : ''}{audioState.isIntervalSelected
+                    ? ' (selected range)'
                     : ''}...{emptyCount > 0
                     ? ` (${emptyCount} left)`
                     : ''}</span
@@ -273,11 +314,20 @@
                 <i class="fa-solid fa-circle-info"></i>
                 <span>No segments &bull; run Auto Segmentation first</span>
               </span>
+            {:else if audioState.isIntervalSelected && rangeTotalCount === 0}
+              <span class="status-chip chip-warning">
+                <i class="fa-solid fa-crop-simple"></i>
+                <span>No segments in selected range ({audioState.audioRangeStart.toFixed(1)}s &ndash; {audioState.audioRangeEnd.toFixed(1)}s)</span>
+              </span>
             {:else if emptyCount === 0}
               <span class="status-chip chip-success">
                 <i class="fa-solid fa-circle-check"></i>
                 <span
-                  >All {totalCount} segments transcribed{selectedTargetTier
+                  >All {rangeTotalCount} segment{rangeTotalCount === 1
+                    ? ''
+                    : 's'}{audioState.isIntervalSelected
+                    ? ' in range'
+                    : ''} transcribed{selectedTargetTier
                     ? ` in ${selectedTargetTier.name}`
                     : ''}</span
                 >
@@ -286,10 +336,12 @@
               <span class="status-chip chip-info">
                 <i class="fa-solid fa-clock"></i>
                 <span
-                  ><strong>{emptyCount}</strong> of {totalCount} segment{emptyCount ===
+                  ><strong>{emptyCount}</strong> of {rangeTotalCount} segment{emptyCount ===
                   1
                     ? ''
-                    : 's'} empty{selectedTargetTier
+                    : 's'}{audioState.isIntervalSelected
+                    ? ' in range'
+                    : ''} empty{selectedTargetTier
                     ? ` in ${selectedTargetTier.name}`
                     : ''}</span
                 >
@@ -322,18 +374,23 @@
                   ? `Transcribe empty segments into ${selectedTargetTier.name} with selected Whisper model`
                   : 'Transcribe empty segments with selected Whisper model'}
               >
-                {#if emptyCount === 0 && totalCount > 0}
-                  <i class="fa-solid fa-circle-check"></i>
-                  <span>All Done</span>
-                {:else if totalCount === 0}
+                {#if totalCount === 0}
                   <i class="fa-solid fa-triangle-exclamation"></i>
                   <span>Segments Needed</span>
+                {:else if audioState.isIntervalSelected && rangeTotalCount === 0}
+                  <i class="fa-solid fa-crop-simple"></i>
+                  <span>No Segments in Range</span>
+                {:else if emptyCount === 0 && rangeTotalCount > 0}
+                  <i class="fa-solid fa-circle-check"></i>
+                  <span>All Done</span>
                 {:else}
                   <i class="fa-solid fa-play"></i>
                   <span
                     >Transcribe {emptyCount} Segment{emptyCount === 1
                       ? ''
-                      : 's'}</span
+                      : 's'}{audioState.isIntervalSelected
+                      ? ' in Range'
+                      : ''}</span
                   >
                 {/if}
               </button>
@@ -945,4 +1002,188 @@
       justify-content: center;
     }
   }
+
+  .range-select-container {
+    min-width: 240px;
+    flex: 1 1 260px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    background: var(--bg-card, #ffffff);
+    border: 1px solid var(--border-color, #e2e8f0);
+    border-radius: 6px;
+    padding: 10px 12px;
+    box-sizing: border-box;
+  }
+
+  :global([data-theme='dark']) .range-select-container {
+    background: #1e293b;
+    border-color: #334155;
+  }
+
+  .range-head {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    font-size: 0.77rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-muted, #64748b);
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--border-color, #e2e8f0);
+  }
+
+  :global([data-theme='dark']) .range-head {
+    border-bottom-color: rgba(255, 255, 255, 0.08);
+  }
+
+  .range-head i {
+    color: #7c3aed;
+  }
+
+  :global([data-theme='dark']) .range-head i {
+    color: #a78bfa;
+  }
+
+  .btn-reset-interval {
+    margin-left: auto;
+    background: transparent;
+    border: none;
+    font-size: 0.69rem;
+    font-weight: 600;
+    text-transform: none;
+    letter-spacing: normal;
+    color: #7c3aed;
+    cursor: pointer;
+    padding: 0;
+    text-decoration: underline;
+  }
+
+  :global([data-theme='dark']) .btn-reset-interval {
+    color: #a78bfa;
+  }
+
+  .side-panel-header {
+    display: none;
+  }
+
+  @media (min-width: 1081px) {
+    .inline-settings-panel {
+      height: 100%;
+      max-height: 100%;
+      min-height: 0;
+      border-radius: 8px;
+      border-top: 2px solid #7c3aed;
+      border-bottom: 1px solid var(--border-color, #cbd5e1);
+      overflow: hidden;
+    }
+
+    :global([data-theme='dark']) .inline-settings-panel {
+      border-top-color: #a78bfa;
+      border-bottom-color: #334155;
+    }
+
+    .side-panel-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 10px 12px;
+      background: var(--bg-card, #ffffff);
+      border-bottom: 1px solid var(--border-color, #cbd5e1);
+      flex-shrink: 0;
+    }
+
+    :global([data-theme='dark']) .side-panel-header {
+      background: #1e293b;
+      border-bottom-color: #334155;
+    }
+
+    .side-panel-title {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.86rem;
+      font-weight: 700;
+      color: var(--text-heading, #0f172a);
+    }
+
+    :global([data-theme='dark']) .side-panel-title {
+      color: #f8fafc;
+    }
+
+    .side-panel-title i {
+      color: #7c3aed;
+    }
+
+    :global([data-theme='dark']) .side-panel-title i {
+      color: #a78bfa;
+    }
+
+    .panel-body {
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto;
+      padding: 12px;
+    }
+
+    .model-row {
+      flex-direction: column;
+      align-items: stretch;
+      gap: 14px;
+    }
+
+    .model-select-container,
+    .device-select-container,
+    .target-select-container,
+    .range-select-container {
+      min-width: 0;
+      width: 100%;
+      flex: none;
+    }
+
+    .select-with-preload {
+      flex-wrap: wrap;
+    }
+
+    .model-select-input {
+      flex: 1 1 100%;
+    }
+
+    .action-container {
+      flex-direction: column;
+      align-items: stretch;
+      gap: 10px;
+      margin-top: 4px;
+      padding-top: 12px;
+      border-top: 1px solid var(--border-color, #cbd5e1);
+    }
+
+    :global([data-theme='dark']) .action-container {
+      border-top-color: #334155;
+    }
+
+    .status-chip {
+      width: 100%;
+      box-sizing: border-box;
+      white-space: normal;
+    }
+
+    .actions-cluster {
+      width: 100%;
+    }
+
+    .actions-cluster .panel-close-btn,
+    .empty-models-panel .panel-close-btn {
+      display: none;
+    }
+
+    .btn-run-action,
+    .btn-stop-action {
+      flex: 1;
+      justify-content: center;
+    }
+  }
 </style>
+

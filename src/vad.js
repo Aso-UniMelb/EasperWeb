@@ -427,14 +427,23 @@ export async function getSpeechTimestamps(audioFloat32, vadSession, options = {}
  * 2. Segregating by speaker and merging close/overlapping segments (< minSilence, max 30s).
  * 3. Removing segments shorter than minSegment.
  * 4. Removing completely enclosed/nested segments.
- * 5. Resolving partial overlaps at the midpoint.
+/**
+ * Cleans up and normalizes detected speech segments according to linguist-configured rules:
+ * 1. Splitting segments longer than maxSegmentDuration.
+ * 2. Merging adjacent segments of the SAME speaker closer than minSilence (up to maxSegmentDuration).
+ * 3. Dropping brief noise spikes shorter than minSegment.
+ * 4. Removing segments strictly enclosed by another segment OF THE SAME SPEAKER.
+ * 5. Resolving partial overlaps between segments OF THE SAME SPEAKER at the midpoint.
+ * 6. Preserving overlapping cross-talk between DIFFERENT speakers intact.
+ * 7. Chronologically sorting all speakers' segments and assigning sequential IDs.
  * 
- * @param {Array<Object|Array>} initSegments List of {start, end, speaker} or [start, end, speaker] tuples
+ * @param {Array<Object|Array>} initSegments List of {start, end, speaker, speakerId, text, words} or [start, end, speaker] tuples
  * @param {Object} [options]
  * @param {number} [options.minSegment=0.5] Minimum segment duration in seconds
  * @param {number} [options.minSilence=0.5] Minimum silence duration between segments in seconds
+ * @param {number} [options.maxSegmentDuration=30.0] Maximum segment duration in seconds
  * @param {number} [options.samplingRate=16000] Sampling rate for sample index calculation
- * @returns {Array<{ id: number, start: number, end: number, duration: number, startSample: number, endSample: number, speaker: string }>}
+ * @returns {Array<{ id: number, start: number, end: number, duration: number, startSample: number, endSample: number, speaker: string, speakerId: number, text: string, words: Array }>}
  */
 export function segmentsCleanup(initSegments, options = {}) {
   const {
@@ -456,9 +465,11 @@ export function segmentsCleanup(initSegments, options = {}) {
         end: Number(item[1]),
         speaker: spkName,
         speakerId: parsedId,
+        text: '',
+        words: [],
       };
     }
-    const spkName = item.speaker || 'Speaker 1';
+    const spkName = item.speaker || (item.speakerId ? `Speaker ${item.speakerId}` : 'Speaker 1');
     const parsedId = item.speakerId != null
       ? Number(item.speakerId)
       : (spkName.startsWith('Speaker ') ? parseInt(spkName.split(' ')[1], 10) || 1 : 1);
@@ -468,10 +479,12 @@ export function segmentsCleanup(initSegments, options = {}) {
       end: Number(item.end),
       speaker: spkName,
       speakerId: parsedId,
+      text: item.text || '',
+      words: Array.isArray(item.words) ? item.words : [],
     };
   });
 
-  // 1. Split segments longer than maxSegmentDuration into maxSegmentDuration segments
+  // 1. Split segments longer than maxSegmentDuration into chunks <= maxSegmentDuration
   const splitSegments = [];
   for (const seg of normalized) {
     let curStart = seg.start;
@@ -490,96 +503,116 @@ export function segmentsCleanup(initSegments, options = {}) {
     }
   }
 
-  // 2. Segregate by speaker
+  // 2. Segregate by speaker so same-speaker utterances are tidied without destroying cross-speaker overlaps
   const segregated = new Map();
   for (const seg of splitSegments) {
-    if (!segregated.has(seg.speaker)) {
-      segregated.set(seg.speaker, []);
+    const spkKey = seg.speakerId != null ? String(seg.speakerId) : (seg.speaker || '1');
+    if (!segregated.has(spkKey)) {
+      segregated.set(spkKey, []);
     }
-    segregated.get(seg.speaker).push(seg);
+    segregated.get(spkKey).push(seg);
   }
 
-  const clean1 = [];
-  for (const [sp, spSegments] of segregated.entries()) {
+  const cleanAllSpeakers = [];
+
+  for (const [spkKey, spSegments] of segregated.entries()) {
     spSegments.sort((a, b) => a.start - b.start);
     if (spSegments.length === 0) continue;
 
-    const cleaned = [{ ...spSegments[0] }];
+    // A. Merge adjacent same-speaker segments closer than minSilence (up to maxSegmentDuration)
+    const merged = [{ ...spSegments[0] }];
     for (let i = 1; i < spSegments.length; i++) {
       const current = spSegments[i];
-      const prev = cleaned[cleaned.length - 1];
+      const prev = merged[merged.length - 1];
 
+      // If gap is smaller than minSilence OR segments overlap within the same speaker
       if (current.start - prev.end < minSilence) {
-        if (current.end - prev.start < maxSegmentDuration) {
-          // Merge close and overlapping segments
-          prev.end = Math.max(prev.end, current.end);
-          if (Array.isArray(prev.words) && Array.isArray(current.words)) {
-            prev.words = [...prev.words, ...current.words];
+        const potentialEnd = Math.max(prev.end, current.end);
+        if (potentialEnd - prev.start <= maxSegmentDuration) {
+          prev.end = potentialEnd;
+          if (Array.isArray(current.words) && current.words.length > 0) {
+            prev.words = Array.isArray(prev.words) ? [...prev.words, ...current.words] : [...current.words];
           }
-          if (prev.text != null && current.text != null) {
-            prev.text = (prev.text + ' ' + current.text).trim();
+          if (current.text) {
+            prev.text = prev.text ? `${prev.text} ${current.text}`.trim() : current.text;
           }
         } else {
-          cleaned.push({ ...current });
+          merged.push({ ...current });
         }
       } else {
-        // If the previous segment is too short, replace it
-        if (prev.end - prev.start < minSegment) {
-          cleaned[cleaned.length - 1] = { ...current };
-        } else {
-          cleaned.push({ ...current });
-        }
+        merged.push({ ...current });
       }
     }
-    clean1.push(...cleaned);
+
+    // B. Delete segments shorter than minSegment
+    const filteredMin = merged.filter((seg) => (seg.end - seg.start) >= minSegment);
+    if (filteredMin.length === 0) continue;
+
+    // C. Check for complete overlap strictly within this speaker (remove enclosed segments)
+    const withoutEnclosed = filteredMin.filter((item) => {
+      const isEnclosed = filteredMin.some((other) =>
+        other !== item &&
+        item.start >= other.start &&
+        item.end <= other.end &&
+        (item.start > other.start || item.end < other.end)
+      );
+      return !isEnclosed;
+    });
+    if (withoutEnclosed.length === 0) continue;
+
+    // D. Resolve partial overlaps strictly between segments of the same speaker at the midpoint
+    withoutEnclosed.sort((a, b) => a.start - b.start);
+    const resolvedSpk = [{ ...withoutEnclosed[0] }];
+
+    for (let i = 1; i < withoutEnclosed.length; i++) {
+      const current = withoutEnclosed[i];
+      const prev = resolvedSpk[resolvedSpk.length - 1];
+
+      if (current.start < prev.end) {
+        const overlap = prev.end - current.start;
+        const midpoint = Number((current.start + overlap / 2.0).toFixed(3));
+
+        if (midpoint - prev.start < minSegment) {
+          if (current.start - prev.start >= minSegment) {
+            prev.end = current.start;
+            resolvedSpk.push({ ...current });
+          } else {
+            resolvedSpk[resolvedSpk.length - 1] = { ...current };
+          }
+        } else if (current.end - midpoint < minSegment) {
+          prev.end = Math.max(prev.start + minSegment, current.start);
+          if (current.end - prev.end >= minSegment) {
+            resolvedSpk.push({ ...current, start: prev.end });
+          }
+        } else {
+          prev.end = midpoint;
+          resolvedSpk.push({ ...current, start: midpoint });
+        }
+      } else {
+        resolvedSpk.push({ ...current });
+      }
+    }
+
+    // Final filter for minSegment after midpoint resolution
+    const finalSpk = resolvedSpk.filter((seg) => (seg.end - seg.start) >= minSegment);
+    cleanAllSpeakers.push(...finalSpk);
   }
 
-  // 3. Delete segments shorter than minSegment
-  const cleanFiltered = clean1.filter((seg) => (seg.end - seg.start) >= minSegment);
-  if (cleanFiltered.length === 0) return [];
+  if (cleanAllSpeakers.length === 0) return [];
 
-  // 4. Check for complete overlap (remove segments strictly enclosed by another)
-  const clean2 = cleanFiltered.filter((item) => {
-    const isEnclosed = cleanFiltered.some((other) =>
-      other !== item &&
-      item.start >= other.start &&
-      item.end <= other.end &&
-      (item.start > other.start || item.end < other.end)
-    );
-    return !isEnclosed;
+  // 3. Sort all speakers' cleaned segments chronologically (breaking ties by end time, then speakerId)
+  cleanAllSpeakers.sort((a, b) => {
+    if (Math.abs(a.start - b.start) > 0.001) {
+      return a.start - b.start;
+    }
+    if (Math.abs(a.end - b.end) > 0.001) {
+      return a.end - b.end;
+    }
+    return (a.speakerId || 0) - (b.speakerId || 0);
   });
 
-  if (clean2.length === 0) return [];
-
-  // 5. Handle partial overlaps across all speakers
-  clean2.sort((a, b) => a.start - b.start);
-  const clean3 = [{ ...clean2[0] }];
-
-  for (let i = 1; i < clean2.length; i++) {
-    const current = clean2[i];
-    const prev = clean3[clean3.length - 1];
-
-    if (current.start <= prev.end) {
-      // Resolve overlap by setting midpoint
-      const overlap = prev.end - current.start;
-      const midpoint = Number((current.start + overlap / 2.0).toFixed(3));
-
-      if (midpoint - prev.start < minSegment) {
-        // Replace previous segment if midpoint made it too short
-        clean3[clean3.length - 1] = { ...current };
-      } else {
-        prev.end = midpoint;
-        if (current.end - midpoint >= minSegment) {
-          clean3.push({ ...current, start: midpoint });
-        }
-      }
-    } else {
-      clean3.push({ ...current });
-    }
-  }
-
-  // Final mapping with 2-decimal rounded seconds, sample bounds, and indices
-  return clean3.map((seg, idx) => {
+  // 4. Final mapping with 2-decimal rounded seconds, sample bounds, and sequential 1-based indices
+  return cleanAllSpeakers.map((seg, idx) => {
     const s = Number(seg.start.toFixed(2));
     const e = Number(seg.end.toFixed(2));
     const spkId = seg.speakerId != null
@@ -595,6 +628,8 @@ export function segmentsCleanup(initSegments, options = {}) {
       endSample: Math.round(e * samplingRate),
       speakerId: spkId,
       speaker: seg.speaker || `Speaker ${spkId}`,
+      text: seg.text || '',
+      words: Array.isArray(seg.words) ? seg.words : [],
     };
   });
 }

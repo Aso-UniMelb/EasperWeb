@@ -3,11 +3,154 @@
   import { appState } from '../state/appState.svelte.js';
   import { projectState } from '../state/projectState.svelte.js';
   import { modelState } from '../state/modelState.svelte.js';
+  import { audioState } from '../state/audioState.svelte.js';
+  import { transcriptState } from '../state/transcriptState.svelte.js';
   import { router } from '../services/router.svelte.js';
   import { lexiconState } from '../state/lexiconState.svelte.js';
 
   // The transcriber is the one view that trades the tab bar for project controls
   let isStudio = $derived(router.currentRoute === 'transcriber');
+
+  let jsonFileInputEl = $state(null);
+  let isProjectMenuOpen = $state(false);
+  let projectMenuContainer = $state(null);
+  let isExportMenuOpen = $state(false);
+  let exportMenuContainer = $state(null);
+  let isAutomationMenuOpen = $state(false);
+  let automationMenuContainer = $state(null);
+
+  function toggleProjectMenu(e) {
+    if (e) e.stopPropagation();
+    isProjectMenuOpen = !isProjectMenuOpen;
+    if (isProjectMenuOpen) {
+      isExportMenuOpen = false;
+      isAutomationMenuOpen = false;
+    }
+  }
+
+  function closeProjectMenu() {
+    isProjectMenuOpen = false;
+  }
+
+  function toggleExportMenu(e) {
+    e.stopPropagation();
+    isExportMenuOpen = !isExportMenuOpen;
+    if (isExportMenuOpen) {
+      isProjectMenuOpen = false;
+      isAutomationMenuOpen = false;
+    }
+  }
+
+  function closeExportMenu() {
+    isExportMenuOpen = false;
+  }
+
+  function toggleAutomationMenu(e) {
+    if (e) e.stopPropagation();
+    isAutomationMenuOpen = !isAutomationMenuOpen;
+    if (isAutomationMenuOpen) {
+      isProjectMenuOpen = false;
+      isExportMenuOpen = false;
+    }
+  }
+
+  function selectAutomationTool(tool) {
+    transcriptState.toggleDrawer(tool);
+    isAutomationMenuOpen = false;
+  }
+
+  $effect(() => {
+    if (!isProjectMenuOpen && !isExportMenuOpen && !isAutomationMenuOpen) return;
+
+    function handlePointerDown(e) {
+      if (
+        isProjectMenuOpen &&
+        projectMenuContainer &&
+        !projectMenuContainer.contains(e.target)
+      ) {
+        isProjectMenuOpen = false;
+      }
+      if (
+        isExportMenuOpen &&
+        exportMenuContainer &&
+        !exportMenuContainer.contains(e.target)
+      ) {
+        isExportMenuOpen = false;
+      }
+      if (
+        isAutomationMenuOpen &&
+        automationMenuContainer &&
+        !automationMenuContainer.contains(e.target)
+      ) {
+        isAutomationMenuOpen = false;
+      }
+    }
+
+    function handleKeyDown(e) {
+      if (e.key === 'Escape') {
+        isProjectMenuOpen = false;
+        isExportMenuOpen = false;
+        isAutomationMenuOpen = false;
+      }
+    }
+
+    window.addEventListener('pointerdown', handlePointerDown);
+    window.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      window.removeEventListener('pointerdown', handlePointerDown);
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  });
+
+  async function handleJsonFileSelected(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    try {
+      if (!file.name.toLowerCase().endsWith('.json')) {
+        alert(
+          'Only JSON files (.json) can be imported here.\n\nTo import full project packages with audio (.easper / .zip), please use the Project Manager.',
+        );
+        return;
+      }
+      if (!projectState.activeProject) {
+        alert(
+          'Please open or create a project first before importing JSON annotations.',
+        );
+        return;
+      }
+      await projectState.importJsonToActiveProject(file);
+    } catch (err) {
+      console.error('[Header] Failed to import JSON:', err);
+      alert('Failed to import JSON: ' + (err?.message || err));
+    } finally {
+      if (e.target) e.target.value = '';
+    }
+  }
+
+  const canExportText = $derived(
+    (Boolean(transcriptState.transcript) ||
+      transcriptState.segments.length > 0) &&
+      !appState.isProcessing,
+  );
+  const canExportJson = $derived(
+    (Boolean(transcriptState.fullResult) ||
+      transcriptState.segments.length > 0 ||
+      Boolean(transcriptState.transcript)) &&
+      !appState.isProcessing,
+  );
+  const canExportAudio = $derived(
+    Boolean(
+      transcriptState.waveformState ||
+        audioState.selectedFile ||
+        audioState.recordedBlob ||
+        projectState.activeProject,
+    ) && !appState.isProcessing,
+  );
+  const canExportArchive = $derived(
+    Boolean(projectState.activeProject) && !appState.isProcessing,
+  );
 
   let projectLexicon = $derived(
     projectState.activeProject?.lexiconId
@@ -34,38 +177,15 @@
     }
   }
 
-  let isEditingTitle = $state(false);
-  let editedTitle = $state('');
-
-  function startEditTitle() {
-    if (!projectState.activeProject) return;
-    editedTitle = projectState.activeProject.title;
-    isEditingTitle = true;
-  }
-
-  async function saveTitle() {
-    if (isEditingTitle && projectState.activeProject) {
-      const clean = editedTitle.trim();
-      if (clean && clean !== projectState.activeProject.title) {
-        await projectState.updateProjectInfo(projectState.activeProject.id, {
-          title: clean,
-        });
-      }
-      isEditingTitle = false;
-    }
-  }
-
-  function handleKeyDown(e) {
-    if (e.key === 'Enter') {
-      saveTitle();
-    } else if (e.key === 'Escape') {
-      isEditingTitle = false;
-    }
-  }
-
-  function focusOnMount(node) {
-    node.focus();
-    node.select();
+  function handleOpenActiveLexiconInNewTab() {
+    const lexId = projectState.activeProject?.lexiconId;
+    const targetPath = lexId ? `/lexicon/${lexId}` : '/lexicon';
+    const base = (import.meta.env.BASE_URL || '/').replace(/\/$/, '');
+    const href =
+      typeof window !== 'undefined' && window.location.hash.startsWith('#/')
+        ? `#${targetPath}`
+        : `${base}${targetPath}`;
+    window.open(href, '_blank', 'noopener,noreferrer');
   }
 
   let isDrawerOpen = $state(false);
@@ -141,9 +261,8 @@
       <div class="header-icon-wrap">
         <img src="/icon.png" alt="Easper Logo" class="app-logo-img" />
       </div>
-      <div>
-        <h1 class="app-title">Easper</h1>
-        {#if router.currentRoute === 'home'}
+      {#if router.currentRoute === 'home'}
+        <div>
           <p class="subtitle">
             A Portable ASR Workflow for Field Linguists &bull;
             <a
@@ -167,74 +286,478 @@
               <i class="fa-solid fa-graduation-cap"></i> Paper (arXiv:2608.11629)
             </a>
           </p>
-        {/if}
-      </div>
+        </div>
+      {/if}
     </div>
 
-    <!-- Active Project Title Pill in Workspace / Transcriber View -->
+    <!-- Active Project Menu in Workspace / Transcriber View -->
     {#if router.currentRoute === 'transcriber' && projectState.activeProject}
-      <button
-        type="button"
-        class="btn-header-action"
-        onclick={() => router.navigate('/transcriber')}
-        title="View all saved projects"
-      >
-        <i class="fa-solid fa-folder-tree"></i>
-        <span>Projects</span>
-      </button>
-      <div class="header-project-badge">
-        <i class="fa-solid fa-folder-open header-project-icon"></i>
-        {#if isEditingTitle}
-          <input
-            type="text"
-            class="header-project-input"
-            bind:value={editedTitle}
-            onblur={saveTitle}
-            onkeydown={handleKeyDown}
-            use:focusOnMount
-          />
-        {:else}
-          <button
-            type="button"
-            class="header-project-btn"
-            onclick={startEditTitle}
-            title="Click to rename project"
+      <div class="project-dropdown-container" bind:this={projectMenuContainer}>
+        <button
+          type="button"
+          class="btn-project-menu-trigger {isProjectMenuOpen ? 'active' : ''}"
+          onclick={toggleProjectMenu}
+          aria-expanded={isProjectMenuOpen}
+          aria-haspopup="menu"
+          title="Project menu: {projectState.activeProject.title}"
+        >
+          <i class="fa-solid fa-folder-open project-menu-icon"></i>
+          <span class="project-menu-title"
+            >{projectState.activeProject.title}</span
           >
-            <span class="header-project-text"
-              >{projectState.activeProject.title}</span
+          <i
+            class="fa-solid fa-chevron-down caret-icon {isProjectMenuOpen
+              ? 'rotated'
+              : ''}"
+          ></i>
+        </button>
+
+        {#if isProjectMenuOpen}
+          <div class="project-dropdown-menu" role="menu">
+            <button
+              type="button"
+              class="export-menu-item"
+              role="menuitem"
+              onclick={() => {
+                closeProjectMenu();
+                router.navigate('/transcriber');
+              }}
+              title="Return to Project Manager"
             >
-            <i class="fa-solid fa-pen-to-square header-edit-icon"></i>
-          </button>
+              <div class="item-icon-box icon-projects">
+                <i class="fa-solid fa-folder-tree"></i>
+              </div>
+              <div class="item-text-box">
+                <div class="item-title">Back to Project Manager</div>
+                <div class="item-desc">View and manage all saved projects</div>
+              </div>
+            </button>
+
+            <button
+              type="button"
+              class="export-menu-item"
+              role="menuitem"
+              onclick={() => {
+                closeProjectMenu();
+                projectState.isProjectSettingsOpen = true;
+              }}
+              title="Project settings, speakers & sub-tiers"
+            >
+              <div class="item-icon-box icon-settings">
+                <i class="fa-solid fa-gear"></i>
+              </div>
+              <div class="item-text-box">
+                <div class="item-title">Project Settings</div>
+                <div class="item-desc">
+                  Rename project, configure speakers &amp; sub-tiers
+                </div>
+              </div>
+            </button>
+
+            <button
+              type="button"
+              class="export-menu-item"
+              role="menuitem"
+              onclick={() => {
+                closeProjectMenu();
+                handleOpenActiveLexiconInNewTab();
+              }}
+              title={projectLexicon
+                ? `Open active lexicon (${projectLexicon.title || projectLexicon.name}) in a new tab`
+                : 'Open Lexicon Manager in a new tab'}
+            >
+              <div class="item-icon-box icon-lexicon">
+                <i class="fa-solid fa-book"></i>
+              </div>
+              <div class="item-text-box">
+                <div class="item-title">
+                  Active Lexicon
+                  <i
+                    class="fa-solid fa-arrow-up-right-from-square external-link-icon"
+                  ></i>
+                </div>
+                <div class="item-desc">
+                  {projectLexicon
+                    ? `${projectLexicon.title || projectLexicon.name} (opens in new tab)`
+                    : 'Open Lexicon Manager in new tab'}
+                </div>
+              </div>
+            </button>
+          </div>
         {/if}
       </div>
 
-      <!-- Project actions, moved here from the separate project bar -->
-      <button
-        type="button"
-        class="btn-header-action"
-        onclick={() => {
-          projectState.isProjectSettingsOpen = true;
-        }}
-        title="Project settings, speakers & sub-tiers"
-      >
-        <i class="fa-solid fa-gear"></i>
-        <span>Project Settings</span>
-      </button>
+      <!-- Unified Export/Import Dropdown Menu -->
+      <div class="export-dropdown-container" bind:this={exportMenuContainer}>
+        <button
+          type="button"
+          class="btn-export-menu-trigger {isExportMenuOpen ? 'active' : ''}"
+          onclick={toggleExportMenu}
+          aria-expanded={isExportMenuOpen}
+          aria-haspopup="menu"
+          title="Export or import transcript and project files"
+        >
+          <i class="fa-solid fa-file-export"></i>
+          <span>Export/Import</span>
+          <i
+            class="fa-solid fa-chevron-down caret-icon {isExportMenuOpen
+              ? 'rotated'
+              : ''}"
+          ></i>
+        </button>
 
-      <button
-        type="button"
-        class="btn-header-action"
-        onclick={handleGoToLexicon}
-        title={projectLexicon
-          ? `Open active lexicon: ${projectLexicon.title || projectLexicon.name}`
-          : 'Open Lexicon Manager'}
-      >
-        <i class="fa-solid fa-book"></i>
-        <span>Lexicon</span>
-        {#if projectLexicon}
-          <span class="header-lex-badge">{projectLexicon.title || projectLexicon.name}</span>
+        {#if isExportMenuOpen}
+          <div class="export-dropdown-menu" role="menu">
+            <div class="dropdown-category-title">
+              <i class="fa-solid fa-file-lines"></i>
+              <span>Annotations &amp; Captions</span>
+            </div>
+
+            <button
+              type="button"
+              class="export-menu-item"
+              role="menuitem"
+              onclick={() => {
+                transcriptState.exportEaf();
+                closeExportMenu();
+              }}
+              disabled={!canExportText}
+              title="Export ELAN annotation document (.eaf) with speaker tiers"
+            >
+              <div class="item-icon-box icon-eaf">
+                <i class="fa-solid fa-file-code"></i>
+              </div>
+              <div class="item-text-box">
+                <div class="item-title">ELAN Annotation (.eaf)</div>
+                <div class="item-desc">
+                  Multi-tier annotation for field linguistics
+                </div>
+              </div>
+            </button>
+
+            <button
+              type="button"
+              class="export-menu-item"
+              role="menuitem"
+              onclick={() => {
+                transcriptState.exportSrt();
+                closeExportMenu();
+              }}
+              disabled={!canExportText}
+              title="Export SubRip subtitle format (.srt)"
+            >
+              <div class="item-icon-box icon-srt">
+                <i class="fa-solid fa-closed-captioning"></i>
+              </div>
+              <div class="item-text-box">
+                <div class="item-title">SubRip Subtitles (.srt)</div>
+                <div class="item-desc">
+                  Timed subtitle captions with timestamps
+                </div>
+              </div>
+            </button>
+
+            <button
+              type="button"
+              class="export-menu-item"
+              role="menuitem"
+              onclick={() => {
+                transcriptState.exportTxt();
+                closeExportMenu();
+              }}
+              disabled={!canExportText}
+              title="Export plain text transcript (.txt)"
+            >
+              <div class="item-icon-box icon-txt">
+                <i class="fa-solid fa-file-lines"></i>
+              </div>
+              <div class="item-text-box">
+                <div class="item-title">Plain Text (.txt)</div>
+                <div class="item-desc">Continuous plain text transcript</div>
+              </div>
+            </button>
+
+            <button
+              type="button"
+              class="export-menu-item"
+              role="menuitem"
+              onclick={() => {
+                transcriptState.exportJson();
+                closeExportMenu();
+              }}
+              disabled={!canExportJson}
+              title="Export full project metadata and transcription JSON (.json)"
+            >
+              <div class="item-icon-box icon-json">
+                <i class="fa-solid fa-code"></i>
+              </div>
+              <div class="item-text-box">
+                <div class="item-title">Transcript Data (.json)</div>
+                <div class="item-desc">
+                  Dialogue segments, speaker tiers &amp; metadata
+                </div>
+              </div>
+            </button>
+
+            <div class="dropdown-menu-separator"></div>
+            <div class="dropdown-category-title">
+              <i class="fa-solid fa-photo-film"></i>
+              <span>Media &amp; Project</span>
+            </div>
+
+            <button
+              type="button"
+              class="export-menu-item"
+              role="menuitem"
+              onclick={() => {
+                transcriptState.exportAudio();
+                closeExportMenu();
+              }}
+              disabled={!canExportAudio}
+              title="Export converted 16kHz mono WAV audio file (.wav)"
+            >
+              <div class="item-icon-box icon-audio">
+                <i class="fa-solid fa-music"></i>
+              </div>
+              <div class="item-text-box">
+                <div class="item-title">Audio File (.wav)</div>
+                <div class="item-desc">
+                  Converted 16kHz mono PCM WAV audio
+                </div>
+              </div>
+            </button>
+
+            <button
+              type="button"
+              class="export-menu-item"
+              role="menuitem"
+              onclick={() => {
+                projectState.saveActiveProjectPackage();
+                closeExportMenu();
+              }}
+              disabled={!canExportArchive}
+              title="Archive complete project package (.easper) with audio, segments, and speakers"
+            >
+              <div class="item-icon-box icon-archive">
+                <i class="fa-solid fa-box-archive"></i>
+              </div>
+              <div class="item-text-box">
+                <div class="item-title">Project Archive (.easper)</div>
+                <div class="item-desc">
+                  Complete bundle with audio &amp; annotations
+                </div>
+              </div>
+            </button>
+
+            <div class="dropdown-menu-separator"></div>
+            <div class="dropdown-category-title">
+              <i class="fa-solid fa-file-import"></i>
+              <span>Import into Project</span>
+            </div>
+
+            <button
+              type="button"
+              class="export-menu-item"
+              role="menuitem"
+              onclick={() => {
+                closeExportMenu();
+                projectState.requestImportElanToActiveProject();
+              }}
+              disabled={!projectState.activeProject || appState.isProcessing}
+              title="Replace current segments and import speakers, sub-tiers, and utterances from an ELAN (.eaf) file"
+            >
+              <div class="item-icon-box icon-import-eaf">
+                <i class="fa-solid fa-file-waveform"></i>
+              </div>
+              <div class="item-text-box">
+                <div class="item-title">Import ELAN (.eaf)</div>
+                <div class="item-desc">
+                  Replace segments &amp; configure tiers from ELAN
+                </div>
+              </div>
+            </button>
+
+            <button
+              type="button"
+              class="export-menu-item"
+              role="menuitem"
+              onclick={() => {
+                closeExportMenu();
+                jsonFileInputEl?.click();
+              }}
+              disabled={!projectState.activeProject || appState.isProcessing}
+              title="Import dialogue segments and metadata from a .json file into this project"
+            >
+              <div class="item-icon-box icon-import-json">
+                <i class="fa-solid fa-file-import"></i>
+              </div>
+              <div class="item-text-box">
+                <div class="item-title">Import JSON</div>
+                <div class="item-desc">
+                  Import segments and annotations from a .json file
+                </div>
+              </div>
+            </button>
+          </div>
         {/if}
-      </button>
+      </div>
+
+      <input
+        type="file"
+        accept=".json,application/json"
+        bind:this={jsonFileInputEl}
+        onchange={handleJsonFileSelected}
+        style="display: none;"
+      />
+
+      <!-- Automation Tools Dropdown Collection -->
+      <div
+        class="automation-dropdown-container"
+        bind:this={automationMenuContainer}
+      >
+        <button
+          type="button"
+          class="btn-automation-menu-trigger {isAutomationMenuOpen
+            ? 'active'
+            : ''} {transcriptState.activeDrawer ? 'drawer-active' : ''}"
+          onclick={toggleAutomationMenu}
+          aria-expanded={isAutomationMenuOpen}
+          title="Automation tools: Auto Segmentation, Speech Recognition, Auto Tagging, and Find & Replace"
+        >
+          <i class="fa-solid fa-wand-magic-sparkles"></i>
+          <span>Automation Tools</span>
+          <i
+            class="fa-solid fa-chevron-down caret-icon {isAutomationMenuOpen
+              ? 'rotated'
+              : ''}"
+          ></i>
+        </button>
+
+        {#if isAutomationMenuOpen}
+          <div class="automation-dropdown-menu" role="menu">
+            <div class="dropdown-category-title">
+              <i class="fa-solid fa-bolt"></i>
+              <span>AI &amp; Automation</span>
+            </div>
+
+            <!-- Auto Segmentation -->
+            <button
+              type="button"
+              class="automation-menu-item {transcriptState.activeDrawer ===
+              'segmentation'
+                ? 'active-item'
+                : ''}"
+              role="menuitem"
+              onclick={() => selectAutomationTool('segmentation')}
+              title="Automatic speech segmentation (Silero VAD or uniform intervals)"
+            >
+              <div class="item-icon-box icon-segmentation">
+                <i class="fa-solid fa-scissors"></i>
+              </div>
+              <div class="item-text-box">
+                <div class="item-title-row">
+                  <span class="item-title">Auto Segmentation</span>
+                  {#if transcriptState.activeDrawer === 'segmentation'}
+                    <span class="item-status-pill">Active</span>
+                  {/if}
+                </div>
+                <div class="item-desc">
+                  Detect speech boundaries with Silero VAD or uniform intervals
+                </div>
+              </div>
+            </button>
+
+            <!-- Speech Recognition -->
+            <button
+              type="button"
+              class="automation-menu-item {transcriptState.activeDrawer ===
+              'recognition'
+                ? 'active-item'
+                : ''}"
+              role="menuitem"
+              onclick={() => selectAutomationTool('recognition')}
+              title="Speech recognition model settings and execution"
+            >
+              <div class="item-icon-box icon-recognition">
+                <i class="fa-solid fa-brain"></i>
+              </div>
+              <div class="item-text-box">
+                <div class="item-title-row">
+                  <span class="item-title">Speech Recognition</span>
+                  {#if transcriptState.emptySegmentsCount > 0}
+                    <span
+                      class="tool-count-badge"
+                      title="{transcriptState.emptySegmentsCount} segments awaiting transcription"
+                    >
+                      {transcriptState.emptySegmentsCount}
+                    </span>
+                  {/if}
+                  {#if transcriptState.activeDrawer === 'recognition'}
+                    <span class="item-status-pill">Active</span>
+                  {/if}
+                </div>
+                <div class="item-desc">
+                  Transcribe speech to text using Whisper ONNX models
+                </div>
+              </div>
+            </button>
+
+            <!-- Auto Tagging -->
+            <button
+              type="button"
+              class="automation-menu-item {transcriptState.activeDrawer ===
+              'tagging'
+                ? 'active-item'
+                : ''}"
+              role="menuitem"
+              onclick={() => selectAutomationTool('tagging')}
+              title="Automatically tag word-level sub-tiers from active lexicon"
+            >
+              <div class="item-icon-box icon-tagging">
+                <i class="fa-solid fa-tags"></i>
+              </div>
+              <div class="item-text-box">
+                <div class="item-title-row">
+                  <span class="item-title">Auto Tagging</span>
+                  {#if transcriptState.activeDrawer === 'tagging'}
+                    <span class="item-status-pill">Active</span>
+                  {/if}
+                </div>
+                <div class="item-desc">
+                  Automatically annotate word tokens from project lexicons
+                </div>
+              </div>
+            </button>
+
+            <!-- Find & Replace -->
+            <button
+              type="button"
+              class="automation-menu-item {transcriptState.activeDrawer ===
+              'find-replace'
+                ? 'active-item'
+                : ''}"
+              role="menuitem"
+              onclick={() => selectAutomationTool('find-replace')}
+              title="Find and replace text across transcription tiers and sub-tiers"
+            >
+              <div class="item-icon-box icon-find-replace">
+                <i class="fa-solid fa-arrow-right-arrow-left"></i>
+              </div>
+              <div class="item-text-box">
+                <div class="item-title-row">
+                  <span class="item-title">Find &amp; Replace</span>
+                  {#if transcriptState.activeDrawer === 'find-replace'}
+                    <span class="item-status-pill">Active</span>
+                  {/if}
+                </div>
+                <div class="item-desc">
+                  Search and replace text in main transcription and sub-tiers
+                </div>
+              </div>
+            </button>
+          </div>
+        {/if}
+      </div>
     {/if}
   </div>
 
@@ -313,33 +836,6 @@
   {/if}
 
   <div class="header-badges">
-    {#if isStudio && projectState.activeProject}
-      <div class="save-status-indicator {projectState.saveStatus}">
-        {#if projectState.saveStatus === 'saving'}
-          <i class="fa-solid fa-circle-notch fa-spin"></i>
-          <span>Saving...</span>
-        {:else if projectState.saveStatus === 'saved'}
-          <i class="fa-solid fa-check"></i>
-          <span>Saved locally</span>
-        {:else}
-          <i class="fa-solid fa-pen"></i>
-          <span>Unsaved changes</span>
-        {/if}
-      </div>
-    {/if}
-
-    {#if appState.isInstallable}
-      <button
-        type="button"
-        class="btn-install-pwa"
-        onclick={() => appState.handleInstallApp()}
-        title="Install Easper as a desktop application"
-      >
-        <i class="fa-solid fa-download"></i>
-        <span class="btn-install-text">Install</span>
-      </button>
-    {/if}
-
     <!-- Mobile Drawer Menu Toggle -->
     <button
       type="button"
@@ -618,156 +1114,139 @@
 {/if}
 
 <style>
-  /* Carried over with the project actions from the old project bar */
-  .btn-header-action {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    padding: 5px 10px;
-    border-radius: 6px;
-    font-size: 0.78rem;
-    font-weight: 600;
-    cursor: pointer;
-    white-space: nowrap;
-    background: var(--bg-hover, #f1f5f9);
-    border: 1px solid var(--border-color, #cbd5e1);
-    color: var(--text-color, #334155);
-    transition: all 0.15s ease;
-  }
-
-  .btn-header-action:hover {
-    background: var(--border-color, #e2e8f0);
-    color: var(--primary-color, #0284c7);
-  }
-
-  :global([data-theme='dark']) .btn-header-action {
-    background: rgba(255, 255, 255, 0.05);
-    border-color: #334155;
-    color: #cbd5e1;
-  }
-
-  :global([data-theme='dark']) .btn-header-action:hover {
-    background: rgba(255, 255, 255, 0.1);
-    color: #7dd3fc;
-  }
-
-  .header-lex-badge {
-    font-size: 0.68rem;
-    font-weight: 700;
-    padding: 1px 6px;
-    border-radius: 4px;
-    background: rgba(2, 132, 199, 0.15);
-    color: var(--primary-color, #0284c7);
-    max-width: 110px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  :global([data-theme='dark']) .header-lex-badge {
-    background: rgba(56, 189, 248, 0.2);
-    color: #7dd3fc;
-  }
-
-  .save-status-indicator {
-    font-size: 0.76rem;
-    font-weight: 600;
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    padding: 4px 8px;
-    border-radius: 4px;
-    white-space: nowrap;
-  }
-
-  .save-status-indicator.saved {
-    color: #10b981;
-  }
-
-  .save-status-indicator.saving {
-    color: var(--primary-color, #0284c7);
-  }
-
-  .save-status-indicator.unsaved {
-    color: #f59e0b;
-  }
-
   .header-left {
     display: flex;
     align-items: center;
-    gap: 14px;
+    gap: 10px;
     flex-wrap: wrap;
     min-width: 0;
   }
 
-  .header-project-badge {
+  .project-dropdown-container {
+    position: relative;
+    display: inline-block;
+    flex-shrink: 0;
+  }
+
+  .btn-project-menu-trigger {
     display: inline-flex;
     align-items: center;
-    gap: 6px;
-    background: var(--bg-hover, #f1f5f9);
-    border: 1px solid var(--border-color, #cbd5e1);
+    gap: 7px;
+    height: 30px;
+    padding: 0 11px;
+    font-size: 0.8125rem;
+    font-weight: 700;
     border-radius: 6px;
-    padding: 3px 8px;
-    max-width: 320px;
+    border: 1px solid var(--border-color, #cbd5e1);
+    background-color: var(--bg-card, #ffffff);
+    color: var(--text-heading, #0f172a);
+    cursor: pointer;
+    transition: all 0.15s ease;
+    max-width: 300px;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
   }
 
-  :global([data-theme='dark']) .header-project-badge {
-    background: rgba(255, 255, 255, 0.05);
+  .btn-project-menu-trigger:hover,
+  .btn-project-menu-trigger.active {
+    background-color: var(--bg-hover, #f8fafc);
+    border-color: var(--primary-color, #0284c7);
+    color: var(--primary-color, #0284c7);
+  }
+
+  :global([data-theme='dark']) .btn-project-menu-trigger {
+    background-color: rgba(255, 255, 255, 0.06);
     border-color: #334155;
+    color: #f8fafc;
   }
 
-  .header-project-icon {
+  :global([data-theme='dark']) .btn-project-menu-trigger:hover,
+  :global([data-theme='dark']) .btn-project-menu-trigger.active {
+    background-color: rgba(255, 255, 255, 0.1);
+    border-color: #38bdf8;
+    color: #38bdf8;
+  }
+
+  .project-menu-icon {
     font-size: 0.8rem;
     color: var(--primary-color, #0284c7);
     flex-shrink: 0;
   }
 
-  .header-project-btn {
-    background: none;
-    border: none;
-    padding: 0;
-    margin: 0;
-    cursor: pointer;
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    color: var(--text-heading, #0f172a);
-    font-size: 0.84rem;
-    font-weight: 700;
-    max-width: 260px;
-    text-align: left;
+  :global([data-theme='dark']) .project-menu-icon {
+    color: #38bdf8;
   }
 
-  .header-project-text {
+  .project-menu-title {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
 
-  .header-project-btn:hover .header-project-text {
-    color: var(--primary-color, #0284c7);
-    text-decoration: underline;
+  .btn-project-menu-trigger .caret-icon {
+    font-size: 0.65rem;
+    opacity: 0.7;
+    transition: transform 0.18s ease;
+    flex-shrink: 0;
   }
 
-  .header-edit-icon {
-    font-size: 0.72rem;
-    color: var(--text-muted, #94a3b8);
+  .btn-project-menu-trigger .caret-icon.rotated {
+    transform: rotate(180deg);
   }
 
-  .header-project-btn:hover .header-edit-icon {
-    color: var(--primary-color, #0284c7);
-  }
-
-  .header-project-input {
-    font-size: 0.84rem;
-    font-weight: 700;
-    color: var(--text-heading, #0f172a);
-    padding: 1px 4px;
-    border: 1px solid var(--primary-color, #0284c7);
-    border-radius: 4px;
-    outline: none;
+  .project-dropdown-menu {
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 0;
+    min-width: 280px;
     background: var(--bg-card, #ffffff);
-    max-width: 240px;
+    border: 1px solid var(--border-color, #cbd5e1);
+    border-radius: 8px;
+    box-shadow:
+      0 10px 25px -5px rgba(0, 0, 0, 0.12),
+      0 8px 10px -6px rgba(0, 0, 0, 0.08);
+    padding: 6px;
+    z-index: 1050;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    animation: exportMenuFadeIn 0.14s ease-out;
+  }
+
+  :global([data-theme='dark']) .project-dropdown-menu {
+    background: #1e293b;
+    border-color: #334155;
+    box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.45);
+  }
+
+  .item-icon-box.icon-projects {
+    background: rgba(2, 132, 199, 0.12);
+    color: #0284c7;
+  }
+
+  .item-icon-box.icon-settings {
+    background: rgba(100, 116, 139, 0.12);
+    color: #475569;
+  }
+
+  .item-icon-box.icon-lexicon {
+    background: rgba(139, 92, 246, 0.12);
+    color: #7c3aed;
+  }
+
+  .item-icon-box.icon-import-eaf {
+    background: rgba(5, 150, 105, 0.12);
+    color: #059669;
+  }
+
+  .item-icon-box.icon-import-json {
+    background: rgba(217, 119, 6, 0.12);
+    color: #d97706;
+  }
+
+  .external-link-icon {
+    font-size: 0.68rem;
+    margin-left: 4px;
+    opacity: 0.7;
   }
 
   .header-nav {
@@ -1249,25 +1728,26 @@
     .header-badges {
       gap: 6px;
     }
-
-    .btn-install-pwa {
-      padding: 5px 8px;
-      font-size: 0.76rem;
-    }
   }
 
   @media (max-width: 640px) {
-    .btn-install-pwa .btn-install-text {
-      display: none;
-    }
-
-    .header-project-badge {
+    .btn-project-menu-trigger {
       max-width: 180px;
     }
+  }
 
-    .header-project-btn {
-      max-width: 130px;
-    }
+  .tool-count-badge {
+    font-size: 0.65rem;
+    font-weight: 700;
+    padding: 1px 5px;
+    border-radius: 10px;
+    background: rgba(245, 158, 11, 0.2);
+    color: #b45309;
+  }
+
+  :global([data-theme='dark']) .tool-count-badge {
+    background: rgba(245, 158, 11, 0.25);
+    color: #fbbf24;
   }
 
   @media (min-width: 861px) {

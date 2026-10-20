@@ -212,7 +212,10 @@
           <button
             type="button"
             class="btn-open-elan-hero"
-            onclick={() => (projectState.isImportElanOpen = true)}
+            onclick={() => {
+              projectState.elanImportTarget = 'new';
+              projectState.isImportElanOpen = true;
+            }}
             title="Import from ELAN annotation format (.eaf + .wav)"
           >
             <i class="fa-solid fa-file-waveform"></i>

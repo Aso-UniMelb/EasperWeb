@@ -383,6 +383,7 @@ export function drawTile(state, tileIndex) {
   const iStart = Math.max(0, Math.floor(((tileTop - 2) / totalHeight) * numPeaks));
   const iEnd = Math.min(numPeaks, Math.ceil(((tileBottom + 2) / totalHeight) * numPeaks));
   const barThickness = totalHeight / numPeaks;
+  const hZoom = Math.max(0.5, Number(state.waveformHorizontalZoom) || 1);
 
   const segs = state.segments || [];
   const vads = state.vadSpeechRegions || [];
@@ -393,7 +394,7 @@ export function drawTile(state, tileIndex) {
     // Zoomed in: each peak gets distinct bar with proportional thickness
     ctx.lineWidth = Math.min(4, Math.max(1, Math.round(barThickness)));
     for (let i = iStart; i < iEnd; i++) {
-      const amp = peaks[i];
+      const amp = Math.min(1, peaks[i] * hZoom);
       if (amp < 0.01) continue;
 
       const y = Math.round((i / numPeaks) * totalHeight);
@@ -451,7 +452,7 @@ export function drawTile(state, tileIndex) {
 
     for (let i = iStart; i < iEnd; i++) {
       const y = Math.floor((i / numPeaks) * totalHeight);
-      const amp = peaks[i];
+      const amp = Math.min(1, peaks[i] * hZoom);
       const t = startTime + (i / numPeaks) * duration;
 
       while (segCursor < segs.length && (segs[segCursor].end ?? 0) < t) {

@@ -230,6 +230,22 @@
 </script>
 
 <div class="inline-settings-panel tagging-panel">
+  <div class="side-panel-header">
+    <div class="side-panel-title">
+      <i class="fa-solid fa-tags"></i>
+      <span>Auto Tagging</span>
+    </div>
+    <button
+      type="button"
+      class="panel-close-btn"
+      onclick={onClose}
+      title="Close auto tagging panel"
+      aria-label="Close"
+    >
+      <i class="fa-solid fa-xmark"></i>
+    </button>
+  </div>
+
   <!-- Panel Body -->
   <div class="panel-body">
     {#if !hasLexicon}
@@ -998,5 +1014,120 @@
   :global([data-theme='dark']) .pill-unmatched {
     background: rgba(251, 191, 36, 0.2);
     color: #fde68a;
+  }
+
+  .side-panel-header {
+    display: none;
+  }
+
+  @media (min-width: 1081px) {
+    .inline-settings-panel {
+      height: 100%;
+      border-radius: 10px;
+      border-bottom: 1px solid var(--border-color, #cbd5e1);
+      border-left: 3px solid #10b981;
+      animation: none;
+      overflow: hidden;
+    }
+
+    :global([data-theme='dark']) .inline-settings-panel {
+      border-bottom-color: #334155;
+      border-left-color: #34d399;
+    }
+
+    .side-panel-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--border-color, #cbd5e1);
+      background: var(--bg-card, #ffffff);
+      flex-shrink: 0;
+    }
+
+    :global([data-theme='dark']) .side-panel-header {
+      background: #1e293b;
+      border-bottom-color: #334155;
+    }
+
+    .side-panel-title {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.85rem;
+      font-weight: 700;
+      color: var(--text-heading, #0f172a);
+    }
+
+    .side-panel-title i {
+      color: #10b981;
+    }
+
+    :global([data-theme='dark']) .side-panel-title i {
+      color: #34d399;
+    }
+
+    .panel-body {
+      padding: 14px;
+      overflow-y: auto;
+      flex: 1 1 auto;
+    }
+
+    .empty-state-panel {
+      flex-direction: column;
+      align-items: stretch;
+      gap: 12px;
+    }
+
+    .empty-state-actions .panel-close-btn {
+      display: none;
+    }
+
+    .tagging-row {
+      flex-direction: column;
+      align-items: stretch;
+      gap: 14px;
+    }
+
+    .tier-select-container,
+    .lexfield-select-container,
+    .mode-select-container {
+      max-width: 100%;
+      width: 100%;
+      flex: none;
+    }
+
+    .tagging-select-input {
+      width: 100%;
+    }
+
+    .action-container {
+      flex-direction: column;
+      align-items: stretch;
+      margin-left: 0;
+      width: 100%;
+      padding-top: 10px;
+      border-top: 1px solid var(--border-color, #e2e8f0);
+    }
+
+    :global([data-theme='dark']) .action-container {
+      border-top-color: #334155;
+    }
+
+    .actions-cluster {
+      width: 100%;
+      flex-direction: column;
+      align-items: stretch;
+    }
+
+    .btn-run-action,
+    .btn-run-single {
+      width: 100%;
+      justify-content: center;
+    }
+
+    .actions-cluster .panel-close-btn {
+      display: none;
+    }
   }
 </style>

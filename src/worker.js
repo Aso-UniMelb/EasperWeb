@@ -1,6 +1,7 @@
 import { pipeline, env } from '@huggingface/transformers';
 import { getVadSession, getSpeechTimestamps, segmentsCleanup, setupOrtWasmEnvironment } from './vad.js';
 import { getDiarizerSession, extractSpeakerEmbedding } from './diarizer.js';
+import { diarizeSegmentsWithPyannote } from './pyannote.js';
 import {
   diarizeAndAssignSpeakers,
   agglomerativeClustering,
@@ -8,6 +9,10 @@ import {
   reconstructSegmentsFromWindows,
   majorityVoteSpeaker,
   smoothSpeakerLabels,
+  prepareUtteranceChunks,
+  reconcileUtteranceSegments,
+  diarizeUtterances,
+  calculateAudioRms,
 } from './utils/diarization.js';
 
 // CPU / threading requirements:
@@ -976,8 +981,8 @@ self.onmessage = async (event) => {
         // Segments are tidied up after diarization instead.
         rawSegments = await getSpeechTimestamps(float32Audio, vadSession, {
           threshold: vadOptions.threshold ?? 0.5,
-          minSilenceDurationMs: runDiarization ? 100 : (vadOptions.minSilenceDurationMs ?? 300),
-          speechPadMs: runDiarization ? 30 : (vadOptions.speechPadMs ?? 60),
+          minSilenceDurationMs: vadOptions.minSilenceDurationMs ?? 300,
+          speechPadMs: vadOptions.speechPadMs ?? 60,
           minSpeechDurationMs: runDiarization ? 250 : undefined,
           minSegment: runDiarization ? null : (vadOptions.minSegment ?? 0.5),
           maxSegmentDuration: runDiarization ? Infinity : (vadOptions.maxSegmentDuration ?? 30.0),
@@ -1084,74 +1089,146 @@ self.onmessage = async (event) => {
       let finalSegments = formattedSegments;
       if (runDiarization && formattedSegments.length > 0) {
         try {
-          self.postMessage({
-            type: 'status',
-            payload: { message: `Preparing windowed speaker diarization on ${formattedSegments.length} speech segments...` }
+          const diarizationModel = diarizationOptions.model || 'campplus';
+
+          if (diarizationModel === 'pyannote') {
+            self.postMessage({
+              type: 'status',
+              payload: { message: `Running PyAnnote hybrid speaker diarization on ${formattedSegments.length} speech segments...` }
+            });
+
+            let customDiarizerBuffer = null;
+            if (Array.isArray(files)) {
+              const diarizerEntry = files.find(f => {
+                const p = (f.path || '').toLowerCase();
+                return p.includes('ecapa') || p.includes('diariz') || p.includes('speaker') || p.includes('spkrec');
+              });
+              if (diarizerEntry && diarizerEntry.file) {
+                customDiarizerBuffer = await diarizerEntry.file.arrayBuffer();
+              }
+            }
+
+            const diarizerSession = await getDiarizerSession(customDiarizerBuffer);
+            const targetK = speakerCount === 'auto' ? 'auto' : Math.max(2, Math.min(5, Number(speakerCount) || 2));
+
+            const relativeSegments = formattedSegments.map((s, idx) => ({
+              ...s,
+              segIdx: idx,
+              start: Math.max(0, s.start - timeOffset),
+              end: Math.max(0.1, s.end - timeOffset),
+            }));
+
+            const diarizedRel = await diarizeSegmentsWithPyannote(
+              relativeSegments,
+              float32Audio,
+              {
+                speakerCount: targetK,
+                threshold: Number(diarizationOptions.threshold) || 0.10,
+                speechThreshold: Number(diarizationOptions.speechThreshold) || 0.50,
+                overlapThreshold: Number(diarizationOptions.overlapThreshold) || 0.35,
+                projectSpeakers,
+                diarizerSession,
+              },
+              (prog) => {
+                self.postMessage({
+                  type: 'progress',
+                  payload: {
+                    file: prog.message || `PyAnnote diarizing (${prog.progress}%)...`,
+                    progress: prog.progress,
+                    loaded: prog.progress,
+                    total: 100,
+                  }
+                });
+              }
+            );
+
+            if (diarizedRel.length > 0) {
+              finalSegments = diarizedRel.map((seg, idx) => {
+                const absStart = Number((seg.start + timeOffset).toFixed(2));
+                const absEnd = Number((seg.end + timeOffset).toFixed(2));
+                return {
+                  ...seg,
+                  id: idx + 1,
+                  start: absStart,
+                  end: absEnd,
+                  duration: Number((absEnd - absStart).toFixed(2)),
+                };
+              });
+              const distinctSpeakers = new Set(finalSegments.map(s => s.speakerId)).size;
+              console.log(`[Worker] PyAnnote diarization produced ${finalSegments.length} clean segments with ${distinctSpeakers} speakers`);
+            }
+          } else {
+            self.postMessage({
+              type: 'status',
+              payload: { message: `Preparing utterance speaker diarization on ${formattedSegments.length} speech segments...` }
+            });
+
+            let customDiarizerBuffer = null;
+            if (Array.isArray(files)) {
+              const diarizerEntry = files.find(f => {
+                const p = (f.path || '').toLowerCase();
+                return p.includes('ecapa') || p.includes('diariz') || p.includes('speaker') || p.includes('spkrec');
+              });
+              if (diarizerEntry && diarizerEntry.file) {
+                customDiarizerBuffer = await diarizerEntry.file.arrayBuffer();
+              }
+            }
+
+            const diarizerSession = await getDiarizerSession(customDiarizerBuffer);
+            const totalSamples = float32Audio.length;
+
+          // 1. Prepare utterance chunks (natural utterances <= 6s kept whole; > 6s sliced into 3s sub-chunks)
+          const maxChunkDuration = Number(diarizationOptions.maxChunkDuration) || 6.0;
+          const subChunkDuration = Number(diarizationOptions.subChunkDuration) || 3.0;
+
+          const relativeSegments = formattedSegments.map((s, idx) => ({
+            ...s,
+            segIdx: idx,
+            start: Math.max(0, s.start - timeOffset),
+            end: Math.max(0.1, s.end - timeOffset),
+          }));
+
+          const utteranceChunks = prepareUtteranceChunks(relativeSegments, {
+            maxChunkDuration,
+            subChunkDuration,
           });
 
-          let customDiarizerBuffer = null;
-          if (Array.isArray(files)) {
-            const diarizerEntry = files.find(f => {
-              const p = (f.path || '').toLowerCase();
-              return p.includes('ecapa') || p.includes('diariz') || p.includes('speaker') || p.includes('spkrec');
-            });
-            if (diarizerEntry && diarizerEntry.file) {
-              customDiarizerBuffer = await diarizerEntry.file.arrayBuffer();
-            }
-          }
-
-          const diarizerSession = await getDiarizerSession(customDiarizerBuffer);
-          const totalSamples = float32Audio.length;
-
-          // 1. Slice speech segments into sliding windows (configurable windowSec and periodSec)
-          const windowSec = Number(diarizationOptions.windowSec) || 1.0;
-          const periodSec = Number(diarizationOptions.periodSec) || 0.5;
-
-          const allWindows = [];
-          for (let i = 0; i < formattedSegments.length; i++) {
-            const seg = formattedSegments[i];
-            const startRelSec = Math.max(0, seg.start - timeOffset);
-            const endRelSec = Math.max(startRelSec + 0.1, seg.end - timeOffset);
-            const subWindows = sliceUtteranceIntoWindows(startRelSec, endRelSec, windowSec, periodSec);
-            for (const sw of subWindows) {
-              allWindows.push({
-                start: sw.start,
-                end: sw.end,
-                utteranceIdx: i,
-              });
-            }
-          }
-
           self.postMessage({
             type: 'status',
-            payload: { message: `Extracting speaker embeddings for ${allWindows.length} sliding windows...` }
+            payload: { message: `Extracting speaker embeddings for ${utteranceChunks.length} utterance chunks...` }
           });
 
           const embeddings = [];
-          const embeddedWindows = [];
-          for (let i = 0; i < allWindows.length; i++) {
-            const w = allWindows[i];
-            const startSample = Math.max(0, Math.min(totalSamples - 1, Math.floor(w.start * 16000)));
-            const endSample = Math.min(totalSamples, Math.ceil(w.end * 16000));
-            const winAudio = float32Audio.slice(startSample, Math.max(startSample + 1600, endSample));
+          const validChunks = [];
+          for (let i = 0; i < utteranceChunks.length; i++) {
+            const ch = utteranceChunks[i];
+            const startSample = Math.max(0, Math.min(totalSamples - 1, Math.floor(ch.start * 16000)));
+            const endSample = Math.min(totalSamples, Math.ceil(ch.end * 16000));
+            const chunkAudio = float32Audio.slice(startSample, Math.max(startSample + 1600, endSample));
 
-            const emb = await extractSpeakerEmbedding(winAudio, diarizerSession);
-            // Drop the window outright when no embedding could be produced, so windows
-            // and labels stay index-aligned through clustering.
-            if (emb) {
-              embeddings.push(emb);
-              embeddedWindows.push(w);
+            const rms = calculateAudioRms(chunkAudio);
+            let emb = null;
+            if (rms >= 0.0005 && chunkAudio.length >= 800) {
+              emb = await extractSpeakerEmbedding(chunkAudio, diarizerSession);
+            }
+            if (!emb && chunkAudio.length >= 1600) {
+              emb = await extractSpeakerEmbedding(chunkAudio, diarizerSession);
             }
 
-            if (i % 8 === 0 || i === allWindows.length - 1) {
-              const pct = Math.round(((i + 1) / allWindows.length) * 100);
+            if (emb) {
+              embeddings.push(emb);
+              validChunks.push(ch);
+            }
+
+            if (i % 4 === 0 || i === utteranceChunks.length - 1) {
+              const pct = Math.round(((i + 1) / utteranceChunks.length) * 100);
               self.postMessage({
                 type: 'progress',
                 payload: {
                   file: `Extracting speaker embeddings (${pct}%)...`,
                   progress: pct,
                   loaded: i + 1,
-                  total: allWindows.length,
+                  total: utteranceChunks.length,
                 }
               });
             }
@@ -1159,61 +1236,57 @@ self.onmessage = async (event) => {
 
           self.postMessage({
             type: 'status',
-            payload: { message: 'Clustering speaker embeddings (AHC average linkage)...' }
+            payload: { message: 'Clustering speaker embeddings (AHC affinity linkage)...' }
           });
 
-          // 2. Global AHC clustering on window embeddings
-          const numClusters = Math.min(embeddings.length, targetK);
-          const rawLabels = agglomerativeClustering(embeddings, {
-            targetClusters: numClusters,
+          // 2. Global AHC clustering, turn reconciliation, smoothing, and speaker assignment
+          const diarizedRel = diarizeUtterances({
+            chunks: validChunks,
+            chunkEmbeddings: embeddings,
+            originalSegments: relativeSegments,
+            speakerCount: targetK,
+            threshold: Number(diarizationOptions.threshold) || 0.10,
+            projectSpeakers,
+            distanceSpace: diarizationOptions.distanceSpace || 'cosine',
           });
 
-          // 3. Reconstruct continuous dialogue segments from classified windows
-          const reconstructed = reconstructSegmentsFromWindows(embeddedWindows, rawLabels, {
-            minSilence: vadOptions.minSilence ?? 0.5,
-            minSegment: vadOptions.minSegment ?? 0.5,
-          });
-
-          // 4. Map cluster IDs (0..4) to speakerId (1..5) and project speaker metadata
-          const spkMap = new Map();
-          if (Array.isArray(projectSpeakers)) {
-            for (const spk of projectSpeakers) {
-              if (spk && spk.id != null) spkMap.set(Number(spk.id), spk);
-            }
-          }
-
-          if (reconstructed.length > 0) {
-            const mappedDiarized = reconstructed.map((rec, idx) => {
-              const speakerId = Math.min(5, (rec.cluster ?? 0) + 1);
-              const matched = spkMap.get(speakerId);
-              const speakerName = matched?.name || `Speaker ${speakerId}`;
-              const absStart = Number((rec.start + timeOffset).toFixed(2));
-              const absEnd = Number((rec.end + timeOffset).toFixed(2));
+          // 3. Map to absolute timestamps
+          if (diarizedRel.length > 0) {
+            finalSegments = diarizedRel.map((seg, idx) => {
+              const absStart = Number((seg.start + timeOffset).toFixed(2));
+              const absEnd = Number((seg.end + timeOffset).toFixed(2));
               return {
+                ...seg,
                 id: idx + 1,
                 start: absStart,
                 end: absEnd,
                 duration: Number((absEnd - absStart).toFixed(2)),
-                text: '',
-                words: [],
-                speakerId,
-                speaker: speakerName,
               };
             });
-
-            // Post-diarization cleanup: merge adjacent same-speaker segments, resolve overlaps, enforce min/max bounds
-            finalSegments = segmentsCleanup(mappedDiarized, {
-              minSegment: vadOptions.minSegment ?? 0.5,
-              minSilence: vadOptions.minSilence ?? 0.5,
-              maxSegmentDuration: vadOptions.maxSegmentDuration ?? 30.0,
-              samplingRate: 16000,
-            });
-            console.log(`[Worker] Windowed diarization produced ${finalSegments.length} clean segments with ${numClusters} speakers`);
+            const distinctSpeakers = new Set(finalSegments.map(s => s.speakerId)).size;
+            console.log(`[Worker] Utterance-level diarization produced ${finalSegments.length} segments with ${distinctSpeakers} speakers`);
           }
+        }
         } catch (diarizeErr) {
           console.warn('[Worker] Speaker diarization failed, keeping default segments:', diarizeErr);
         }
       }
+
+      // Always run segmentsCleanup as the final step of segmentation.
+      // Tidies same-speaker segments according to linguist-configured rules:
+      // drops segments < minSegment, joins same-speaker segments closer than minSilence,
+      // splits segments > maxSegmentDuration, and preserves cross-speaker overlaps.
+      if (finalSegments && finalSegments.length > 0) {
+        finalSegments = segmentsCleanup(finalSegments, {
+          minSegment: vadOptions.minSegment ?? 0.5,
+          minSilence: vadOptions.minSilence ?? 0.5,
+          maxSegmentDuration: vadOptions.maxSegmentDuration ?? 30.0,
+          samplingRate: 16000,
+        });
+      }
+
+      const finalSpeechSec = finalSegments.reduce((acc, s) => acc + s.duration, 0);
+      const finalSilenceSkippedSec = Math.max(0, duration - finalSpeechSec);
 
       self.postMessage({
         type: 'result',
@@ -1231,8 +1304,8 @@ self.onmessage = async (event) => {
           audioDuration: duration,
           fullAudioDuration,
           timeOffset,
-          speechDuration: Number(totalSpeechSec.toFixed(2)),
-          silenceSkipped: Number(silenceSkippedSec.toFixed(2)),
+          speechDuration: Number(finalSpeechSec.toFixed(2)),
+          silenceSkipped: Number(finalSilenceSkippedSec.toFixed(2)),
           hardwareConcurrency: navigator.hardwareConcurrency || 4,
           crossOriginIsolated: Boolean(self.crossOriginIsolated),
         }
@@ -1510,10 +1583,7 @@ self.onmessage = async (event) => {
         : new Float32Array(audioData);
       const totalSamples = float32Audio.length;
 
-      self.postMessage({
-        type: 'status',
-        payload: { message: "Loading speaker embedding model (CAM++)..." }
-      });
+      const diarizationModel = diarizationOptions.model || 'campplus';
 
       let customDiarizerBuffer = null;
       if (Array.isArray(files)) {
@@ -1526,59 +1596,107 @@ self.onmessage = async (event) => {
         }
       }
 
-      const diarizerSession = await getDiarizerSession(customDiarizerBuffer);
+      if (diarizationModel === 'pyannote') {
+        self.postMessage({
+          type: 'status',
+          payload: { message: "Loading PyAnnote segmentation and CAM++ embedding engines..." }
+        });
 
-      const startTime = performance.now();
+        const startTime = performance.now();
+        const diarizerSession = await getDiarizerSession(customDiarizerBuffer);
+        const targetK = speakerCount === 'auto' ? 'auto' : Math.max(2, Math.min(5, Number(speakerCount) || 2));
 
-      // 1. Slice existing segments into sliding windows (configurable windowSec and periodSec)
-      const windowSec = Number(diarizationOptions.windowSec) || 1.0;
-      const periodSec = Number(diarizationOptions.periodSec) || 0.5;
+        const updatedSegments = await diarizeSegmentsWithPyannote(
+          segments,
+          float32Audio,
+          {
+            speakerCount: targetK,
+            threshold: Number(diarizationOptions.threshold) || 0.10,
+            speechThreshold: Number(diarizationOptions.speechThreshold) || 0.50,
+            overlapThreshold: Number(diarizationOptions.overlapThreshold) || 0.35,
+            projectSpeakers,
+            diarizerSession,
+          },
+          (prog) => {
+            self.postMessage({
+              type: 'progress',
+              payload: {
+                file: prog.message || `PyAnnote diarizing (${prog.progress}%)...`,
+                progress: prog.progress,
+                loaded: prog.progress,
+                total: 100,
+              }
+            });
+          }
+        );
 
-      const allWindows = [];
-      for (let i = 0; i < segments.length; i++) {
-        const seg = segments[i];
-        const startSec = Math.max(0, seg.start ?? 0);
-        const endSec = Math.max(startSec + 0.1, seg.end ?? (startSec + 1));
-        const subWindows = sliceUtteranceIntoWindows(startSec, endSec, windowSec, periodSec);
-        for (const sw of subWindows) {
-          allWindows.push({
-            start: sw.start,
-            end: sw.end,
-            segIdx: i,
-          });
-        }
+        const totalTime = ((performance.now() - startTime) / 1000).toFixed(2);
+        const distinctSpeakers = new Set(updatedSegments.map(s => s.speakerId)).size;
+
+        self.postMessage({
+          type: 'diarize_result',
+          payload: {
+            segments: updatedSegments,
+            speakerCount: distinctSpeakers,
+            timeSec: totalTime,
+          }
+        });
+        return;
       }
 
       self.postMessage({
         type: 'status',
-        payload: { message: `Extracting speaker embeddings for ${allWindows.length} sliding windows across ${segments.length} segments...` }
+        payload: { message: "Loading speaker embedding model (CAM++)..." }
+      });
+
+      const diarizerSession = await getDiarizerSession(customDiarizerBuffer);
+
+      const startTime = performance.now();
+
+      // 1. Prepare utterance chunks (natural utterances <= 6s kept whole; > 6s sliced into 3s sub-chunks)
+      const maxChunkDuration = Number(diarizationOptions.maxChunkDuration) || 6.0;
+      const subChunkDuration = Number(diarizationOptions.subChunkDuration) || 3.0;
+      const utteranceChunks = prepareUtteranceChunks(segments, {
+        maxChunkDuration,
+        subChunkDuration,
+      });
+
+      self.postMessage({
+        type: 'status',
+        payload: { message: `Extracting speaker embeddings for ${utteranceChunks.length} utterance chunks across ${segments.length} segments...` }
       });
 
       const embeddings = [];
-      const embeddedWindows = [];
-      for (let i = 0; i < allWindows.length; i++) {
-        const w = allWindows[i];
-        const startSample = Math.max(0, Math.min(totalSamples - 1, Math.floor(w.start * 16000)));
-        const endSample = Math.min(totalSamples, Math.ceil(w.end * 16000));
-        const winAudio = float32Audio.slice(startSample, Math.max(startSample + 1600, endSample));
+      const validChunks = [];
+      for (let i = 0; i < utteranceChunks.length; i++) {
+        const ch = utteranceChunks[i];
+        const startSample = Math.max(0, Math.min(totalSamples - 1, Math.floor(ch.start * 16000)));
+        const endSample = Math.min(totalSamples, Math.ceil(ch.end * 16000));
+        const chunkAudio = float32Audio.slice(startSample, Math.max(startSample + 1600, endSample));
 
-        const emb = await extractSpeakerEmbedding(winAudio, diarizerSession);
-        // Drop the window outright when no embedding could be produced, so windows
-        // and labels stay index-aligned through clustering.
-        if (emb) {
-          embeddings.push(emb);
-          embeddedWindows.push(w);
+        const rms = calculateAudioRms(chunkAudio);
+        let emb = null;
+        if (rms >= 0.0005 && chunkAudio.length >= 800) {
+          emb = await extractSpeakerEmbedding(chunkAudio, diarizerSession);
+        }
+        if (!emb && chunkAudio.length >= 1600) {
+          emb = await extractSpeakerEmbedding(chunkAudio, diarizerSession);
         }
 
-        if (i % 8 === 0 || i === allWindows.length - 1) {
-          const pct = Math.round(((i + 1) / allWindows.length) * 100);
+        if (emb) {
+          embeddings.push(emb);
+          validChunks.push(ch);
+        }
+
+        if (i % 4 === 0 || i === utteranceChunks.length - 1) {
+          const pct = Math.round(((i + 1) / utteranceChunks.length) * 100);
           self.postMessage({
             type: 'progress',
             payload: {
               file: `Extracting speaker embeddings (${pct}%)...`,
               progress: pct,
               loaded: i + 1,
-              total: allWindows.length,
+              total: utteranceChunks.length,
             }
           });
         }
@@ -1586,58 +1704,24 @@ self.onmessage = async (event) => {
 
       self.postMessage({
         type: 'status',
-        payload: { message: 'Clustering speaker embeddings (AHC average linkage)...' }
+        payload: { message: 'Clustering speaker embeddings (AHC affinity linkage)...' }
       });
 
-      // 2. Global AHC clustering
-      const targetK = Math.max(2, Math.min(5, Number(speakerCount) || 2));
-      const numClusters = Math.min(embeddings.length, targetK);
-      const rawLabels = agglomerativeClustering(embeddings, {
-        targetClusters: numClusters,
+      // 2. Global AHC clustering, turn reconciliation, smoothing, and speaker assignment
+      const targetK = speakerCount === 'auto' ? 'auto' : Math.max(2, Math.min(5, Number(speakerCount) || 2));
+      const diarizedSegments = diarizeUtterances({
+        chunks: validChunks,
+        chunkEmbeddings: embeddings,
+        originalSegments: segments,
+        speakerCount: targetK,
+        threshold: Number(diarizationOptions.threshold) || 0.10,
+        projectSpeakers,
+        distanceSpace: diarizationOptions.distanceSpace || 'cosine',
       });
 
-      // 3. Multi-window majority voting per existing segment
-      const segLabels = new Array(segments.length);
-      for (let i = 0; i < segments.length; i++) {
-        const windowLabelsForSeg = [];
-        for (let j = 0; j < embeddedWindows.length; j++) {
-          if (embeddedWindows[j].segIdx === i) {
-            windowLabelsForSeg.push(rawLabels[j]);
-          }
-        }
-        segLabels[i] = majorityVoteSpeaker(windowLabelsForSeg);
-      }
-
-      // 4. Temporal smoothing for short segments
-      const smoothedLabels = smoothSpeakerLabels(segments, segLabels);
-
-      // 5. Map cluster IDs (0..4) to speakerId (1..5) and project speaker metadata
-      const spkMap = new Map();
-      if (Array.isArray(projectSpeakers)) {
-        for (const spk of projectSpeakers) {
-          if (spk && spk.id != null) spkMap.set(Number(spk.id), spk);
-        }
-      }
-
-      const mappedSegments = segments.map((seg, idx) => {
-        const clusterId = smoothedLabels[idx] ?? 0;
-        const speakerId = Math.min(5, clusterId + 1);
-        const matched = spkMap.get(speakerId);
-        const speakerName = matched?.name || `Speaker ${speakerId}`;
-        return {
-          ...seg,
-          speakerId,
-          speaker: speakerName,
-        };
-      });
-
-      // Post-diarization cleanup: merge close same-speaker segments, resolve overlaps, enforce min/max bounds
-      const updatedSegments = segmentsCleanup(mappedSegments, {
-        minSegment: cleanupOptions.minSegment ?? 0.5,
-        minSilence: cleanupOptions.minSilence ?? 0.5,
-        maxSegmentDuration: cleanupOptions.maxSegmentDuration ?? 30.0,
-        samplingRate: 16000,
-      });
+      // For existing segments, preserve their boundaries, timing, and text intact
+      // (Avoid running destructive segmentsCleanup which fuses adjacent same-speaker segments and deletes short turns)
+      const updatedSegments = diarizedSegments;
 
       const totalTime = ((performance.now() - startTime) / 1000).toFixed(2);
       const distinctSpeakers = new Set(updatedSegments.map(s => s.speakerId)).size;

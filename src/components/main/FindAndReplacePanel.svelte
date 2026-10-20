@@ -296,6 +296,22 @@
 </script>
 
 <div class="inline-settings-panel find-replace-panel">
+  <div class="side-panel-header">
+    <div class="side-panel-title">
+      <i class="fa-solid fa-arrow-right-arrow-left"></i>
+      <span>Find & Replace</span>
+    </div>
+    <button
+      type="button"
+      class="panel-close-btn"
+      onclick={onClose}
+      title="Close find and replace panel (Esc)"
+      aria-label="Close"
+    >
+      <i class="fa-solid fa-xmark"></i>
+    </button>
+  </div>
+
   <div class="panel-body">
     <div class="find-replace-row">
       <!-- 1. Find What Input -->
@@ -1004,6 +1020,115 @@
   :global([data-theme='dark']) .pill-segments {
     background: rgba(56, 189, 248, 0.2);
     color: #38bdf8;
+  }
+
+  .side-panel-header {
+    display: none;
+  }
+
+  @media (min-width: 1081px) {
+    .inline-settings-panel.find-replace-panel {
+      height: 100%;
+      border-radius: 10px;
+      border-bottom: 1px solid var(--border-color, #cbd5e1);
+      border-left: 3px solid #f59e0b;
+      animation: none;
+      overflow: hidden;
+    }
+
+    :global([data-theme='dark']) .inline-settings-panel.find-replace-panel {
+      border-bottom-color: #334155;
+      border-left-color: #fbbf24;
+    }
+
+    .side-panel-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--border-color, #cbd5e1);
+      background: var(--bg-card, #ffffff);
+      flex-shrink: 0;
+    }
+
+    :global([data-theme='dark']) .side-panel-header {
+      background: #1e293b;
+      border-bottom-color: #334155;
+    }
+
+    .side-panel-title {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.85rem;
+      font-weight: 700;
+      color: var(--text-heading, #0f172a);
+    }
+
+    .side-panel-title i {
+      color: #f59e0b;
+    }
+
+    :global([data-theme='dark']) .side-panel-title i {
+      color: #fbbf24;
+    }
+
+    .panel-body {
+      padding: 14px;
+      overflow-y: auto;
+      flex: 1 1 auto;
+    }
+
+    .find-replace-row {
+      flex-direction: column;
+      align-items: stretch;
+      gap: 14px;
+    }
+
+    .find-input-group,
+    .replace-input-group,
+    .tier-select-group {
+      max-width: 100%;
+      width: 100%;
+      flex: none;
+    }
+
+    .fr-select-input {
+      width: 100%;
+    }
+
+    .action-container {
+      flex-direction: column;
+      align-items: stretch;
+      margin-left: 0;
+      width: 100%;
+      padding-top: 10px;
+      border-top: 1px solid var(--border-color, #e2e8f0);
+    }
+
+    :global([data-theme='dark']) .action-container {
+      border-top-color: #334155;
+    }
+
+    .actions-cluster {
+      width: 100%;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 6px;
+    }
+
+    .btn-replace-all {
+      grid-column: 1 / -1;
+    }
+
+    .btn-action-tool {
+      width: 100%;
+      justify-content: center;
+    }
+
+    .actions-cluster .panel-close-btn {
+      display: none;
+    }
   }
 </style>
 

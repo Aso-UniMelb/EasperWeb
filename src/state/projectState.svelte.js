@@ -21,6 +21,7 @@ import { appState } from './appState.svelte.js';
 import { router } from '../services/router.svelte.js';
 import { hunspellState } from './hunspellState.svelte.js';
 import { lexiconState } from './lexiconState.svelte.js';
+import { saveFileWithDialog } from '../utils/fileSave.js';
 import JSZip from 'jszip';
 
 class ProjectState {
@@ -41,6 +42,8 @@ class ProjectState {
   isNewProjectOpen = $state(false);
   isProjectSettingsOpen = $state(false);
   isImportElanOpen = $state(false);
+  elanImportTarget = $state('new'); // 'new' | 'active'
+  isElanOverwriteWarningOpen = $state(false);
 
   // Auto-save state
   saveStatus = $state('saved'); // 'saved' | 'saving' | 'unsaved'
@@ -800,92 +803,98 @@ class ProjectState {
       return;
     }
 
+    const cleanTitle = (proj.title || 'project').replace(/[^a-z0-9_-]/gi, '_');
+    const defaultFilename = `${cleanTitle}.easper`;
+
     try {
-      // If saving the currently active project, persist any pending edits first
-      if (this.activeProjectId === proj.id) {
-        await this.persistActiveProjectNow();
-      }
+      const res = await saveFileWithDialog(
+        async () => {
+          // If saving the currently active project, persist any pending edits first
+          if (this.activeProjectId === proj.id) {
+            await this.persistActiveProjectNow();
+          }
 
-      appState.statusMessage = `Packaging project "${proj.title}" with audio into .easper...`;
+          appState.statusMessage = `Packaging project "${proj.title}" with audio into .easper...`;
 
-      // 1. Fetch the 16kHz mono WAV audio blob from IndexedDB
-      let audioBlob = await getProjectAudioBlob(proj.id);
-      if (!audioBlob && audioState.selectedFile) {
-        audioBlob = audioState.selectedFile;
-      }
+          // 1. Fetch the 16kHz mono WAV audio blob from IndexedDB
+          let audioBlob = await getProjectAudioBlob(proj.id);
+          if (!audioBlob && audioState.selectedFile) {
+            audioBlob = audioState.selectedFile;
+          }
 
-      // 2. Prepare comprehensive metadata snapshot
-      const currentSegments =
-        this.activeProjectId === proj.id && transcriptState.segments
-          ? $state.snapshot(transcriptState.segments)
-          : proj.segments || [];
+          // 2. Prepare comprehensive metadata snapshot
+          const currentSegments =
+            this.activeProjectId === proj.id && transcriptState.segments
+              ? $state.snapshot(transcriptState.segments)
+              : proj.segments || [];
 
-      const packageData = {
-        easperVersion: '1.0',
-        exportedAt: new Date().toISOString(),
-        project: {
-          id: proj.id,
-          numericId: proj.numericId,
-          title: proj.title,
-          transcriber: proj.transcriber || 'Transcriber',
-          audioFileName: proj.audioFileName || 'recording-16khz.wav',
-          audioDuration: proj.audioDuration || 0,
-          audioFormat: proj.audioFormat || 'WAV 16kHz Mono',
-          audioFileSize: audioBlob ? audioBlob.size : proj.audioFileSize || 0,
-          speakers: proj.speakers || [{ id: 1, name: 'Speaker 1', initials: 'S1' }],
-          subTiers: proj.subTiers || [],
-          columnOrder: proj.columnOrder || [],
-          hiddenColumns: proj.hiddenColumns || [],
-          segments: currentSegments,
-          transcript:
-            (this.activeProjectId === proj.id
-              ? transcriptState.transcript
-              : proj.transcript) || '',
-          textDirection:
-            (this.activeProjectId === proj.id
-              ? transcriptState.textDirection
-              : proj.textDirection) || 'ltr',
-          lastSelectedSegmentId:
-            (this.activeProjectId === proj.id
-              ? transcriptState.selectedSegmentId
-              : proj.lastSelectedSegmentId) || null,
-          createdAt: proj.createdAt || new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
+          const packageData = {
+            easperVersion: '1.0',
+            exportedAt: new Date().toISOString(),
+            project: {
+              id: proj.id,
+              numericId: proj.numericId,
+              title: proj.title,
+              transcriber: proj.transcriber || 'Transcriber',
+              audioFileName: proj.audioFileName || 'recording-16khz.wav',
+              audioDuration: proj.audioDuration || 0,
+              audioFormat: proj.audioFormat || 'WAV 16kHz Mono',
+              audioFileSize: audioBlob
+                ? audioBlob.size
+                : proj.audioFileSize || 0,
+              speakers: proj.speakers || [
+                { id: 1, name: 'Speaker 1', initials: 'S1' },
+              ],
+              subTiers: proj.subTiers || [],
+              columnOrder: proj.columnOrder || [],
+              hiddenColumns: proj.hiddenColumns || [],
+              segments: currentSegments,
+              transcript:
+                (this.activeProjectId === proj.id
+                  ? transcriptState.transcript
+                  : proj.transcript) || '',
+              textDirection:
+                (this.activeProjectId === proj.id
+                  ? transcriptState.textDirection
+                  : proj.textDirection) || 'ltr',
+              lastSelectedSegmentId:
+                (this.activeProjectId === proj.id
+                  ? transcriptState.selectedSegmentId
+                  : proj.lastSelectedSegmentId) || null,
+              createdAt: proj.createdAt || new Date().toISOString(),
+              updatedAt: new Date().toISOString(),
+            },
+          };
+
+          // 3. Create zip bundle using JSZip
+          const zip = new JSZip();
+          zip.file('project.json', JSON.stringify(packageData, null, 2));
+
+          if (audioBlob) {
+            const audioName =
+              proj.audioFileName &&
+              proj.audioFileName.toLowerCase().endsWith('.wav')
+                ? proj.audioFileName
+                : 'audio.wav';
+            zip.file(audioName, audioBlob);
+          }
+
+          return zip.generateAsync({
+            type: 'blob',
+            compression: 'DEFLATE',
+            compressionOptions: { level: 6 },
+          });
         },
-      };
+        {
+          suggestedName: defaultFilename,
+          description: 'Easper Project Archive',
+          accept: { 'application/zip': ['.easper', '.zip'] },
+        },
+      );
 
-      // 3. Create zip bundle using JSZip
-      const zip = new JSZip();
-      zip.file('project.json', JSON.stringify(packageData, null, 2));
-
-      if (audioBlob) {
-        const audioName =
-          proj.audioFileName && proj.audioFileName.toLowerCase().endsWith('.wav')
-            ? proj.audioFileName
-            : 'audio.wav';
-        zip.file(audioName, audioBlob);
+      if (res.saved) {
+        appState.statusMessage = `Project "${proj.title}" saved successfully as "${res.filename}"!`;
       }
-
-      const zipBlob = await zip.generateAsync({
-        type: 'blob',
-        compression: 'DEFLATE',
-        compressionOptions: { level: 6 },
-      });
-
-      // 4. Trigger download
-      const cleanTitle = (proj.title || 'project').replace(/[^a-z0-9_-]/gi, '_');
-      const filename = `${cleanTitle}.easper`;
-
-      const url = URL.createObjectURL(zipBlob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = filename;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-
-      appState.statusMessage = `Project "${proj.title}" saved successfully as "${filename}"!`;
     } catch (err) {
       console.error('[ProjectState] Failed to save project package:', err);
       appState.errorMessage = `Failed to save project: ${err.message || err}`;
@@ -1216,6 +1225,121 @@ class ProjectState {
     requestAnimationFrame(() => transcriptState.drawVerticalWaveform());
 
     appState.statusMessage = `Successfully imported annotations from "${file.name}"!`;
+    return this.activeProject;
+  }
+
+  /**
+   * Opens the warning confirmation modal before importing an ELAN (.eaf) file
+   * into the currently active project.
+   */
+  requestImportElanToActiveProject() {
+    if (!this.activeProject || !this.activeProjectId) {
+      appState.errorMessage =
+        'Please open or create a project first before importing an ELAN (.eaf) file.';
+      return;
+    }
+    this.isElanOverwriteWarningOpen = true;
+  }
+
+  cancelImportElanToActiveProject() {
+    this.isElanOverwriteWarningOpen = false;
+  }
+
+  /**
+   * Confirms the warning, deletes all segments in the active project,
+   * and opens the ELAN (.eaf) import dialog targeting the active project.
+   */
+  async confirmImportElanToActiveProject() {
+    this.isElanOverwriteWarningOpen = false;
+    await this.clearActiveProjectSegments();
+    this.elanImportTarget = 'active';
+    this.isImportElanOpen = true;
+  }
+
+  /**
+   * Deletes all segments in the active project and persists immediately.
+   */
+  async clearActiveProjectSegments() {
+    if (!this.activeProject || !this.activeProjectId) return;
+
+    transcriptState.segments = [];
+    transcriptState.transcript = '';
+    transcriptState.selectedSegmentId = null;
+    if (transcriptState.fullResult) {
+      transcriptState.fullResult.segments = [];
+    }
+
+    this.activeProject.segments = [];
+    this.activeProject.transcript = '';
+    this.activeProject.lastSelectedSegmentId = null;
+
+    await this.persistActiveProjectNow();
+    transcriptState.notifySegmentsChange();
+    requestAnimationFrame(() => transcriptState.drawVerticalWaveform());
+  }
+
+  /**
+   * Imports compiled ELAN speakers, sub-tiers, and segments directly into the active project
+   * without re-converting audio or rebuilding the waveform.
+   */
+  async importElanToActiveProject({
+    mainTierTitle = '',
+    transcriber,
+    speakers,
+    subTiers,
+    segments,
+    transcript,
+  }) {
+    if (!this.activeProject || !this.activeProjectId) {
+      throw new Error('No active project open to import ELAN annotations into.');
+    }
+
+    const cleanSpeakers =
+      Array.isArray(speakers) && speakers.length > 0
+        ? $state.snapshot(speakers)
+        : [{ id: 1, name: 'Speaker 1', initials: 'S1' }];
+    const cleanSubTiers = normalizeSubTiers($state.snapshot(subTiers), {
+      sort: true,
+    });
+    const cleanSegments = Array.isArray(segments)
+      ? $state.snapshot(segments)
+      : [];
+    const cleanTranscriber =
+      transcriber?.trim() || this.activeProject.transcriber || 'Transcriber';
+
+    this.activeProject.mainTierTitle =
+      mainTierTitle !== undefined
+        ? mainTierTitle.trim()
+        : this.activeProject.mainTierTitle || '';
+    this.activeProject.transcriber = cleanTranscriber;
+    this.activeProject.speakers = cleanSpeakers;
+    this.activeProject.subTiers = cleanSubTiers;
+    this.activeProject.segments = cleanSegments;
+    this.activeProject.transcript = transcript || '';
+    this.activeProject.lastSelectedSegmentId =
+      cleanSegments.length > 0 ? cleanSegments[0].id : null;
+
+    localStorage.setItem('easper_last_transcriber', cleanTranscriber);
+
+    transcriptState.segments = cleanSegments;
+    transcriptState.transcript = transcript || '';
+    transcriptState.selectedSegmentId = this.activeProject.lastSelectedSegmentId;
+    transcriptState.pendingInitialScrollSegmentId =
+      this.activeProject.lastSelectedSegmentId;
+    if (transcriptState.fullResult) {
+      transcriptState.fullResult.segments = cleanSegments;
+    }
+    if (cleanSegments.length > 0) {
+      transcriptState.workflowStep = 'transcribe';
+    }
+
+    await this.persistActiveProjectNow();
+    transcriptState.notifySegmentsChange();
+    requestAnimationFrame(() => transcriptState.drawVerticalWaveform());
+
+    this.isImportElanOpen = false;
+    this.elanImportTarget = 'new';
+    appState.statusMessage = `Imported ${cleanSegments.length} utterances from ELAN into "${this.activeProject.title}"!`;
     return this.activeProject;
   }
 }

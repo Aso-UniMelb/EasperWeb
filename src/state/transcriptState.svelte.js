@@ -49,6 +49,7 @@ import { modelState } from './modelState.svelte.js';
 import { audioState } from './audioState.svelte.js';
 import { projectState } from './projectState.svelte.js';
 import { getProjectAudioBlob } from '../services/db.js';
+import { saveFileWithDialog } from '../utils/fileSave.js';
 
 /**
  * Single source of truth for the segmentation and speaker settings, so that the initial
@@ -62,7 +63,10 @@ export const VAD_DEFAULTS = Object.freeze({
   vadMinSegmentS: 0.4,
   vadMinSilenceS: 0.5,
   vadMaxSegmentS: 25,
+  diarizationModel: 'pyannote',
   diarizationSpeakerCount: 1,
+  diarizationThreshold: 0.10,
+  pyannoteThreshold: 0.50,
   diarizationWindowS: 1.0,
   diarizationPeriodS: 0.5,
 });
@@ -87,13 +91,16 @@ class TranscriptState {
   hasRunVad = $state(false);
 
   // Speaker separation settings
-  diarizationSpeakerCount = $state(VAD_DEFAULTS.diarizationSpeakerCount); // 1 (default) | 2 | 3 | 4 | 5
+  diarizationModel = $state(VAD_DEFAULTS.diarizationModel);
+  diarizationSpeakerCount = $state(VAD_DEFAULTS.diarizationSpeakerCount); // 1 (default) | 2 | 3 | 4 | 5 | 'auto'
+  diarizationThreshold = $state(VAD_DEFAULTS.diarizationThreshold);
+  pyannoteThreshold = $state(VAD_DEFAULTS.pyannoteThreshold);
   diarizationWindowS = $state(VAD_DEFAULTS.diarizationWindowS);
   diarizationPeriodS = $state(VAD_DEFAULTS.diarizationPeriodS);
   isDiarizing = $state(false);
 
   get enableDiarization() {
-    return Number(this.diarizationSpeakerCount) > 1;
+    return Number(this.diarizationSpeakerCount) > 1 || this.diarizationSpeakerCount === 'auto';
   }
 
   set enableDiarization(val) {
@@ -110,6 +117,13 @@ class TranscriptState {
 
   // Transcript view mode: 'segments' | 'chunks' | 'plain' | 'stats'
   transcriptView = $state('segments');
+
+  // Active automation panel drawer: 'segmentation' | 'recognition' | 'tagging' | 'find-replace' | null
+  activeDrawer = $state(null);
+
+  toggleDrawer(name) {
+    this.activeDrawer = this.activeDrawer === name ? null : name;
+  }
 
   // Two-step workflow state: 'segment' (Step 1: Audio & VAD) | 'transcribe' (Step 2: Whisper)
   workflowStep = $state('segment');
@@ -180,6 +194,31 @@ class TranscriptState {
     return tier ? tier.name : 'Main Transcription';
   }
 
+  isSegmentInSelectedRange(s) {
+    if (!audioState.isIntervalSelected) return true;
+    return (
+      (s.end ?? 0) > audioState.audioRangeStart + 0.05 &&
+      (s.start ?? 0) < audioState.audioRangeEnd - 0.05
+    );
+  }
+
+  get segmentsInSelectedRange() {
+    if (!Array.isArray(this.segments)) return [];
+    if (!audioState.isIntervalSelected) return this.segments;
+    return this.segments.filter((s) => this.isSegmentInSelectedRange(s));
+  }
+
+  get emptySegmentsInSelectedRangeCount() {
+    const segs = this.segmentsInSelectedRange;
+    const target = this.effectiveAsrOutputTarget;
+    if (target !== 'main') {
+      return segs.filter(
+        (s) => !getSubText(s, target) || getSubText(s, target).trim() === '',
+      ).length;
+    }
+    return segs.filter((s) => !s.text || s.text.trim() === '').length;
+  }
+
   get emptySegmentsCount() {
     if (!Array.isArray(this.segments)) return 0;
     const target = this.effectiveAsrOutputTarget;
@@ -210,6 +249,9 @@ class TranscriptState {
 
   // Waveform vertical scale factor: default 150
   WAVEFORM_SCALE_PX_PER_SEC = $state(150);
+
+  // Waveform horizontal zoom (signal power / amplitude gain): default 1
+  waveformHorizontalZoom = $state(1);
 
   // Persistence callback hook for project management auto-saving
   onSegmentsChange = null;
@@ -627,6 +669,13 @@ class TranscriptState {
       }
       this.drawVerticalWaveform();
     });
+  }
+
+  setHorizontalZoom(newGain) {
+    const clamped = Math.min(10, Math.max(0.5, Number(newGain) || 1));
+    if (clamped === this.waveformHorizontalZoom) return;
+    this.waveformHorizontalZoom = clamped;
+    requestAnimationFrame(() => this.drawVerticalWaveform());
   }
 
   get waveformTiles() {
@@ -1272,22 +1321,34 @@ class TranscriptState {
     if (!segmentOrId) return null;
     const segId =
       typeof segmentOrId === 'string' ? segmentOrId : segmentOrId.id;
-    const sorted = [...this.segments].sort(
-      (a, b) => (a.start ?? 0) - (b.start ?? 0),
-    );
-    const idx = sorted.findIndex((s) => s.id === segId);
-    return idx >= 0 && idx < sorted.length - 1 ? sorted[idx + 1] : null;
+    const target = this.segments.find((s) => s.id === segId);
+    if (!target) return null;
+
+    const speakerId = getSegmentSpeakerId(target);
+    const sameSpeakerSegments = this.segments
+      .filter((s) => getSegmentSpeakerId(s) === speakerId)
+      .sort((a, b) => (a.start ?? 0) - (b.start ?? 0));
+
+    const idx = sameSpeakerSegments.findIndex((s) => s.id === segId);
+    return idx >= 0 && idx < sameSpeakerSegments.length - 1
+      ? sameSpeakerSegments[idx + 1]
+      : null;
   }
 
   getPreviousSegment(segmentOrId) {
     if (!segmentOrId) return null;
     const segId =
       typeof segmentOrId === 'string' ? segmentOrId : segmentOrId.id;
-    const sorted = [...this.segments].sort(
-      (a, b) => (a.start ?? 0) - (b.start ?? 0),
-    );
-    const idx = sorted.findIndex((s) => s.id === segId);
-    return idx > 0 ? sorted[idx - 1] : null;
+    const target = this.segments.find((s) => s.id === segId);
+    if (!target) return null;
+
+    const speakerId = getSegmentSpeakerId(target);
+    const sameSpeakerSegments = this.segments
+      .filter((s) => getSegmentSpeakerId(s) === speakerId)
+      .sort((a, b) => (a.start ?? 0) - (b.start ?? 0));
+
+    const idx = sameSpeakerSegments.findIndex((s) => s.id === segId);
+    return idx > 0 ? sameSpeakerSegments[idx - 1] : null;
   }
 
   /**
@@ -1338,18 +1399,23 @@ class TranscriptState {
   }
 
   mergeSegmentWithNext(segmentId) {
-    const sorted = [...this.segments].sort(
-      (a, b) => (a.start ?? 0) - (b.start ?? 0),
-    );
-    const idx = sorted.findIndex((s) => s.id === segmentId);
-    if (idx < 0 || idx >= sorted.length - 1) return null;
+    const segA = this.segments.find((s) => s.id === segmentId);
+    if (!segA) return null;
+
+    // Only consider segments belonging to the SAME speaker
+    const speakerId = getSegmentSpeakerId(segA);
+    const sameSpeakerSegments = this.segments
+      .filter((s) => getSegmentSpeakerId(s) === speakerId)
+      .sort((a, b) => (a.start ?? 0) - (b.start ?? 0));
+
+    const idx = sameSpeakerSegments.findIndex((s) => s.id === segA.id);
+    if (idx < 0 || idx >= sameSpeakerSegments.length - 1) return null;
+
+    const segB = sameSpeakerSegments[idx + 1];
 
     this.pushUndo('Merge segment');
 
-    const segA = sorted[idx];
-    const segB = sorted[idx + 1];
-
-    // Merged boundaries: covers segA, segB, and any space/pause between them
+    // Merged boundaries: covers segA, segB, and any space/pause between them for this speaker
     const mergedStart = Math.min(segA.start ?? 0, segB.start ?? 0);
     const mergedEnd = Math.max(segA.end ?? 0, segB.end ?? 0);
     const mergedDuration = Number(
@@ -1368,7 +1434,7 @@ class TranscriptState {
       mergedText = textB;
     }
 
-    const mergedSpeakerId = Number(segA.speakerId || segB.speakerId) || 1;
+    const mergedSpeakerId = speakerId;
     const projectSpeakers = projectState.activeProject?.speakers || [];
     const matchedSpk = projectSpeakers.find((s) => Number(s.id) === mergedSpeakerId);
 
@@ -1387,11 +1453,17 @@ class TranscriptState {
       subTexts: mergedSubTexts,
     };
 
-    // Remove segB and update segA with mergedSegment
-    this.segments = this.segments
+    // Remove segB and update segA with mergedSegment (preserving all other speakers' segments!)
+    let updatedSegments = this.segments
       .filter((s) => s.id !== segB.id)
-      .map((s) => (s.id === segA.id ? mergedSegment : s))
-      .sort((a, b) => (a.start ?? 0) - (b.start ?? 0));
+      .map((s) => (s.id === segA.id ? mergedSegment : s));
+
+    // Ensure no overlapping segments within the same speaker
+    updatedSegments = resolveSameSpeakerOverlaps(updatedSegments, mergedSpeakerId);
+
+    this.segments = updatedSegments.sort(
+      (a, b) => (a.start ?? 0) - (b.start ?? 0),
+    );
 
     // Update active selections and trackers
     this.selectedSegmentId = mergedSegment.id;
@@ -2830,10 +2902,11 @@ class TranscriptState {
         requestAnimationFrame(() => this.drawVerticalWaveform());
       }, 40);
 
-      const targetSpeakerCount = Math.max(1, Math.min(5, Number(this.diarizationSpeakerCount) || 1));
+      const isAuto = this.diarizationSpeakerCount === 'auto';
+      const targetSpeakerCount = isAuto ? 'auto' : Math.max(1, Math.min(5, Number(this.diarizationSpeakerCount) || 1));
       let diarizationSpeakers = projectState.activeProject?.speakers || [];
-      if (this.enableDiarization && targetSpeakerCount > 1) {
-        diarizationSpeakers = await projectState.ensureSpeakerCount(targetSpeakerCount);
+      if (this.enableDiarization) {
+        diarizationSpeakers = await projectState.ensureSpeakerCount(isAuto ? 3 : Number(targetSpeakerCount) || 2);
       }
 
       appState.statusMessage = `Scanning audio${rangeLabel} with Silero VAD...`;
@@ -2858,6 +2931,9 @@ class TranscriptState {
             enableDiarization: this.enableDiarization,
             speakerCount: targetSpeakerCount,
             diarizationOptions: {
+              model: this.diarizationModel || 'pyannote',
+              threshold: Number(this.diarizationThreshold) || 0.70,
+              speechThreshold: Number(this.pyannoteThreshold) || 0.50,
               windowSec: Number(this.diarizationWindowS),
               periodSec: Number(this.diarizationPeriodS),
             },
@@ -2901,9 +2977,10 @@ class TranscriptState {
     appState.isProcessing = true;
     appState.activeAction = 'diarize';
     try {
-      const targetSpeakerCount = Math.max(2, Math.min(5, Number(this.diarizationSpeakerCount) || 2));
-      const diarizationSpeakers = await projectState.ensureSpeakerCount(targetSpeakerCount);
-      appState.statusMessage = `Preparing audio for speaker diarization on ${this.segments.length} segments (${targetSpeakerCount} speakers)...`;
+      const isAuto = this.diarizationSpeakerCount === 'auto';
+      const targetSpeakerCount = isAuto ? 'auto' : Math.max(2, Math.min(5, Number(this.diarizationSpeakerCount) || 2));
+      const diarizationSpeakers = await projectState.ensureSpeakerCount(isAuto ? 3 : Number(targetSpeakerCount) || 2);
+      appState.statusMessage = `Preparing audio for speaker diarization on ${this.segments.length} segments (${isAuto ? 'Auto' : targetSpeakerCount} speakers)...`;
 
       if (!audioState.cachedDecodedAudio || audioState.cachedDecodedAudio.target !== audioTarget) {
         const decoded = await processAudioFile(audioTarget);
@@ -2923,6 +3000,9 @@ class TranscriptState {
           files: modelState.rawLocalFiles,
           speakerCount: targetSpeakerCount,
           diarizationOptions: {
+            model: this.diarizationModel || 'pyannote',
+            threshold: Number(this.diarizationThreshold) || 0.70,
+            speechThreshold: Number(this.pyannoteThreshold) || 0.50,
             windowSec: Number(this.diarizationWindowS),
             periodSec: Number(this.diarizationPeriodS),
           },
@@ -2972,8 +3052,17 @@ class TranscriptState {
 
     const target = this.effectiveAsrOutputTarget;
     const targetName = this.getAsrOutputTargetName(target);
+    const isInterval = audioState.isIntervalSelected;
+    const rangeStart = audioState.audioRangeStart;
+    const rangeEnd = audioState.audioRangeEnd;
+    const targetSegments = this.segmentsInSelectedRange;
 
-    const emptySegments = this.segments.filter((s) => {
+    if (isInterval && targetSegments.length === 0) {
+      appState.statusMessage = `No segments found in selected range [${formatTimeSec1(rangeStart)} - ${formatTimeSec1(rangeEnd)}].`;
+      return;
+    }
+
+    const emptySegments = targetSegments.filter((s) => {
       if (target !== 'main') {
         const txt = getSubText(s, target);
         return !txt || txt.trim() === '';
@@ -2982,10 +3071,13 @@ class TranscriptState {
     });
 
     if (emptySegments.length === 0) {
+      const rangeNote = isInterval
+        ? ` in selected range [${formatTimeSec1(rangeStart)} - ${formatTimeSec1(rangeEnd)}]`
+        : '';
       appState.statusMessage =
         target !== 'main'
-          ? `All segments are already transcribed in "${targetName}"! (Edit or clear any segment text to re-transcribe it).`
-          : 'All segments are already transcribed! (Edit or clear any segment text to re-transcribe it).';
+          ? `All segments${rangeNote} are already transcribed in "${targetName}"! (Edit or clear any segment text to re-transcribe it).`
+          : `All segments${rangeNote} are already transcribed! (Edit or clear any segment text to re-transcribe it).`;
       return;
     }
 
@@ -2999,7 +3091,10 @@ class TranscriptState {
 
     try {
       const destSuffix = target !== 'main' ? ` into "${targetName}"` : '';
-      appState.statusMessage = `Preparing ${emptySegments.length} empty segments for Whisper transcription${destSuffix}...`;
+      const rangeSuffix = isInterval
+        ? ` in range [${formatTimeSec1(rangeStart)} - ${formatTimeSec1(rangeEnd)}]`
+        : '';
+      appState.statusMessage = `Preparing ${emptySegments.length} empty segments${rangeSuffix} for Whisper transcription${destSuffix}...`;
 
       if (!audioState.cachedDecodedAudio || audioState.cachedDecodedAudio.target !== audioTarget) {
         const decoded = await processAudioFile(audioTarget);
@@ -3042,16 +3137,22 @@ class TranscriptState {
         }, 40);
       }
 
-      appState.statusMessage = `Initializing Whisper model & transcribing ${emptySegments.length} empty segments${destSuffix}...`;
+      appState.statusMessage = `Initializing Whisper model & transcribing ${emptySegments.length} empty segments${rangeSuffix}${destSuffix}...`;
 
       appState.worker.postMessage({
         type: 'transcribe_empty_segments',
         payload: {
-          segments: emptySegments.map((s) => ({
-            id: s.id,
-            start: Number(s.start ?? 0),
-            end: Number(s.end ?? 0),
-          })),
+          segments: emptySegments.map((s) => {
+            const rawStart = Number(s.start ?? 0);
+            const rawEnd = Number(s.end ?? 0);
+            const clampedStart = isInterval ? Math.max(rangeStart, rawStart) : rawStart;
+            const clampedEnd = isInterval ? Math.min(rangeEnd, rawEnd) : rawEnd;
+            return {
+              id: s.id,
+              start: clampedStart,
+              end: Math.max(clampedStart + 0.1, clampedEnd),
+            };
+          }),
           audioData,
           modelSource: modelState.modelSource,
           modelId: modelState.hubModelId.trim() || MODEL_ID,
@@ -3137,7 +3238,7 @@ class TranscriptState {
     return this.segmentTextLine(seg).split('\t').some((c) => c.length > 0);
   }
 
-  exportTxt() {
+  async exportTxt() {
     if (!this.transcript && (!this.segments || this.segments.length === 0)) return;
     let textContent = '';
     const validSegments = (this.segments || []).filter((s) =>
@@ -3151,15 +3252,17 @@ class TranscriptState {
       textContent = cleanSpeechText(this.transcript);
     }
     const blob = new Blob([textContent], { type: 'text/plain;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${audioState.getBaseFileName()}-transcript.txt`;
-    a.click();
-    URL.revokeObjectURL(url);
+    const res = await saveFileWithDialog(blob, {
+      suggestedName: `${audioState.getBaseFileName()}-transcript.txt`,
+      description: 'Plain Text Transcript',
+      accept: { 'text/plain': ['.txt'] },
+    });
+    if (res.saved) {
+      appState.statusMessage = `Exported "${res.filename}" successfully.`;
+    }
   }
 
-  exportSrt() {
+  async exportSrt() {
     let srt = '';
     const validSegments = (this.segments || [])
       .map((s) => ({ ...s, srtLine: this.segmentTextLine(s) }))
@@ -3189,15 +3292,17 @@ class TranscriptState {
       return;
     }
     const blob = new Blob([srt], { type: 'text/plain;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${audioState.getBaseFileName()}.srt`;
-    a.click();
-    URL.revokeObjectURL(url);
+    const res = await saveFileWithDialog(blob, {
+      suggestedName: `${audioState.getBaseFileName()}.srt`,
+      description: 'SubRip Subtitles',
+      accept: { 'text/plain': ['.srt'] },
+    });
+    if (res.saved) {
+      appState.statusMessage = `Exported "${res.filename}" successfully.`;
+    }
   }
 
-  exportEaf() {
+  async exportEaf() {
     const validSegments = (this.segments || [])
       .map((s) => ({ ...s, text: cleanSpeechText(s.text || '') }));
     const validChunks = (this.chunks || [])
@@ -3234,15 +3339,17 @@ class TranscriptState {
     });
 
     const blob = new Blob([xml], { type: 'text/xml;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${audioState.getBaseFileName()}.eaf`;
-    a.click();
-    URL.revokeObjectURL(url);
+    const res = await saveFileWithDialog(blob, {
+      suggestedName: `${audioState.getBaseFileName()}.eaf`,
+      description: 'ELAN Annotation File',
+      accept: { 'text/xml': ['.eaf'] },
+    });
+    if (res.saved) {
+      appState.statusMessage = `Exported "${res.filename}" successfully.`;
+    }
   }
 
-  exportJson() {
+  async exportJson() {
     if (!this.fullResult && (!this.segments || this.segments.length === 0) && !this.transcript) return;
     const isVadOnly = Boolean(
       this.fullResult?.isVadOnly || this.fullResult?.task === 'segment',
@@ -3292,42 +3399,44 @@ class TranscriptState {
     const blob = new Blob([JSON.stringify(cleanedResult, null, 2)], {
       type: 'application/json;charset=utf-8',
     });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${audioState.getBaseFileName()}-result.json`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-    appState.statusMessage = 'Exported .json file successfully.';
+    const res = await saveFileWithDialog(blob, {
+      suggestedName: `${audioState.getBaseFileName()}-result.json`,
+      description: 'JSON Annotations File',
+      accept: { 'application/json': ['.json'] },
+    });
+    if (res.saved) {
+      appState.statusMessage = `Exported "${res.filename}" successfully.`;
+    }
   }
 
   async exportAudio() {
-    let audioBlob = null;
-    if (projectState.activeProjectId) {
-      audioBlob = await getProjectAudioBlob(projectState.activeProjectId);
+    const res = await saveFileWithDialog(
+      async () => {
+        let audioBlob = null;
+        if (projectState.activeProjectId) {
+          audioBlob = await getProjectAudioBlob(projectState.activeProjectId);
+        }
+        if (!audioBlob && audioState.selectedFile) {
+          audioBlob = audioState.selectedFile;
+        }
+        if (!audioBlob && audioState.recordedBlob) {
+          audioBlob = audioState.recordedBlob;
+        }
+        if (!audioBlob) {
+          appState.errorMessage = 'No audio file available to export.';
+          return null;
+        }
+        return audioBlob;
+      },
+      {
+        suggestedName: `${audioState.getBaseFileName()}-16khz.wav`,
+        description: 'WAV Audio Recording (16kHz Mono)',
+        accept: { 'audio/wav': ['.wav'] },
+      },
+    );
+    if (res.saved) {
+      appState.statusMessage = `Exported "${res.filename}" successfully.`;
     }
-    if (!audioBlob && audioState.selectedFile) {
-      audioBlob = audioState.selectedFile;
-    }
-    if (!audioBlob && audioState.recordedBlob) {
-      audioBlob = audioState.recordedBlob;
-    }
-    if (!audioBlob) {
-      appState.errorMessage = 'No audio file available to export.';
-      return;
-    }
-
-    const url = URL.createObjectURL(audioBlob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${audioState.getBaseFileName()}-16khz.wav`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-    appState.statusMessage = 'Exported 16kHz audio (.wav) successfully.';
   }
 
   async loadProjectState(projectDoc, audioBlob) {

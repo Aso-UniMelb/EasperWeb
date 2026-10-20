@@ -168,6 +168,11 @@ body {
   margin: 0;
 }
 
+.container.container-studio {
+  max-width: 100%;
+  width: 100%;
+}
+
 /* Header Styles */
 .easper-header {
   display: flex;
@@ -362,6 +367,11 @@ body {
   box-sizing: border-box;
 }
 
+.automation-panel-slot {
+  flex-shrink: 0;
+  margin-bottom: 8px;
+}
+
 /* ==========================================================================
    Transcription Studio Full-Viewport Workspace
    Keeps Header, Studio Panels & Global Footer in the visible viewport
@@ -369,6 +379,8 @@ body {
 
 @media (min-width: 1081px) {
   .container.container-studio {
+    max-width: 100%;
+    width: 100%;
     height: 100vh;
     max-height: 100vh;
     min-height: 100vh;
@@ -442,6 +454,35 @@ body {
     overflow: hidden;
     display: flex;
     flex-direction: column;
+  }
+
+  .container-studio .waveform-dual-wrapper.has-automation-panel {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 390px;
+    grid-template-rows: auto minmax(0, 1fr);
+    column-gap: 12px;
+  }
+
+  .container-studio .waveform-dual-wrapper.has-automation-panel > .waveform-dual-header-bar {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  .container-studio .waveform-dual-wrapper.has-automation-panel > .transcript-dual-container {
+    grid-column: 1;
+    grid-row: 2;
+  }
+
+  .container-studio .waveform-dual-wrapper.has-automation-panel > .automation-panel-slot {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+    height: 100%;
+    max-height: 100%;
+    min-height: 0;
+    margin-bottom: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
   }
 
   .container-studio .waveform-dual-header-bar {
@@ -1464,7 +1505,7 @@ progress {
 .export-dropdown-menu {
   position: absolute;
   top: calc(100% + 6px);
-  right: 0;
+  left: 0;
   min-width: 290px;
   background: #ffffff;
   border: 1px solid #cbd5e1;
@@ -2237,6 +2278,7 @@ progress {
 }
 
 .waveform-zoom-control,
+.waveform-power-control,
 .waveform-speed-control {
   display: inline-flex;
   align-items: center;
@@ -2252,6 +2294,7 @@ progress {
 }
 
 .waveform-zoom-control:hover,
+.waveform-power-control:hover,
 .waveform-speed-control:hover {
   border-color: #94a3b8;
 }
@@ -2259,6 +2302,12 @@ progress {
 .zoom-icon {
   font-size: 0.7rem;
   color: #0284c7;
+  flex-shrink: 0;
+}
+
+.power-icon {
+  font-size: 0.7rem;
+  color: #7c3aed;
   flex-shrink: 0;
 }
 
@@ -2281,6 +2330,19 @@ progress {
   accent-color: #0284c7;
 }
 
+.waveform-power-slider {
+  width: 70px;
+  min-width: 40px;
+  height: 4px;
+  margin: 0;
+  padding: 0;
+  background: #cbd5e1;
+  border-radius: 2px;
+  outline: none;
+  cursor: pointer;
+  accent-color: #7c3aed;
+}
+
 .waveform-speed-slider {
   width: 70px;
   min-width: 40px;
@@ -2300,6 +2362,16 @@ progress {
   font-weight: 700;
   color: #0284c7;
   min-width: 26px;
+  text-align: right;
+  flex-shrink: 0;
+}
+
+.waveform-power-badge {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: #7c3aed;
+  min-width: 28px;
   text-align: right;
   flex-shrink: 0;
 }
@@ -5847,12 +5919,14 @@ code {
 }
 
 [data-theme='dark'] .waveform-zoom-control,
+[data-theme='dark'] .waveform-power-control,
 [data-theme='dark'] .waveform-speed-control {
   background: rgba(255, 255, 255, 0.04);
   border-color: #334155;
 }
 
 [data-theme='dark'] .waveform-zoom-control:hover,
+[data-theme='dark'] .waveform-power-control:hover,
 [data-theme='dark'] .waveform-speed-control:hover {
   border-color: #475569;
 }
@@ -5861,17 +5935,26 @@ code {
   color: #38bdf8;
 }
 
+[data-theme='dark'] .power-icon {
+  color: #a78bfa;
+}
+
 [data-theme='dark'] .speed-icon {
   color: #34d399;
 }
 
 [data-theme='dark'] .waveform-zoom-slider,
+[data-theme='dark'] .waveform-power-slider,
 [data-theme='dark'] .waveform-speed-slider {
   background: #475569;
 }
 
 [data-theme='dark'] .waveform-zoom-badge {
   color: #38bdf8;
+}
+
+[data-theme='dark'] .waveform-power-badge {
+  color: #a78bfa;
 }
 
 [data-theme='dark'] .waveform-speed-badge {

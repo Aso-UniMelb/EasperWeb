@@ -294,6 +294,7 @@
     // 5. Draw high-resolution waveform amplitude peaks
     const audioData = audioState.cachedDecodedAudio?.audioData;
     const peaks = transcriptState.waveformState?.peaks;
+    const hZoom = Math.max(0.5, Number(transcriptState.waveformHorizontalZoom) || 1);
 
     ctx.lineWidth = 1.5;
 
@@ -315,13 +316,13 @@
             const val = Math.abs(audioData[s]);
             if (val > localMax) localMax = val;
           }
-          amp = Math.min(1.0, localMax * 1.5);
+          amp = Math.min(1.0, localMax * 1.5 * hZoom);
         }
       } else if (peaks && peaks.length > 0) {
         if (t >= 0 && t <= totalDuration) {
           const pIdx = Math.floor((t / totalDuration) * peaks.length);
           if (pIdx >= 0 && pIdx < peaks.length) {
-            amp = peaks[pIdx];
+            amp = Math.min(1.0, peaks[pIdx] * hZoom);
           }
         }
       }

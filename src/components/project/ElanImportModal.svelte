@@ -1,6 +1,7 @@
 <script>
   import { projectState } from '../../state/projectState.svelte.js';
   import { appState } from '../../state/appState.svelte.js';
+  import { transcriptState } from '../../state/transcriptState.svelte.js';
   import { parseEaf, matchAudioAndEaf } from '../../utils/elanParser.js';
   import {
     detectTierDefaults,
@@ -17,6 +18,11 @@
     normalizeSubTiers,
   } from '../../utils/subTiers.js';
   import { lexiconState } from '../../state/lexiconState.svelte.js';
+
+  let isTargetActiveProject = $derived(
+    projectState.elanImportTarget === 'active' &&
+      Boolean(projectState.activeProject),
+  );
 
   let eafFile = $state(null);
   let audioFile = $state(null);
@@ -64,6 +70,7 @@
   function handleClose() {
     if (isConverting) return;
     projectState.isImportElanOpen = false;
+    projectState.elanImportTarget = 'new';
     resetState();
   }
 
@@ -71,6 +78,14 @@
     if (projectState.isImportElanOpen) {
       if (!lexiconState.lexicons || lexiconState.lexicons.length === 0) {
         lexiconState.init();
+      }
+      if (isTargetActiveProject && projectState.activeProject) {
+        title = projectState.activeProject.title || '';
+        lexiconId = projectState.activeProject.lexiconId || '';
+        mainTierTitle = projectState.activeProject.mainTierTitle || '';
+        if (projectState.activeProject.transcriber) {
+          transcriber = projectState.activeProject.transcriber;
+        }
       }
     }
   });
@@ -115,11 +130,15 @@
   }
 
   function checkAudioMatch() {
-    if (parsedEaf && audioFile) {
+    const targetAudioName = isTargetActiveProject
+      ? projectState.activeProject?.audioFileName || ''
+      : audioFile?.name || '';
+
+    if (parsedEaf && targetAudioName) {
       audioMatch = matchAudioAndEaf(
         parsedEaf.mediaDescriptors,
         parsedEaf.fileName || eafFile?.name || '',
-        audioFile.name,
+        targetAudioName,
       );
     } else {
       audioMatch = null;
@@ -136,11 +155,12 @@
       if (lower.endsWith('.eaf')) {
         foundEaf = f;
       } else if (
-        lower.endsWith('.wav') ||
-        lower.endsWith('.mp3') ||
-        lower.endsWith('.m4a') ||
-        lower.endsWith('.ogg') ||
-        lower.endsWith('.flac')
+        !isTargetActiveProject &&
+        (lower.endsWith('.wav') ||
+          lower.endsWith('.mp3') ||
+          lower.endsWith('.m4a') ||
+          lower.endsWith('.ogg') ||
+          lower.endsWith('.flac'))
       ) {
         foundAudio = f;
       }
@@ -213,7 +233,7 @@
       errorMessage = 'Please select a valid ELAN (.eaf) file.';
       return;
     }
-    if (!audioFile) {
+    if (!isTargetActiveProject && !audioFile) {
       errorMessage = 'Please select the matching audio file (.wav).';
       return;
     }
@@ -236,22 +256,35 @@
         subTiers,
       });
 
-      convertingMessage =
-        'Converting audio to 16kHz mono WAV and saving project...';
+      if (isTargetActiveProject) {
+        convertingMessage =
+          'Importing speakers, sub-tiers, and segments into active project...';
+        await projectState.importElanToActiveProject({
+          mainTierTitle: mainTierTitle.trim(),
+          transcriber: transcriber.trim() || 'Transcriber',
+          speakers: compiled.speakers,
+          subTiers: compiled.subTiers,
+          segments: compiled.segments,
+          transcript: compiled.transcript,
+        });
+      } else {
+        convertingMessage =
+          'Converting audio to 16kHz mono WAV and saving project...';
 
-      // 2. Delegate to projectState to encode audio and persist in IndexedDB
-      await projectState.createProjectFromElan({
-        title: title.trim() || eafFile.name.replace(/\.[^/.]+$/, ''),
-        transcriber: transcriber.trim() || 'Transcriber',
-        mainTierTitle: mainTierTitle.trim(),
-        audioFileOrBlob: audioFile,
-        audioFileName: audioFile.name,
-        speakers: compiled.speakers,
-        subTiers: compiled.subTiers,
-        lexiconId: lexiconId || null,
-        segments: compiled.segments,
-        transcript: compiled.transcript,
-      });
+        // 2. Delegate to projectState to encode audio and persist in IndexedDB
+        await projectState.createProjectFromElan({
+          title: title.trim() || eafFile.name.replace(/\.[^/.]+$/, ''),
+          transcriber: transcriber.trim() || 'Transcriber',
+          mainTierTitle: mainTierTitle.trim(),
+          audioFileOrBlob: audioFile,
+          audioFileName: audioFile.name,
+          speakers: compiled.speakers,
+          subTiers: compiled.subTiers,
+          lexiconId: lexiconId || null,
+          segments: compiled.segments,
+          transcript: compiled.transcript,
+        });
+      }
 
       handleClose();
     } catch (err) {
@@ -262,6 +295,96 @@
     }
   }
 </script>
+
+{#if projectState.isElanOverwriteWarningOpen && projectState.activeProject}
+  <div
+    class="modal-backdrop"
+    onclick={(e) => {
+      if (e.target === e.currentTarget)
+        projectState.cancelImportElanToActiveProject();
+    }}
+    role="presentation"
+  >
+    <div
+      class="modal-dialog elan-warning-dialog"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="elan-overwrite-warning-title"
+    >
+      <div class="modal-header elan-warning-header">
+        <div class="modal-title">
+          <i class="fa-solid fa-triangle-exclamation elan-warning-icon"></i>
+          <div>
+            <h3 id="elan-overwrite-warning-title">
+              Import ELAN (.eaf) into Current Project?
+            </h3>
+            <p class="modal-subtitle">
+              Project: <strong>{projectState.activeProject.title}</strong>
+            </p>
+          </div>
+        </div>
+        <button
+          type="button"
+          class="btn-modal-close"
+          onclick={() => projectState.cancelImportElanToActiveProject()}
+          aria-label="Cancel"
+        >
+          <i class="fa-solid fa-xmark"></i>
+        </button>
+      </div>
+
+      <div class="modal-body elan-warning-body">
+        <div class="elan-warning-card">
+          <div class="elan-warning-card-icon">
+            <i class="fa-solid fa-trash-can"></i>
+          </div>
+          <div class="elan-warning-card-content">
+            <p class="elan-warning-primary">
+              {#if transcriptState.segments.length > 0}
+                All <strong>{transcriptState.segments.length}</strong> existing
+                segment{transcriptState.segments.length === 1 ? '' : 's'} in this
+                project will be deleted.
+              {:else}
+                Any existing segments in this project will be cleared.
+              {/if}
+            </p>
+            <p class="elan-warning-secondary">
+              Proceeding will delete all current segments in
+              <strong>{projectState.activeProject.title}</strong> and open the
+              ELAN (.eaf) import dialog so you can configure and import
+              speakers, sub-tiers, and utterances directly into the loaded audio
+              recording without re-converting the audio or rebuilding the
+              waveform.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <div class="footer-summary">
+          <span>Audio &amp; waveform will be preserved.</span>
+        </div>
+        <div class="footer-actions">
+          <button
+            type="button"
+            class="btn btn-secondary"
+            onclick={() => projectState.cancelImportElanToActiveProject()}
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            class="btn btn-warning-confirm"
+            onclick={() => projectState.confirmImportElanToActiveProject()}
+          >
+            <i class="fa-solid fa-file-waveform"></i>
+            <span>Delete Segments &amp; Continue</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+{/if}
 
 {#if projectState.isImportElanOpen}
   <div
@@ -277,10 +400,21 @@
         <div class="modal-title">
           <i class="fa-solid fa-file-waveform modal-title-icon"></i>
           <div>
-            <h3>Import from ELAN (.eaf + .wav)</h3>
-            <p class="modal-subtitle">
-              Convert multi-tier ELAN annotations into Easper dialogue segments
-            </p>
+            {#if isTargetActiveProject}
+              <h3>
+                Import ELAN (.eaf) into "{projectState.activeProject.title}"
+              </h3>
+              <p class="modal-subtitle">
+                Configure speakers and sub-tiers from ELAN for the currently
+                loaded audio
+              </p>
+            {:else}
+              <h3>Import from ELAN (.eaf + .wav)</h3>
+              <p class="modal-subtitle">
+                Convert multi-tier ELAN annotations into Easper dialogue
+                segments
+              </p>
+            {/if}
           </div>
         </div>
         <button
@@ -302,10 +436,10 @@
             <div class="converting-spinner">
               <i class="fa-solid fa-circle-notch fa-spin"></i>
             </div>
-            <h4>Importing ELAN Project...</h4>
+            <h4>Importing ELAN Annotations...</h4>
             <p class="converting-subtext">
               {convertingMessage ||
-                'Converting audio to 16kHz mono WAV and building segments...'}
+                'Building segments and updating project...'}
             </p>
           </div>
         {:else}
@@ -321,7 +455,9 @@
             <div
               class="combo-dropzone {isDropZoneHover
                 ? 'drag-over'
-                : ''} {eafFile && audioFile ? 'files-ready' : ''}"
+                : ''} {eafFile && (isTargetActiveProject || audioFile)
+                ? 'files-ready'
+                : ''}"
               ondragover={(e) => {
                 e.preventDefault();
                 isDropZoneHover = true;
@@ -329,30 +465,32 @@
               ondragleave={() => (isDropZoneHover = false)}
               ondrop={handleDrop}
               role="region"
-              aria-label="ELAN and Audio drop zone"
+              aria-label="ELAN file drop zone"
             >
-              <div class="dropzone-header">
-                <i class="fa-solid fa-cloud-arrow-up drop-icon"></i>
-                <div class="drop-text-wrap">
-                  <strong>Drop .eaf and audio file together here</strong>
-                  <span>or select files individually below</span>
+              {#if !isTargetActiveProject}
+                <div class="dropzone-header">
+                  <i class="fa-solid fa-cloud-arrow-up drop-icon"></i>
+                  <div class="drop-text-wrap">
+                    <strong>Drop .eaf and audio file together here</strong>
+                    <span>or select files individually below</span>
+                  </div>
+                  <button
+                    type="button"
+                    class="btn-select-both"
+                    onclick={() => comboInputEl?.click()}
+                  >
+                    <i class="fa-solid fa-folder-open"></i> Browse Pair
+                  </button>
+                  <input
+                    type="file"
+                    multiple
+                    accept=".eaf,.wav,.mp3,.m4a,.ogg,.flac"
+                    bind:this={comboInputEl}
+                    onchange={(e) => handleComboFiles(e.target.files)}
+                    style="display: none;"
+                  />
                 </div>
-                <button
-                  type="button"
-                  class="btn-select-both"
-                  onclick={() => comboInputEl?.click()}
-                >
-                  <i class="fa-solid fa-folder-open"></i> Browse Pair
-                </button>
-                <input
-                  type="file"
-                  multiple
-                  accept=".eaf,.wav,.mp3,.m4a,.ogg,.flac"
-                  bind:this={comboInputEl}
-                  onchange={(e) => handleComboFiles(e.target.files)}
-                  style="display: none;"
-                />
-              </div>
+              {/if}
 
               <!-- Individual File Slots -->
               <div class="file-slots-grid">
@@ -372,7 +510,8 @@
                           ?.allAnnotations?.length || 0} annotations
                       </span>
                     {:else}
-                      <span class="slot-placeholder">No .eaf file selected</span
+                      <span class="slot-placeholder"
+                        >Drop or choose an .eaf file</span
                       >
                     {/if}
                   </div>
@@ -396,43 +535,65 @@
                 </div>
 
                 <!-- Slot 2: Audio File -->
-                <div class="file-slot {audioFile ? 'slot-loaded' : ''}">
-                  <div class="slot-icon">
-                    <i class="fa-solid fa-file-audio"></i>
-                  </div>
-                  <div class="slot-info">
-                    <span class="slot-label">Audio Recording</span>
-                    {#if audioFile}
-                      <strong class="slot-filename" title={audioFile.name}>
-                        {audioFile.name}
+                {#if isTargetActiveProject}
+                  <div class="file-slot slot-loaded">
+                    <div class="slot-icon">
+                      <i class="fa-solid fa-file-audio"></i>
+                    </div>
+                    <div class="slot-info">
+                      <span class="slot-label">Loaded Project Audio</span>
+                      <strong
+                        class="slot-filename"
+                        title={projectState.activeProject.audioFileName}
+                      >
+                        {projectState.activeProject.audioFileName ||
+                          'recording-16khz.wav'}
                       </strong>
                       <span class="slot-meta">
-                        {(audioFile.size / (1024 * 1024)).toFixed(2)} MB
+                        Already converted &amp; ready ({projectState
+                          .activeProject.audioDuration || 0}s)
                       </span>
-                    {:else}
-                      <span class="slot-placeholder"
-                        >No audio file selected</span
-                      >
-                    {/if}
+                    </div>
                   </div>
-                  <button
-                    type="button"
-                    class="btn-slot-choose"
-                    onclick={() => audioInputEl?.click()}
-                  >
-                    {audioFile ? 'Replace' : 'Choose Audio'}
-                  </button>
-                  <input
-                    type="file"
-                    accept=".wav,.mp3,.m4a,.ogg,.flac"
-                    bind:this={audioInputEl}
-                    onchange={(e) => {
-                      const f = e.target.files?.[0];
-                      if (f) handleAudioSelected(f);
-                    }}
-                    style="display: none;"
-                  />
-                </div>
+                {:else}
+                  <div class="file-slot {audioFile ? 'slot-loaded' : ''}">
+                    <div class="slot-icon">
+                      <i class="fa-solid fa-file-audio"></i>
+                    </div>
+                    <div class="slot-info">
+                      <span class="slot-label">Audio Recording</span>
+                      {#if audioFile}
+                        <strong class="slot-filename" title={audioFile.name}>
+                          {audioFile.name}
+                        </strong>
+                        <span class="slot-meta">
+                          {(audioFile.size / (1024 * 1024)).toFixed(2)} MB
+                        </span>
+                      {:else}
+                        <span class="slot-placeholder"
+                          >No audio file selected</span
+                        >
+                      {/if}
+                    </div>
+                    <button
+                      type="button"
+                      class="btn-slot-choose"
+                      onclick={() => audioInputEl?.click()}
+                    >
+                      {audioFile ? 'Replace' : 'Choose Audio'}
+                    </button>
+                    <input
+                      type="file"
+                      accept=".wav,.mp3,.m4a,.ogg,.flac"
+                      bind:this={audioInputEl}
+                      onchange={(e) => {
+                        const f = e.target.files?.[0];
+                        if (f) handleAudioSelected(f);
+                      }}
+                      style="display: none;"
+                    />
+                  </div>
+                {/if}
               </div>
             </div>
 
@@ -459,36 +620,41 @@
           </div>
 
           {#if parsedEaf}
-            <!-- Step 2: Project Metadata -->
-            <div class="project-meta-grid">
-              <div class="form-group">
-                <label for="elan-proj-title"
-                  >Project Title <span class="label-required">*</span></label
-                >
-                <input
-                  id="elan-proj-title"
-                  type="text"
-                  class="form-control"
-                  placeholder="e.g. Field Interview - Session 1"
-                  bind:value={title}
-                />
+            {#if !isTargetActiveProject}
+              <!-- Step 2: Project Metadata -->
+              <div class="project-meta-grid">
+                <div class="form-group">
+                  <label for="elan-proj-title"
+                    >Project Title <span class="label-required">*</span></label
+                  >
+                  <input
+                    id="elan-proj-title"
+                    type="text"
+                    class="form-control"
+                    placeholder="e.g. Field Interview - Session 1"
+                    bind:value={title}
+                  />
+                </div>
+                <div class="form-group">
+                  <label for="elan-proj-lexicon"
+                    >Spellcheck Lexicon (Optional)</label
+                  >
+                  <select
+                    id="elan-proj-lexicon"
+                    class="form-control"
+                    bind:value={lexiconId}
+                  >
+                    <option value="">None (Spellchecking Disabled)</option>
+                    {#each lexiconState.lexicons as lex (lex.id)}
+                      <option value={lex.id}>
+                        {lex.title || lex.name || 'Untitled Lexicon'} ({lex
+                          .entries?.length || 0} entries)
+                      </option>
+                    {/each}
+                  </select>
+                </div>
               </div>
-              <div class="form-group">
-                <label for="elan-proj-lexicon">Spellcheck Lexicon (Optional)</label>
-                <select
-                  id="elan-proj-lexicon"
-                  class="form-control"
-                  bind:value={lexiconId}
-                >
-                  <option value="">None (Spellchecking Disabled)</option>
-                  {#each lexiconState.lexicons as lex (lex.id)}
-                    <option value={lex.id}>
-                      {lex.title || lex.name || 'Untitled Lexicon'} ({lex.entries?.length || 0} entries)
-                    </option>
-                  {/each}
-                </select>
-              </div>
-            </div>
+            {/if}
 
             <!-- Step 3: Speakers & Sub-Tiers Configuration -->
             <div class="mapping-config-section">
@@ -788,7 +954,11 @@
               sub-tier{selectedSubTierCount === 1 ? '' : 's'}
             </span>
           {:else}
-            <span>Select both files to configure tier mappings.</span>
+            <span>
+              {isTargetActiveProject
+                ? 'Select an .eaf file to configure tier mappings.'
+                : 'Select both files to configure tier mappings.'}
+            </span>
           {/if}
         </div>
         <div class="footer-actions">
@@ -805,12 +975,16 @@
             class="btn btn-primary btn-import"
             onclick={handleImport}
             disabled={!eafFile ||
-              !audioFile ||
+              (!isTargetActiveProject && !audioFile) ||
               selectedSpeakerTierCount === 0 ||
               isConverting}
           >
             <i class="fa-solid fa-file-import"></i>
-            <span>Import Project</span>
+            <span
+              >{isTargetActiveProject
+                ? 'Import into Project'
+                : 'Import Project'}</span
+            >
           </button>
         </div>
       </div>
@@ -1654,5 +1828,113 @@
   .btn:disabled {
     opacity: 0.5;
     cursor: not-allowed;
+  }
+
+  /* Warning Dialog for Active Project ELAN Import */
+  .elan-warning-dialog {
+    background: var(--bg-card, #ffffff);
+    color: var(--text-heading, #0f172a);
+    border: 1px solid var(--border-color, #e2e8f0);
+    border-top: 4px solid #f59e0b;
+    border-radius: 14px;
+    width: 100%;
+    max-width: 520px;
+    display: flex;
+    flex-direction: column;
+    box-shadow:
+      0 20px 25px -5px rgba(0, 0, 0, 0.2),
+      0 10px 10px -5px rgba(0, 0, 0, 0.08);
+    overflow: hidden;
+  }
+
+  :global([data-theme='dark']) .elan-warning-dialog {
+    background: #1e293b;
+    border-color: #334155;
+    border-top-color: #f59e0b;
+    color: #f8fafc;
+  }
+
+  .elan-warning-header {
+    background: #fffbeb;
+    border-bottom: 1px solid #fef3c7;
+  }
+
+  :global([data-theme='dark']) .elan-warning-header {
+    background: rgba(245, 158, 11, 0.12);
+    border-bottom-color: rgba(245, 158, 11, 0.25);
+  }
+
+  .elan-warning-icon {
+    color: #d97706;
+    font-size: 1.25rem;
+  }
+
+  .elan-warning-body {
+    padding: 18px 20px;
+  }
+
+  .elan-warning-card {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 14px;
+    border-radius: 10px;
+    background: #fffbeb;
+    border: 1px solid #fde68a;
+  }
+
+  :global([data-theme='dark']) .elan-warning-card {
+    background: rgba(245, 158, 11, 0.1);
+    border-color: rgba(245, 158, 11, 0.3);
+  }
+
+  .elan-warning-card-icon {
+    width: 34px;
+    height: 34px;
+    border-radius: 8px;
+    background: rgba(217, 119, 6, 0.15);
+    color: #d97706;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.95rem;
+    flex-shrink: 0;
+  }
+
+  .elan-warning-card-content {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .elan-warning-primary {
+    margin: 0;
+    font-size: 0.9rem;
+    font-weight: 700;
+    color: var(--text-heading, #0f172a);
+  }
+
+  :global([data-theme='dark']) .elan-warning-primary {
+    color: #f8fafc;
+  }
+
+  .elan-warning-secondary {
+    margin: 0;
+    font-size: 0.82rem;
+    line-height: 1.45;
+    color: var(--text-muted, #475569);
+  }
+
+  :global([data-theme='dark']) .elan-warning-secondary {
+    color: #cbd5e1;
+  }
+
+  .btn-warning-confirm {
+    background: #d97706;
+    color: #ffffff;
+  }
+
+  .btn-warning-confirm:hover:not(:disabled) {
+    background: #b45309;
   }
 </style>
