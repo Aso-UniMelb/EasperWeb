@@ -17,11 +17,12 @@
   import SegmentationSettingsPanel from './SegmentationSettingsPanel.svelte';
   import SpeechRecognitionSettingsPanel from './SpeechRecognitionSettingsPanel.svelte';
   import AutoTaggingSettingsPanel from './AutoTaggingSettingsPanel.svelte';
+  import FindAndReplacePanel from './FindAndReplacePanel.svelte';
   import WaveformBoundaryMagnifier from './WaveformBoundaryMagnifier.svelte';
 
   let { onWorkerReset } = $props();
 
-  let activeDrawer = $state(null); // 'segmentation' | 'recognition' | 'tagging' | null
+  let activeDrawer = $state(null); // 'segmentation' | 'recognition' | 'tagging' | 'find-replace' | null
   let waveformDualWrapperEl = $state(null);
 
   let projectSpeakers = $derived(
@@ -77,7 +78,6 @@
       window.removeEventListener('keydown', handleKeyDown);
     };
   });
-
 
   // Ctrl + Scroll / Cmd + Scroll to adjust vertical zoom while keeping playhead visible
   $effect(() => {
@@ -444,7 +444,7 @@
       >
         <i class="fa-solid fa-wand-magic-sparkles"></i>
         <span>Automation Tools</span>
-        {#if activeDrawer}
+        <!-- {#if activeDrawer}
           <span class="active-drawer-pill">
             {activeDrawer === 'segmentation'
               ? 'Segmentation'
@@ -452,15 +452,15 @@
                 ? 'Recognition'
                 : 'Tagging'}
           </span>
-        {/if}
-        {#if transcriptState.emptySegmentsCount > 0 && !activeDrawer}
+        {/if} -->
+        <!-- {#if transcriptState.emptySegmentsCount > 0 && !activeDrawer}
           <span
             class="tool-count-badge"
             title="{transcriptState.emptySegmentsCount} empty segments awaiting speech recognition"
           >
             {transcriptState.emptySegmentsCount}
           </span>
-        {/if}
+        {/if} -->
         <i
           class="fa-solid fa-chevron-down caret-icon {isAutomationMenuOpen
             ? 'rotated'
@@ -560,6 +560,32 @@
               </div>
             </div>
           </button>
+
+          <!-- Find & Replace -->
+          <button
+            type="button"
+            class="automation-menu-item {activeDrawer === 'find-replace'
+              ? 'active-item'
+              : ''}"
+            role="menuitem"
+            onclick={() => selectAutomationTool('find-replace')}
+            title="Find and replace text across transcription tiers and sub-tiers"
+          >
+            <div class="item-icon-box icon-find-replace">
+              <i class="fa-solid fa-arrow-right-arrow-left"></i>
+            </div>
+            <div class="item-text-box">
+              <div class="item-title-row">
+                <span class="item-title">Find &amp; Replace</span>
+                {#if activeDrawer === 'find-replace'}
+                  <span class="item-status-pill">Active</span>
+                {/if}
+              </div>
+              <div class="item-desc">
+                Search and replace text in main transcription and sub-tiers
+              </div>
+            </div>
+          </button>
         </div>
       {/if}
     </div>
@@ -618,9 +644,9 @@
       {onWorkerReset}
     />
   {:else if activeDrawer === 'tagging'}
-    <AutoTaggingSettingsPanel
-      onClose={() => (activeDrawer = null)}
-    />
+    <AutoTaggingSettingsPanel onClose={() => (activeDrawer = null)} />
+  {:else if activeDrawer === 'find-replace'}
+    <FindAndReplacePanel onClose={() => (activeDrawer = null)} />
   {/if}
 
   <div
@@ -634,10 +660,7 @@
       style="width: {sidebarWidth}px; min-width: {sidebarWidth}px;"
     >
       <!-- Sticky Header Row above Waveform & Speaker Pillars -->
-      <div
-        class="waveform-pillars-header"
-        style="width: {sidebarWidth}px;"
-      >
+      <div class="waveform-pillars-header" style="width: {sidebarWidth}px;">
         <div
           class="header-ruler"
           style="width: {pillarLayout.rulerWidth}px;"
@@ -657,7 +680,8 @@
           <div
             class="header-pillar-cell"
             style="width: {p.width}px;"
-            title="{p.speaker.name || 'Speaker ' + p.speakerId} (Pillar #{p.speakerId})"
+            title="{p.speaker.name ||
+              'Speaker ' + p.speakerId} (Pillar #{p.speakerId})"
           >
             <span
               class="pillar-speaker-badge"
@@ -944,7 +968,8 @@
       <div class="context-menu-section-label">
         <i class="fa-solid fa-wand-magic-sparkles"></i>
         <span
-          >Transcribe Segment{transcriptState.effectiveAsrOutputTarget !== 'main'
+          >Transcribe Segment{transcriptState.effectiveAsrOutputTarget !==
+          'main'
             ? ` (${transcriptState.getAsrOutputTargetName()})`
             : ''}</span
         >
