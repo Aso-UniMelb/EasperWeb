@@ -1139,14 +1139,6 @@
     padding: 3px 6px;
   }
 
-  .context-menu-speaker-row {
-    display: flex;
-    align-items: center;
-    gap: 5px;
-    padding: 4px 6px 6px 6px;
-    flex-wrap: wrap;
-  }
-
   .context-speaker-badge {
     padding: 3px 7px;
     border-radius: 4px;
@@ -1164,11 +1156,6 @@
   .context-speaker-badge:hover {
     transform: scale(1.06);
     filter: brightness(1.1);
-  }
-
-  .context-speaker-badge.assigned {
-    border-color: #ffffff;
-    box-shadow: 0 0 0 1.5px var(--spk-color);
   }
 
   .context-menu-add-row {

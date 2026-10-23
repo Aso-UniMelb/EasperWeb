@@ -2653,8 +2653,7 @@
   }
 
   .validation-check-desc code,
-  .validation-check-title code,
-  .validation-acronym-box code {
+  .validation-check-title code {
     font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
       monospace;
     font-size: 0.68rem;
@@ -2664,15 +2663,8 @@
   }
 
   :global([data-theme='dark']) .validation-check-desc code,
-  :global([data-theme='dark']) .validation-check-title code,
-  :global([data-theme='dark']) .validation-acronym-box code {
+  :global([data-theme='dark']) .validation-check-title code {
     background: rgba(255, 255, 255, 0.1);
-  }
-
-  .validation-acronym-box {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
   }
 
   .validation-subpanel {
@@ -2688,31 +2680,6 @@
   :global([data-theme='dark']) .validation-subpanel {
     background: rgba(56, 189, 248, 0.04);
     border-color: rgba(56, 189, 248, 0.18);
-  }
-
-  .validation-custom-rules-area {
-    display: flex;
-    flex-direction: column;
-    gap: 5px;
-    border-top: 1px dashed var(--border-color, #cbd5e1);
-    padding-top: 6px;
-  }
-
-  :global([data-theme='dark']) .validation-custom-rules-area {
-    border-top-color: #334155;
-  }
-
-  .custom-rules-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 6px;
-    flex-wrap: wrap;
-  }
-
-  .custom-rules-hint {
-    font-size: 0.68rem;
-    color: var(--text-muted, #64748b);
   }
 
   .custom-rule-add-row {
