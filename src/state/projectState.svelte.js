@@ -14,6 +14,7 @@ import {
   deleteProject as dbDeleteProject,
 } from '../services/db.js';
 import { normalizeSubTiers } from '../utils/subTiers.js';
+import { normalizeValidationRules } from '../utils/segmentValidator.js';
 import { processAudioFile, encodeWavBlob } from '../audio.js';
 import { audioState } from './audioState.svelte.js';
 import { transcriptState } from './transcriptState.svelte.js';
@@ -226,6 +227,7 @@ class ProjectState {
         columnOrder: [],
         hiddenColumns: [],
         lexiconId: lexiconId || null,
+        validationRules: normalizeValidationRules(null),
         segments: [],
         transcript: '',
         textDirection: transcriptState.textDirection || 'ltr',
@@ -324,6 +326,7 @@ class ProjectState {
         columnOrder: [],
         hiddenColumns: [],
         lexiconId: lexiconId || null,
+        validationRules: normalizeValidationRules(null),
         segments: Array.isArray(segments) ? segments : [],
         transcript: transcript || '',
         textDirection: transcriptState.textDirection || 'ltr',
@@ -526,7 +529,15 @@ class ProjectState {
    */
   async updateProjectSettings(
     projectId,
-    { title, transcriber, mainTierTitle, speakers, subTiers, lexiconId },
+    {
+      title,
+      transcriber,
+      mainTierTitle,
+      speakers,
+      subTiers,
+      lexiconId,
+      validationRules,
+    },
   ) {
     try {
       const proj = await getProject(projectId);
@@ -600,6 +611,11 @@ class ProjectState {
       const cleanLexId =
         lexiconId !== undefined ? (lexiconId || null) : (proj.lexiconId || null);
 
+      const newValidationRules =
+        validationRules !== undefined
+          ? normalizeValidationRules($state.snapshot(validationRules))
+          : normalizeValidationRules(proj.validationRules);
+
       const updated = {
         ...proj,
         title: title !== undefined ? title.trim() : proj.title,
@@ -612,6 +628,7 @@ class ProjectState {
         speakers: newSpeakers,
         subTiers: newSubTiers,
         lexiconId: cleanLexId,
+        validationRules: newValidationRules,
         segments: updatedSegments || [],
         updatedAt: new Date().toISOString(),
       };

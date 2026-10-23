@@ -24,9 +24,6 @@
 {#if isOpen}
   <div
     class="modal-backdrop"
-    onclick={(e) => {
-      if (e.target === e.currentTarget) transcriptState.closeSegmentModal();
-    }}
     role="presentation"
   >
     <div

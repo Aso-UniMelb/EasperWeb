@@ -72,10 +72,6 @@
 {#if projectState.isProjectManagerOpen}
   <div
     class="modal-backdrop"
-    onclick={(e) => {
-      if (e.target === e.currentTarget)
-        projectState.isProjectManagerOpen = false;
-    }}
     role="presentation"
   >
     <div class="modal-dialog project-manager-dialog">

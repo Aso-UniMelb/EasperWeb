@@ -35,7 +35,7 @@
       <button
         type="button"
         class="nav-link"
-        onclick={() => projectState.goToWorkspace()}
+        onclick={() => router.navigate('/transcriber')}
       >
         <i class="fa-solid fa-microphone nav-link-icon"></i>
         <span>Transcriber</span>
@@ -67,37 +67,6 @@
         <i class="fa-solid fa-book-bookmark nav-link-icon"></i>
         <span>Lexicons</span>
       </button>
-
-      <button
-        type="button"
-        class="nav-link"
-        onclick={() => router.navigate('/guide')}
-      >
-        <i class="fa-solid fa-book nav-link-icon"></i>
-        <span>Guide</span>
-      </button>
-
-      <a
-        href="https://arxiv.org/abs/2608.11629"
-        target="_blank"
-        rel="noopener noreferrer"
-        class="nav-link"
-        title="Easper: An Accessible ASR Pipeline for Language Documentation (arXiv:2608.11629)"
-      >
-        <i class="fa-solid fa-graduation-cap nav-link-icon"></i>
-        <span>Paper</span>
-      </a>
-
-      <a
-        href="https://github.com/Aso-UniMelb/Easper"
-        target="_blank"
-        rel="noopener noreferrer"
-        class="nav-link"
-        title="View source code on GitHub"
-      >
-        <i class="fa-brands fa-github nav-link-icon"></i>
-        <span>GitHub</span>
-      </a>
     </nav>
 
     <!-- Right: Utility Actions & CTA -->
@@ -135,7 +104,7 @@
       <button
         type="button"
         class="btn-launch-primary"
-        onclick={() => projectState.goToWorkspace()}
+        onclick={() => router.navigate('/transcriber')}
       >
         <span>Open Transcriber</span>
         <i class="fa-solid fa-arrow-right"></i>
@@ -161,7 +130,7 @@
         class="mobile-nav-item"
         onclick={() => {
           isMobileMenuOpen = false;
-          projectState.goToWorkspace();
+          router.navigate('/transcriber');
         }}
       >
         <i class="fa-solid fa-microphone"></i>
@@ -200,41 +169,6 @@
         <i class="fa-solid fa-book-bookmark"></i>
         <span>Lexicons</span>
       </button>
-      <button
-        type="button"
-        class="mobile-nav-item"
-        onclick={() => {
-          isMobileMenuOpen = false;
-          router.navigate('/guide');
-        }}
-      >
-        <i class="fa-solid fa-book"></i>
-        <span>User Guide</span>
-      </button>
-      <a
-        href="https://arxiv.org/abs/2608.11629"
-        target="_blank"
-        rel="noopener noreferrer"
-        class="mobile-nav-item"
-        onclick={() => {
-          isMobileMenuOpen = false;
-        }}
-      >
-        <i class="fa-solid fa-graduation-cap"></i>
-        <span>Paper (arXiv:2608.11629)</span>
-      </a>
-      <a
-        href="https://github.com/Aso-UniMelb/Easper"
-        target="_blank"
-        rel="noopener noreferrer"
-        class="mobile-nav-item"
-        onclick={() => {
-          isMobileMenuOpen = false;
-        }}
-      >
-        <i class="fa-brands fa-github"></i>
-        <span>GitHub Repository</span>
-      </a>
     </div>
   {/if}
 </header>

@@ -38,12 +38,6 @@
   role="dialog"
   aria-modal="true"
   tabindex="-1"
-  onclick={(e) => {
-    if (e.target === e.currentTarget) handleClose();
-  }}
-  onkeydown={(e) => {
-    if (e.key === 'Escape') handleClose();
-  }}
 >
   <div class="modal-card">
     <!-- Header -->

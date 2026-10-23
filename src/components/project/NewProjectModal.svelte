@@ -99,9 +99,6 @@
 {#if projectState.isNewProjectOpen}
   <div
     class="modal-backdrop"
-    onclick={(e) => {
-      if (e.target === e.currentTarget) handleClose();
-    }}
     role="presentation"
   >
     <div class="modal-dialog new-project-dialog">

@@ -80,7 +80,7 @@
 <svelte:window onkeydown={handleKeyDown} />
 
 {#if lexiconState.isNewLexiconModalOpen}
-  <div class="modal-backdrop" onclick={handleClose} role="presentation"></div>
+  <div class="modal-backdrop" role="presentation"></div>
 
   <div
     class="lex-modal-dialog"

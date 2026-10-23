@@ -13,10 +13,13 @@
   let copiedBibtex = $state(false);
 
   const BIBTEX_ENTRY = `@inproceedings{mahmudi26_interspeech,
-  title={Easper: An Accessible ASR Pipeline for Language Documentation},
-  author={Mahmudi, Aso and Dang, Ting and Vylomova, Ekaterina and Thieberger, Nick},
-  booktitle={Interspeech 2026},
-  year={2026}
+  title     = {{Easper: An Accessible ASR Pipeline for Language Documentation}},
+  author    = {Aso Mahmudi and Ting Dang and Ekaterina Vylomova and Nick Thieberger},
+  year      = {2026},
+  booktitle = {{Interspeech 2026}},
+  pages     = {3492--3496},
+  doi       = {10.21437/Interspeech.2026-2781},
+  issn      = {2958-1796},
 }`;
 
   async function copyBibtex() {
@@ -240,14 +243,14 @@
             >
           </div>
           <a
-            href="https://arxiv.org/abs/2608.11629"
+            href="https://www.isca-archive.org/interspeech_2026/mahmudi26_interspeech.html"
             target="_blank"
             rel="noopener noreferrer"
             class="citation-paper-link"
-            title="Easper: An Accessible ASR Pipeline for Language Documentation (arXiv:2608.11629)"
+            title="Easper: An Accessible ASR Pipeline for Language Documentation"
           >
             <i class="fa-regular fa-file-lines"></i>
-            <span>arXiv:2608.11629</span>
+            <span>Interspeech 2026</span>
             <i class="fa-solid fa-arrow-up-right-from-square ext-icon"></i>
           </a>
         </div>
@@ -260,7 +263,7 @@
         <div class="citation-paper-meta">
           <div class="citation-paper-title">
             <a
-              href="https://arxiv.org/abs/2608.11629"
+              href="https://www.isca-archive.org/interspeech_2026/mahmudi26_interspeech.html"
               target="_blank"
               rel="noopener noreferrer"
               class="paper-title-link"

@@ -36,7 +36,7 @@
         <button
           type="button"
           class="btn-cta-primary"
-          onclick={() => projectState.goToWorkspace()}
+          onclick={() => router.navigate('/transcriber')}
         >
           <i class="fa-solid fa-microphone"></i>
           <span>Open Transcriber</span>
@@ -144,7 +144,7 @@
           <button
             type="button"
             class="btn-app-launch btn-launch-transcribe"
-            onclick={() => projectState.goToWorkspace()}
+            onclick={() => router.navigate('/transcriber')}
           >
             <span>Launch Transcriber</span>
             <i class="fa-solid fa-arrow-right"></i>
@@ -297,6 +297,102 @@
             community access restrictions, fine-tune on your own hardware
             instead.
           </p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- =========================================================================
+       5. PEOPLE, ORGANISATIONS & ACKNOWLEDGEMENTS
+       ========================================================================= -->
+  <section class="credits-section">
+    <div class="section-header-centered">
+      <span class="section-kicker">Team &amp; Community</span>
+      <h2 class="section-heading">Contributors &amp; Acknowledgements</h2>
+      <p class="section-lead">
+        Easper is shaped by feedback from working linguists and supported by
+        language documentation archives and research infrastructure.
+      </p>
+    </div>
+
+    <div class="credits-grid">
+      <!-- Column 1: Developer & Contributing Linguists -->
+      <div class="credit-card credit-card-people">
+        <div class="credit-subsection">
+          <h3 class="credit-title">Developer</h3>
+          <div class="dev-profile-box">
+            <span class="dev-name">Aso Mahmudi</span>
+            <span class="dev-affiliation">The University of Melbourne</span>
+          </div>
+        </div>
+
+        <div class="credit-divider"></div>
+
+        <div class="credit-subsection">
+          <h3 class="credit-title">Contributing Linguists</h3>
+          <p class="credit-desc">
+            We gratefully acknowledge the linguists whose testing, suggestions,
+            and real-world workflows helped improve Easper:
+          </p>
+          <ul class="linguists-pill-list">
+            <li class="linguist-pill">Nick Thieberger</li>
+            <li class="linguist-pill">Zara Maxwell-Smith</li>
+            <li class="linguist-pill">Kira Davey</li>
+            <li class="linguist-pill">Ben Foley</li>
+            <li class="linguist-pill">Robert Early</li>
+            <li class="linguist-pill">Saurabh Kumar Nath</li>
+            <li class="linguist-pill">Leslie Vandeputte</li>
+          </ul>
+        </div>
+      </div>
+
+      <!-- Column 2: Supporting Organisations -->
+      <div class="credit-card credit-card-orgs">
+        <div class="credit-card-header">
+          <div class="credit-icon-wrap icon-purple">
+            <i class="fa-solid fa-building-columns"></i>
+          </div>
+          <div>
+            <h3 class="credit-title">Supporting Organisations</h3>
+            <p class="credit-tagline">Research infrastructure &amp; archives</p>
+          </div>
+        </div>
+
+        <div class="credit-body">
+          <div class="org-links-list">
+            <a
+              href="https://www.ldaca.edu.au/"
+              target="_blank"
+              rel="noopener noreferrer"
+              class="org-link-item"
+            >
+              <div class="org-link-main">
+                <span class="org-name">
+                  Language Data Commons of Australia (LDaCA)
+                </span>
+                <span class="org-url">ldaca.edu.au</span>
+              </div>
+              <i class="fa-solid fa-arrow-up-right-from-square org-ext-icon"
+              ></i>
+            </a>
+
+            <a
+              href="https://www.paradisec.org.au/"
+              target="_blank"
+              rel="noopener noreferrer"
+              class="org-link-item"
+            >
+              <div class="org-link-main">
+                <span class="org-name">
+                  PARADISEC (Pacific and Regional Archive for Digital Sources in
+                  Endangered Cultures)
+                </span>
+                <span class="org-url">paradisec.org.au</span>
+              </div>
+              <i class="fa-solid fa-arrow-up-right-from-square org-ext-icon"
+              ></i>
+            </a>
+          </div>
         </div>
       </div>
     </div>
@@ -864,5 +960,239 @@
     line-height: 1.6;
     color: var(--text-muted);
     margin: 0;
+  }
+
+  /* --------------------------------------------------------------------------
+     5. People, Organisations & Acknowledgements
+     -------------------------------------------------------------------------- */
+  .credits-section {
+    padding: 48px 0 0;
+  }
+
+  .credits-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 22px;
+  }
+
+  @media (min-width: 860px) {
+    .credits-grid {
+      grid-template-columns: 1.25fr 1fr;
+    }
+  }
+
+  .credit-card {
+    display: flex;
+    flex-direction: column;
+    padding: 24px;
+    border-radius: 14px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    transition: all 0.2s ease;
+  }
+
+  .credit-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 24px rgba(15, 23, 42, 0.06);
+  }
+
+  :global([data-theme='dark']) .credit-card:hover {
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+  }
+
+  .credit-card-people {
+    border-top: 3px solid #0284c7;
+    gap: 18px;
+  }
+
+  .credit-card-orgs {
+    border-top: 3px solid #9333ea;
+  }
+
+  .credit-subsection {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .credit-divider {
+    height: 1px;
+    background: var(--border-color);
+  }
+
+  .credit-card-header {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin-bottom: 18px;
+  }
+
+  .credit-icon-wrap {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    flex-shrink: 0;
+    border-radius: 11px;
+    font-size: 1.15rem;
+  }
+
+  .credit-title {
+    font-size: 1.12rem;
+    font-weight: 750;
+    color: var(--text-heading);
+    margin: 0;
+  }
+
+  .credit-tagline {
+    font-size: 0.83rem;
+    color: var(--text-muted);
+    margin: 2px 0 0;
+  }
+
+  .credit-body {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    flex: 1;
+  }
+
+  .credit-desc {
+    font-size: 0.88rem;
+    line-height: 1.58;
+    color: var(--text-muted);
+    margin: 0;
+  }
+
+  /* Developer Profile Box */
+  .dev-profile-box {
+    display: inline-flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 10px;
+    padding: 10px 14px;
+    border-radius: 10px;
+    background: var(--bg-hover, #f8fafc);
+    border: 1px solid var(--border-color);
+    align-self: flex-start;
+  }
+
+  :global([data-theme='dark']) .dev-profile-box {
+    background: rgba(255, 255, 255, 0.03);
+    border-color: rgba(255, 255, 255, 0.08);
+  }
+
+  .dev-name {
+    font-size: 0.96rem;
+    font-weight: 700;
+    color: var(--text-heading);
+  }
+
+  .dev-affiliation {
+    font-size: 0.82rem;
+    color: var(--text-muted);
+  }
+
+  /* Supporting Organisations List */
+  .org-links-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .org-link-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 12px 14px;
+    border-radius: 10px;
+    background: var(--bg-hover, #f8fafc);
+    border: 1px solid var(--border-color);
+    text-decoration: none;
+    transition: all 0.15s ease;
+  }
+
+  :global([data-theme='dark']) .org-link-item {
+    background: rgba(255, 255, 255, 0.03);
+    border-color: rgba(255, 255, 255, 0.08);
+  }
+
+  .org-link-item:hover {
+    border-color: #9333ea;
+    background: rgba(147, 51, 234, 0.05);
+    transform: translateX(2px);
+  }
+
+  :global([data-theme='dark']) .org-link-item:hover {
+    border-color: #a855f7;
+    background: rgba(168, 85, 247, 0.1);
+  }
+
+  .org-link-main {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    min-width: 0;
+  }
+
+  .org-name {
+    font-size: 0.88rem;
+    font-weight: 650;
+    color: var(--text-heading);
+    line-height: 1.38;
+  }
+
+  .org-url {
+    font-size: 0.76rem;
+    font-weight: 600;
+    color: #9333ea;
+  }
+
+  :global([data-theme='dark']) .org-url {
+    color: #c084fc;
+  }
+
+  .org-ext-icon {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    flex-shrink: 0;
+    transition: color 0.15s ease;
+  }
+
+  .org-link-item:hover .org-ext-icon {
+    color: #9333ea;
+  }
+
+  :global([data-theme='dark']) .org-link-item:hover .org-ext-icon {
+    color: #c084fc;
+  }
+
+  /* Contributing Linguists Pill List */
+  .linguists-pill-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .linguist-pill {
+    display: inline-flex;
+    align-items: center;
+    padding: 6px 12px;
+    border-radius: 20px;
+    font-size: 0.84rem;
+    font-weight: 600;
+    color: var(--text-heading);
+    background: var(--bg-hover, #f8fafc);
+    border: 1px solid var(--border-color);
+  }
+
+  :global([data-theme='dark']) .linguist-pill {
+    background: rgba(255, 255, 255, 0.04);
+    border-color: rgba(255, 255, 255, 0.1);
   }
 </style>

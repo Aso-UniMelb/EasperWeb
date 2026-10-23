@@ -89,7 +89,7 @@
 <svelte:window onkeydown={handleKeyDown} />
 
 {#if lexiconState.isEntryModalOpen && activeLex}
-  <div class="modal-backdrop" onclick={handleClose} role="presentation"></div>
+  <div class="modal-backdrop" role="presentation"></div>
 
   <div class="entry-modal-dialog" role="dialog" aria-modal="true" aria-labelledby="entry-modal-title">
     <div class="entry-modal-header">

@@ -60,7 +60,8 @@
   }
 
   $effect(() => {
-    if (!isProjectMenuOpen && !isExportMenuOpen && !isAutomationMenuOpen) return;
+    if (!isProjectMenuOpen && !isExportMenuOpen && !isAutomationMenuOpen)
+      return;
 
     function handlePointerDown(e) {
       if (
@@ -276,14 +277,14 @@
             </a>
             &bull;
             <a
-              href="https://arxiv.org/abs/2608.11629"
+              href="https://www.isca-archive.org/interspeech_2026/mahmudi26_interspeech.html"
               target="_blank"
               rel="noopener noreferrer"
               class="repo-link"
               onclick={(e) => e.stopPropagation()}
-              title="Easper: An Accessible ASR Pipeline for Language Documentation (arXiv:2608.11629)"
+              title="Easper: An Accessible ASR Pipeline for Language Documentation (Interspeech 2026)"
             >
-              <i class="fa-solid fa-graduation-cap"></i> Paper (arXiv:2608.11629)
+              <i class="fa-solid fa-graduation-cap"></i> Paper
             </a>
           </p>
         </div>
@@ -521,9 +522,7 @@
               </div>
               <div class="item-text-box">
                 <div class="item-title">Audio File (.wav)</div>
-                <div class="item-desc">
-                  Converted 16kHz mono PCM WAV audio
-                </div>
+                <div class="item-desc">Converted 16kHz mono PCM WAV audio</div>
               </div>
             </button>
 
@@ -991,7 +990,11 @@
               : 'Open Lexicon Manager'}
           >
             <i class="fa-solid fa-book"></i>
-            <span>{projectLexicon ? `Lexicon: ${projectLexicon.title || projectLexicon.name}` : 'Lexicons'}</span>
+            <span
+              >{projectLexicon
+                ? `Lexicon: ${projectLexicon.title || projectLexicon.name}`
+                : 'Lexicons'}</span
+            >
           </button>
         </div>
       {/if}
@@ -1100,13 +1103,13 @@
           <span>GitHub</span>
         </a>
         <a
-          href="https://arxiv.org/abs/2608.11629"
+          href="https://www.isca-archive.org/interspeech_2026/mahmudi26_interspeech.html"
           target="_blank"
           rel="noopener noreferrer"
           class="drawer-ext-link"
         >
           <i class="fa-solid fa-graduation-cap"></i>
-          <span>arXiv Paper</span>
+          <span>Paper</span>
         </a>
       </div>
     </div>

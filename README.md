@@ -136,14 +136,18 @@ If you use Easper in your research, please cite our paper accepted at the **Inte
 
 > **Easper: An Accessible ASR Pipeline for Language Documentation**  
 > Aso Mahmudi, Ting Dang, Ekaterina Vylomova, and Nick Thieberger  
-> Paper: [arXiv:2608.11629](https://arxiv.org/abs/2608.11629)
+> Paper: [Interspeech 2026](https://www.isca-archive.org/interspeech_2026/mahmudi26_interspeech.html)
 
 ```bibtex
 @inproceedings{mahmudi26_interspeech,
-  title={Easper: An Accessible ASR Pipeline for Language Documentation},
-  author={Mahmudi, Aso and Dang, Ting and Vylomova, Ekaterina and Thieberger, Nick},
-  booktitle={Interspeech 2026},
-  year={2026}
+@inproceedings{mahmudi26_interspeech,
+  title     = {{Easper: An Accessible ASR Pipeline for Language Documentation}},
+  author    = {Aso Mahmudi and Ting Dang and Ekaterina Vylomova and Nick Thieberger},
+  year      = {2026},
+  booktitle = {{Interspeech 2026}},
+  pages     = {3492--3496},
+  doi       = {10.21437/Interspeech.2026-2781},
+  issn      = {2958-1796},
 }
 ```
 

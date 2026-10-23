@@ -41,7 +41,7 @@
             <button
               type="button"
               class="footer-link-btn"
-              onclick={() => projectState.goToWorkspace()}
+              onclick={() => router.navigate('/transcriber')}
             >
               Transcription Studio
             </button>
@@ -82,12 +82,12 @@
           </li>
           <li>
             <a
-              href="https://arxiv.org/abs/2608.11629"
+              href="https://www.isca-archive.org/interspeech_2026/mahmudi26_interspeech.html"
               target="_blank"
               rel="noopener noreferrer"
               class="footer-link"
             >
-              Academic Paper (arXiv)
+              Academic Paper
             </a>
           </li>
           <li>

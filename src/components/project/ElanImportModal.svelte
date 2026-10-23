@@ -299,10 +299,6 @@
 {#if projectState.isElanOverwriteWarningOpen && projectState.activeProject}
   <div
     class="modal-backdrop"
-    onclick={(e) => {
-      if (e.target === e.currentTarget)
-        projectState.cancelImportElanToActiveProject();
-    }}
     role="presentation"
   >
     <div
@@ -389,9 +385,6 @@
 {#if projectState.isImportElanOpen}
   <div
     class="modal-backdrop"
-    onclick={(e) => {
-      if (e.target === e.currentTarget) handleClose();
-    }}
     role="presentation"
   >
     <div class="modal-dialog elan-import-dialog">

@@ -17,6 +17,11 @@
   import { hunspellState } from '../../state/hunspellState.svelte.js';
   import { lexiconState } from '../../state/lexiconState.svelte.js';
   import { extractWordsFromText } from '../../utils/hunspellDictBuilder.js';
+  import {
+    isValidationActive,
+    validateSegmentText,
+    getValidationIssueAtOffset,
+  } from '../../utils/segmentValidator.js';
 
   let { seg } = $props();
 
@@ -54,34 +59,107 @@
     Boolean(hunspellState.isReady && isLexiconSelected),
   );
 
-  // Tokenize text into words and delimiters, identifying unrecognized words
+  const validationRules = $derived(
+    projectState.activeProject?.validationRules || null,
+  );
+
+  const hasValidation = $derived(isValidationActive(validationRules));
+
+  const validationScan = $derived.by(() => {
+    if (!seg.text || (!hasValidation && !hasSpellcheck)) {
+      return { issues: [], validTagRanges: [] };
+    }
+    return validateSegmentText(seg.text, validationRules);
+  });
+
+  // Tokenize text into validation spans, valid tags, words, and delimiters
   const spellTokens = $derived.by(() => {
-    if (!hasSpellcheck || !seg.text) return [];
+    if ((!hasSpellcheck && !hasValidation) || !seg.text) return [];
 
     // Track Hunspell dictionary changes reactively so re-scan happens automatically
     const _rebuiltAt = hunspellState.lastRebuiltAt;
     const _wordCount = hunspellState.wordCount;
     const _lexId = hunspellState.activeLexiconId;
 
-    const regex = /([\p{L}\p{N}]+(?:['’\-][\p{L}\p{N}]+)*)/gu;
-    const parts = seg.text.split(regex);
-    const tokens = [];
+    const specialRanges = [
+      ...validationScan.issues.map((iss) => ({
+        start: iss.start,
+        end: iss.end,
+        kind: 'validation',
+      })),
+      ...validationScan.validTagRanges.map((vr) => ({
+        start: vr.start,
+        end: vr.end,
+        kind: 'validTag',
+      })),
+    ].sort((a, b) => a.start - b.start);
 
-    for (const part of parts) {
-      if (!part) continue;
-      const isWord = /[\p{L}\p{N}]/u.test(part);
-      if (isWord) {
-        const isMisspelled = !hunspellState.spell(part);
-        tokens.push({ text: part, isMisspelled, isWord: true });
-      } else {
-        tokens.push({ text: part, isMisspelled: false, isWord: false });
+    const tokens = [];
+    const wordSplitRegex = /([\p{L}\p{N}]+(?:['’\-][\p{L}\p{N}]+)*)/gu;
+
+    const pushPlainSlice = (sliceText) => {
+      if (!sliceText) return;
+      if (!hasSpellcheck) {
+        tokens.push({
+          text: sliceText,
+          isMisspelled: false,
+          isValidationIssue: false,
+          isWord: false,
+        });
+        return;
       }
+      const parts = sliceText.split(wordSplitRegex);
+      for (const part of parts) {
+        if (!part) continue;
+        const isWord = /[\p{L}\p{N}]/u.test(part);
+        if (isWord) {
+          const isMisspelled = !hunspellState.spell(part);
+          tokens.push({
+            text: part,
+            isMisspelled,
+            isValidationIssue: false,
+            isWord: true,
+          });
+        } else {
+          tokens.push({
+            text: part,
+            isMisspelled: false,
+            isValidationIssue: false,
+            isWord: false,
+          });
+        }
+      }
+    };
+
+    let cursor = 0;
+    for (const rng of specialRanges) {
+      if (rng.start < cursor) continue;
+      if (rng.start > cursor) {
+        pushPlainSlice(seg.text.slice(cursor, rng.start));
+      }
+      const spanText = seg.text.slice(rng.start, rng.end);
+      tokens.push({
+        text: spanText,
+        isMisspelled: false,
+        isValidationIssue: rng.kind === 'validation',
+        isWord: false,
+      });
+      cursor = rng.end;
     }
+
+    if (cursor < seg.text.length) {
+      pushPlainSlice(seg.text.slice(cursor));
+    }
+
     return tokens;
   });
 
   const hasMisspelledWords = $derived(
     spellTokens.some((t) => t.isMisspelled),
+  );
+
+  const hasValidationIssues = $derived(
+    spellTokens.some((t) => t.isValidationIssue),
   );
 
   function getWordAtOffset(text, offset) {
@@ -121,7 +199,53 @@
   }
 
   function handleWordClickAtCaret(caretPos, mouseEvent) {
-    if (!hasSpellcheck || !seg.text) {
+    if ((!hasSpellcheck && !hasValidation) || !seg.text) {
+      activeSpellMenu = null;
+      return false;
+    }
+
+    let x = 12;
+    let y = 32;
+    if (cellEl && mouseEvent) {
+      const rect = cellEl.getBoundingClientRect();
+      x = Math.max(
+        8,
+        Math.min(rect.width - 220, mouseEvent.clientX - rect.left),
+      );
+      y = mouseEvent.clientY - rect.top + 16;
+    }
+
+    // 1. Check if caret is inside a validation rule issue
+    if (hasValidation && validationScan.issues.length > 0) {
+      const vIssue = getValidationIssueAtOffset(
+        validationScan.issues,
+        caretPos,
+      );
+      if (vIssue) {
+        activeSpellMenu = {
+          kind: 'validation',
+          label: vIssue.label,
+          word: vIssue.text,
+          start: vIssue.start,
+          end: vIssue.end,
+          x,
+          y,
+          suggestions: vIssue.suggestions || [],
+        };
+        return true;
+      }
+    }
+
+    // 2. Otherwise check Hunspell spelling (if active and not inside a valid markup tag)
+    if (!hasSpellcheck) {
+      activeSpellMenu = null;
+      return false;
+    }
+
+    const insideValidTag = validationScan.validTagRanges.some(
+      (vr) => caretPos >= vr.start && caretPos <= vr.end,
+    );
+    if (insideValidTag) {
       activeSpellMenu = null;
       return false;
     }
@@ -135,15 +259,9 @@
     if (!hunspellState.spell(wordInfo.word)) {
       const suggestions = hunspellState.suggest(wordInfo.word).slice(0, 5);
 
-      let x = 12;
-      let y = 32;
-      if (cellEl && mouseEvent) {
-        const rect = cellEl.getBoundingClientRect();
-        x = Math.max(8, Math.min(rect.width - 220, mouseEvent.clientX - rect.left));
-        y = mouseEvent.clientY - rect.top + 16;
-      }
-
       activeSpellMenu = {
+        kind: 'spell',
+        label: 'Unrecognized word',
         word: wordInfo.word,
         start: wordInfo.start,
         end: wordInfo.end,
@@ -421,14 +539,16 @@
     {#each visibleColumns as col (col.key)}
       {#if col.isMain}
         <div class="main-tier-cell" bind:this={cellEl}>
-          {#if hasSpellcheck && hasMisspelledWords}
+          {#if (hasSpellcheck && hasMisspelledWords) || (hasValidation && hasValidationIssues)}
             <div
               class="spell-backdrop"
               aria-hidden="true"
               dir={transcriptState.textDirection}
             >
               {#each spellTokens as tok}
-                {#if tok.isMisspelled}
+                {#if tok.isValidationIssue}
+                  <mark class="validation-wavy-underline">{tok.text}</mark>
+                {:else if tok.isMisspelled}
                   <mark class="spell-wavy-underline">{tok.text}</mark>
                 {:else}
                   <span>{tok.text}</span>
@@ -444,7 +564,7 @@
             data-tier="main"
             dir={transcriptState.textDirection}
             bind:value={seg.text}
-            spellcheck={isLexiconSelected ? 'false' : 'true'}
+            spellcheck={isLexiconSelected || hasValidation ? 'false' : 'true'}
             onfocus={() => transcriptState.selectSegment(seg.id, false)}
             onclick={handleTextareaClick}
             oncontextmenu={handleTextareaContextMenu}
@@ -479,7 +599,21 @@
               tabindex="-1"
             >
               <div class="spell-menu-header">
-                <span class="spell-menu-typo">"{activeSpellMenu.word}"</span>
+                <div class="spell-menu-header-info">
+                  <span
+                    class="spell-menu-typo {activeSpellMenu.kind ===
+                    'validation'
+                      ? 'validation-menu-typo'
+                      : ''}"
+                  >
+                    "{activeSpellMenu.word}"
+                  </span>
+                  {#if activeSpellMenu.label}
+                    <span class="spell-menu-reason">
+                      {activeSpellMenu.label}
+                    </span>
+                  {/if}
+                </div>
                 <button
                   type="button"
                   class="spell-menu-close"
@@ -501,7 +635,7 @@
                       role="menuitem"
                     >
                       <i class="fa-solid fa-check sugg-icon"></i>
-                      <span>{sugg}</span>
+                      <span>{sugg === ' ' ? 'Single space (" ")' : sugg === '' ? '(Delete)' : sugg}</span>
                     </button>
                   {/each}
                 </div>
@@ -509,17 +643,19 @@
                 <div class="spell-menu-empty">No suggestions found</div>
               {/if}
 
-              <div class="spell-menu-divider"></div>
+              {#if activeSpellMenu.kind !== 'validation' && isLexiconSelected}
+                <div class="spell-menu-divider"></div>
 
-              <button
-                type="button"
-                class="spell-menu-item add-item"
-                onclick={handleAddActiveToLexicon}
-                role="menuitem"
-              >
-                <i class="fa-solid fa-plus add-icon"></i>
-                <span>Add "{activeSpellMenu.word}" to Lexicon</span>
-              </button>
+                <button
+                  type="button"
+                  class="spell-menu-item add-item"
+                  onclick={handleAddActiveToLexicon}
+                  role="menuitem"
+                >
+                  <i class="fa-solid fa-plus add-icon"></i>
+                  <span>Add "{activeSpellMenu.word}" to Lexicon</span>
+                </button>
+              {/if}
             </div>
           {/if}
         </div>
@@ -785,6 +921,42 @@
 
   :global([data-theme='dark']) .spell-wavy-underline {
     text-decoration-color: #f87171;
+  }
+
+  .validation-wavy-underline {
+    background: rgba(245, 158, 11, 0.14);
+    border-radius: 2px;
+    color: transparent;
+    text-decoration: underline wavy #f59e0b 1.5px;
+    text-underline-offset: 3px;
+  }
+
+  :global([data-theme='dark']) .validation-wavy-underline {
+    background: rgba(251, 191, 36, 0.16);
+    text-decoration-color: #fbbf24;
+  }
+
+  .spell-menu-header-info {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    min-width: 0;
+  }
+
+  .validation-menu-typo {
+    color: #d97706 !important;
+    text-decoration-color: #f59e0b !important;
+  }
+
+  :global([data-theme='dark']) .validation-menu-typo {
+    color: #fbbf24 !important;
+    text-decoration-color: #fbbf24 !important;
+  }
+
+  .spell-menu-reason {
+    font-size: 0.66rem;
+    font-weight: 600;
+    color: var(--text-muted, #64748b);
   }
 
   /* Transparent scrim for dismissing context menu on click-outside */

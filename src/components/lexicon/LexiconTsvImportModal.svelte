@@ -118,7 +118,7 @@
 <svelte:window onkeydown={handleKeyDown} />
 
 {#if lexiconState.isImportTsvModalOpen && activeLex}
-  <div class="modal-backdrop" onclick={handleClose} role="presentation"></div>
+  <div class="modal-backdrop" role="presentation"></div>
 
   <div class="tsv-modal-dialog" role="dialog" aria-modal="true" aria-labelledby="tsv-modal-title">
     <div class="tsv-modal-header">

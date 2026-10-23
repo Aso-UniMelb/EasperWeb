@@ -18,6 +18,14 @@
     formatLexicon,
     parseLexicon,
   } from '../../utils/subTiers.js';
+  import {
+    DEFAULT_ALLOWED_TAGS,
+    ACRONYM_MODES,
+    normalizeValidationRules,
+    parseAllowedTags,
+    formatAllowedTags,
+    isValidationActive,
+  } from '../../utils/segmentValidator.js';
 
   let title = $state('');
   let transcriber = $state('');
@@ -25,7 +33,23 @@
   let lexiconId = $state('');
   let speakers = $state([]);
   let subTiers = $state([]);
+  let activeTab = $state('main'); // 'main' | 'subtiers' | 'validation'
   let showSubTierHelp = $state(false);
+  let showValidationHelp = $state(false);
+
+  // Validation Rules state
+  let validateTags = $state(false);
+  let allowedTags = $state([...DEFAULT_ALLOWED_TAGS]);
+  let allowedTagsInput = $state(formatAllowedTags(DEFAULT_ALLOWED_TAGS));
+  let fixApostropheBacktick = $state(false);
+  let fixDoubleSpaces = $state(false);
+  let validateAcronyms = $state(false);
+  let acronymMode = $state(ACRONYM_MODES.PLAIN);
+  let validateCustomRules = $state(false);
+  let customRules = $state([]);
+  let newRuleFind = $state('');
+  let newRuleReplace = $state('');
+  let newRuleIsRegex = $state(false);
   let errorMessage = $state('');
   let successMessage = $state('');
   let wasOpen = false;
@@ -67,8 +91,28 @@
               lexiconField: t.lexiconField || '',
             }),
           );
+          const vRules = normalizeValidationRules(
+            projectState.activeProject.validationRules,
+          );
+          validateTags = vRules.validateTags;
+          allowedTags = [...vRules.allowedTags];
+          allowedTagsInput = formatAllowedTags(vRules.allowedTags);
+          fixApostropheBacktick = vRules.fixApostropheBacktick;
+          fixDoubleSpaces = vRules.fixDoubleSpaces;
+          validateAcronyms = Boolean(vRules.validateAcronyms);
+          acronymMode =
+            vRules.acronymMode && vRules.acronymMode !== ACRONYM_MODES.DISABLED
+              ? vRules.acronymMode
+              : ACRONYM_MODES.PLAIN;
+          validateCustomRules = Boolean(vRules.validateCustomRules);
+          customRules = vRules.customRules.map((r) => ({ ...r }));
+          newRuleFind = '';
+          newRuleReplace = '';
+          newRuleIsRegex = false;
         }
+        activeTab = 'main';
         showSubTierHelp = false;
+        showValidationHelp = false;
         errorMessage = '';
         successMessage = '';
       });
@@ -206,17 +250,67 @@
     speaker.initials = (val || '').toUpperCase().slice(0, 3);
   }
 
+  function handleAllowedTagsInput(val) {
+    allowedTagsInput = val;
+    allowedTags = parseAllowedTags(val);
+  }
+
+  function applyDefaultAllowedTags() {
+    allowedTags = [...DEFAULT_ALLOWED_TAGS];
+    allowedTagsInput = formatAllowedTags(DEFAULT_ALLOWED_TAGS);
+  }
+
+  function removeAllowedTag(tagToRemove) {
+    allowedTags = allowedTags.filter((t) => t !== tagToRemove);
+    allowedTagsInput = formatAllowedTags(allowedTags);
+  }
+
+  function handleAddCustomValidationRule() {
+    const cleanFind = newRuleFind.trim();
+    if (!cleanFind) return;
+    customRules = [
+      ...customRules,
+      {
+        id: `vrule_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        find: cleanFind,
+        replace: newRuleReplace,
+        isRegex: newRuleIsRegex,
+        matchCase: false,
+        enabled: true,
+      },
+    ];
+    newRuleFind = '';
+    newRuleReplace = '';
+    newRuleIsRegex = false;
+  }
+
+  function handleRemoveCustomValidationRule(idToRemove) {
+    customRules = customRules.filter((r) => r.id !== idToRemove);
+  }
+
+  const activeValidationCount = $derived(
+    (validateTags ? 1 : 0) +
+      (fixApostropheBacktick ? 1 : 0) +
+      (fixDoubleSpaces ? 1 : 0) +
+      (validateAcronyms ? 1 : 0) +
+      (validateCustomRules
+        ? customRules.filter((r) => r.enabled !== false && r.find?.trim()).length
+        : 0),
+  );
+
   async function handleSaveSettings() {
     errorMessage = '';
     successMessage = '';
 
     const cleanTitle = title.trim();
     if (!cleanTitle) {
+      activeTab = 'main';
       errorMessage = 'Project title cannot be empty.';
       return;
     }
 
     if (!speakers || speakers.length === 0) {
+      activeTab = 'main';
       errorMessage = 'At least one speaker is required.';
       return;
     }
@@ -246,11 +340,13 @@
       const id = Number(t.id);
       const name = (t.name || '').trim();
       if (!name) {
+        activeTab = 'subtiers';
         errorMessage = 'Every sub-tier needs a name.';
         return;
       }
       const key = name.toLowerCase();
       if (seenNames.has(key)) {
+        activeTab = 'subtiers';
         errorMessage = `Two sub-tiers are both called "${name}". Give each one a distinct name.`;
         return;
       }
@@ -291,6 +387,17 @@
       });
     }
 
+    const sanitizedValidationRules = normalizeValidationRules({
+      validateTags,
+      allowedTags: parseAllowedTags(allowedTagsInput),
+      fixApostropheBacktick,
+      fixDoubleSpaces,
+      validateAcronyms,
+      acronymMode: validateAcronyms ? acronymMode : ACRONYM_MODES.DISABLED,
+      validateCustomRules,
+      customRules,
+    });
+
     try {
       await projectState.updateProjectSettings(projectState.activeProject.id, {
         title: cleanTitle,
@@ -299,6 +406,7 @@
         speakers: sanitizedSpeakers,
         subTiers: sanitizedSubTiers,
         lexiconId: lexiconId || null,
+        validationRules: sanitizedValidationRules,
       });
       projectState.isProjectSettingsOpen = false;
     } catch (err) {
@@ -316,9 +424,6 @@
 {#if projectState.isProjectSettingsOpen && projectState.activeProject}
   <div
     class="modal-backdrop"
-    onclick={(e) => {
-      if (e.target === e.currentTarget) handleClose();
-    }}
     role="presentation"
   >
     <div class="modal-dialog project-settings-dialog">
@@ -337,6 +442,51 @@
         </button>
       </div>
 
+      <!-- Tab Navigation Bar -->
+      <div class="settings-tabs-bar" role="tablist" aria-label="Project settings sections">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activeTab === 'main'}
+          class="settings-tab-btn {activeTab === 'main' ? 'active' : ''}"
+          onclick={() => (activeTab = 'main')}
+        >
+          <i class="fa-solid fa-sliders"></i>
+          <span>Main Settings</span>
+          <span class="tab-badge">{speakers.length} spk</span>
+        </button>
+
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activeTab === 'subtiers'}
+          class="settings-tab-btn {activeTab === 'subtiers' ? 'active' : ''}"
+          onclick={() => (activeTab = 'subtiers')}
+        >
+          <i class="fa-solid fa-layer-group"></i>
+          <span>Sub-tiers</span>
+          <span class="tab-badge">{subTiers.length} / {MAX_SUB_TIERS}</span>
+        </button>
+
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activeTab === 'validation'}
+          class="settings-tab-btn {activeTab === 'validation' ? 'active' : ''}"
+          onclick={() => (activeTab = 'validation')}
+        >
+          <i class="fa-solid fa-shield-halved"></i>
+          <span>Validation</span>
+          {#if activeValidationCount > 0}
+            <span class="tab-badge tab-badge-active">
+              {activeValidationCount} active
+            </span>
+          {:else}
+            <span class="tab-badge">Off</span>
+          {/if}
+        </button>
+      </div>
+
       <div class="modal-body">
         {#if errorMessage}
           <div class="alert alert-error">
@@ -345,6 +495,7 @@
           </div>
         {/if}
 
+        {#if activeTab === 'main'}
         <div class="form-section">
           <div class="general-grid">
             <div class="form-group">
@@ -504,7 +655,7 @@
             {/each}
           </div>
         </div>
-
+        {:else if activeTab === 'subtiers'}
         <div class="form-section">
           <div class="section-header-row">
             <div class="section-title-wrap">
@@ -873,6 +1024,342 @@
             </div>
           {/if}
         </div>
+        {:else if activeTab === 'validation'}
+        <!-- Validation Rules Section -->
+        <div class="form-section">
+          <div class="section-header-row">
+            <div class="section-title-wrap">
+              <h4 class="section-title">
+                Validation Rules
+                {#if activeValidationCount > 0}
+                  <span class="counter-badge validation-active-badge">
+                    {activeValidationCount} active
+                  </span>
+                {:else}
+                  <span class="counter-badge">Off</span>
+                {/if}
+              </h4>
+              <button
+                type="button"
+                class="btn-help-toggle"
+                class:active={showValidationHelp}
+                onclick={() => (showValidationHelp = !showValidationHelp)}
+                title="Toggle validation rules guide"
+                aria-label="Toggle validation rules help"
+              >
+                <i class="fa-solid fa-circle-question"></i>
+                <span>Help &amp; Examples</span>
+              </button>
+            </div>
+          </div>
+
+          {#if showValidationHelp}
+            <div class="subtier-help-panel">
+              <div class="help-panel-header">
+                <div class="help-panel-title">
+                  <i class="fa-solid fa-shield-halved"></i>
+                  <span>Automatic Segment Validation Guide</span>
+                </div>
+                <button
+                  type="button"
+                  class="btn-close-help"
+                  onclick={() => (showValidationHelp = false)}
+                  title="Close help"
+                >
+                  <i class="fa-solid fa-xmark"></i>
+                </button>
+              </div>
+              <div class="help-points">
+                <div class="help-point">
+                  <strong>Paralinguistic Tags:</strong> Flags broken or malformed tags like
+                  <code>&lt; hes&gt;</code>, <code>&lt;  overlap  &gt;</code>,
+                  <code>&lt;Cough &gt;</code>, or <code>hes&gt;</code> and suggests
+                  the clean tag from your Allowed Paralinguistic Tags list.
+                </div>
+                <div class="help-point">
+                  <strong>Punctuation:</strong> Flags invalid apostrophes like
+                  <code>`</code> instead of <code>'</code> (e.g. <code>don`t</code>
+                  &rarr; <code>don't</code>) and multiple consecutive spaces.
+                </div>
+                <div class="help-point">
+                  <strong>Acronyms:</strong> Enforces a consistent acronym style
+                  across segments (e.g. <code>P_N_G_</code> vs. <code>P_N_G</code>
+                  vs. <code>PNG</code>).
+                </div>
+              </div>
+            </div>
+          {/if}
+
+          <div class="validation-rules-card">
+            <div class="validation-toggles-grid">
+              <!-- 1. Paralinguistic Tags Check + Allowed List directly underneath -->
+              <div class="validation-rule-group">
+                <label class="validation-check-item">
+                  <input
+                    type="checkbox"
+                    bind:checked={validateTags}
+                  />
+                  <div class="validation-check-text">
+                    <span class="validation-check-title">
+                      Validate Paralinguistic Tags
+                    </span>
+                    <span class="validation-check-desc">
+                      Catch malformed tags like <code>&lt; hes&gt;</code>, <code>&lt;  overlap  &gt;</code>, <code>&lt;Cough &gt;</code>, <code>hes&gt;</code>
+                    </span>
+                  </div>
+                </label>
+
+                {#if validateTags}
+                  <div class="validation-subpanel">
+                    <div class="lexicon-header">
+                      <div class="lexicon-title-area">
+                        <span class="lexicon-title">
+                          <i class="fa-solid fa-code"></i>
+                          Allowed Paralinguistic Tags
+                        </span>
+                        <span class="lexicon-badge">{allowedTags.length}</span>
+                      </div>
+                      <div class="lexicon-presets-bar">
+                        <button
+                          type="button"
+                          class="btn-preset"
+                          onclick={applyDefaultAllowedTags}
+                          title="Restore default paralinguistic tags (<hes>, <overlap>, <cough>, <laughter>...)"
+                        >
+                          Standard Tags
+                        </button>
+                        {#if allowedTags.length > 0}
+                          <button
+                            type="button"
+                            class="btn-preset btn-preset-clear"
+                            onclick={() => handleAllowedTagsInput('')}
+                            title="Clear all allowed tags"
+                          >
+                            Clear
+                          </button>
+                        {/if}
+                      </div>
+                    </div>
+
+                    <input
+                      id="validation-allowed-tags-input"
+                      type="text"
+                      class="form-input lexicon-input-sm"
+                      placeholder="Space or comma-separated tags, e.g. <hes> <overlap> <cough> <laughter>"
+                      value={allowedTagsInput}
+                      oninput={(e) => handleAllowedTagsInput(e.target.value)}
+                    />
+
+                    {#if allowedTags.length > 0}
+                      <div class="lexicon-chips-list">
+                        {#each allowedTags as tag (tag)}
+                          <span class="lexicon-chip">
+                            <span class="lexicon-chip-text">{tag}</span>
+                            <button
+                              type="button"
+                              class="btn-chip-remove"
+                              onclick={() => removeAllowedTag(tag)}
+                              title="Remove '{tag}'"
+                            >
+                              &times;
+                            </button>
+                          </span>
+                        {/each}
+                      </div>
+                    {/if}
+                  </div>
+                {/if}
+              </div>
+
+              <!-- 2. Invalid Apostrophe -->
+              <label class="validation-check-item">
+                <input
+                  type="checkbox"
+                  bind:checked={fixApostropheBacktick}
+                />
+                <div class="validation-check-text">
+                  <span class="validation-check-title">
+                    Invalid Apostrophe (<code>`</code> &rarr; <code>'</code>)
+                  </span>
+                  <span class="validation-check-desc">
+                    Flag backtick <code>`</code> or <code>´</code> used in place of <code>'</code>
+                  </span>
+                </div>
+              </label>
+
+              <!-- 3. Multiple Spaces -->
+              <label class="validation-check-item">
+                <input
+                  type="checkbox"
+                  bind:checked={fixDoubleSpaces}
+                />
+                <div class="validation-check-text">
+                  <span class="validation-check-title">
+                    Multiple Spaces
+                  </span>
+                  <span class="validation-check-desc">
+                    Flag 2+ consecutive spaces inside a segment
+                  </span>
+                </div>
+              </label>
+
+              <!-- 4. Acronym Format -->
+              <div class="validation-rule-group">
+                <label class="validation-check-item">
+                  <input
+                    type="checkbox"
+                    bind:checked={validateAcronyms}
+                  />
+                  <div class="validation-check-text">
+                    <span class="validation-check-title">
+                      Acronym Format
+                    </span>
+                    <span class="validation-check-desc">
+                      Standardize acronyms across segments (e.g. <code>P_N_G_</code>, <code>P_N_G</code>, <code>PNG</code>)
+                    </span>
+                  </div>
+                </label>
+
+                {#if validateAcronyms}
+                  <div class="validation-subpanel">
+                    <div class="lexicon-header">
+                      <label
+                        for="project-settings-acronym-mode"
+                        class="lexicon-title"
+                      >
+                        <i class="fa-solid fa-font"></i>
+                        Preferred Acronym Style
+                      </label>
+                    </div>
+                    <select
+                      id="project-settings-acronym-mode"
+                      class="form-input"
+                      bind:value={acronymMode}
+                    >
+                      <option value={ACRONYM_MODES.PLAIN}>
+                        Plain Uppercase: PNG (flags P_N_G, P_N_G_)
+                      </option>
+                      <option value={ACRONYM_MODES.UNDERSCORE}>
+                        Underscored: P_N_G (flags P_N_G_, PNG)
+                      </option>
+                      <option value={ACRONYM_MODES.TRAILING}>
+                        Trailing Underscore: P_N_G_ (flags P_N_G, PNG)
+                      </option>
+                    </select>
+                  </div>
+                {/if}
+              </div>
+
+              <!-- 5. Custom Validation Rules -->
+              <div class="validation-rule-group">
+                <label class="validation-check-item">
+                  <input
+                    type="checkbox"
+                    bind:checked={validateCustomRules}
+                  />
+                  <div class="validation-check-text">
+                    <span class="validation-check-title">
+                      Custom Validation Rules
+                    </span>
+                    <span class="validation-check-desc">
+                      Flag specific strings or regex patterns and suggest replacements
+                    </span>
+                  </div>
+                </label>
+
+                {#if validateCustomRules}
+                  <div class="validation-subpanel">
+                    <div class="lexicon-header">
+                      <div class="lexicon-title-area">
+                        <span class="lexicon-title">
+                          <i class="fa-solid fa-list-check"></i>
+                          Custom Rules
+                        </span>
+                        <span class="lexicon-badge">{customRules.length}</span>
+                      </div>
+                    </div>
+
+                    <div class="custom-rule-add-row">
+                      <input
+                        type="text"
+                        class="form-input custom-rule-input"
+                        placeholder="Invalid text or pattern..."
+                        bind:value={newRuleFind}
+                        onkeydown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            handleAddCustomValidationRule();
+                          }
+                        }}
+                      />
+                      <span class="custom-rule-arrow">&rarr;</span>
+                      <input
+                        type="text"
+                        class="form-input custom-rule-input"
+                        placeholder="Suggested replacement..."
+                        bind:value={newRuleReplace}
+                        onkeydown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            handleAddCustomValidationRule();
+                          }
+                        }}
+                      />
+                      <label
+                        class="custom-rule-regex-toggle"
+                        title="Treat pattern as a Regular Expression"
+                      >
+                        <input type="checkbox" bind:checked={newRuleIsRegex} />
+                        <span>Regex</span>
+                      </label>
+                      <button
+                        type="button"
+                        class="btn-add-speaker"
+                        disabled={!newRuleFind.trim()}
+                        onclick={handleAddCustomValidationRule}
+                      >
+                        <i class="fa-solid fa-plus"></i>
+                        <span>Add Rule</span>
+                      </button>
+                    </div>
+
+                    {#if customRules.length > 0}
+                      <div class="custom-rules-list">
+                        {#each customRules as rule (rule.id)}
+                          <div class="custom-rule-chip-row">
+                            <input
+                              type="checkbox"
+                              bind:checked={rule.enabled}
+                              title="Enable/disable rule"
+                            />
+                            {#if rule.isRegex}
+                              <span class="rule-regex-badge">Regex</span>
+                            {/if}
+                            <code class="rule-find-code">{rule.find}</code>
+                            <span class="custom-rule-arrow">&rarr;</span>
+                            <code class="rule-replace-code">
+                              {rule.replace || '(delete)'}
+                            </code>
+                            <button
+                              type="button"
+                              class="btn-delete-speaker"
+                              onclick={() =>
+                                handleRemoveCustomValidationRule(rule.id)}
+                              title="Remove custom rule"
+                            >
+                              <i class="fa-solid fa-trash-can"></i>
+                            </button>
+                          </div>
+                        {/each}
+                      </div>
+                    {/if}
+                  </div>
+                {/if}
+              </div>
+            </div>
+          </div>
+        </div>
+        {/if}
       </div>
 
       <div class="modal-footer">
@@ -969,6 +1456,96 @@
   .modal-close-btn:hover {
     background: var(--bg-hover, #f1f5f9);
     color: var(--text-heading, #0f172a);
+  }
+
+  .settings-tabs-bar {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 6px 16px 0 16px;
+    background: var(--bg-hover, #f8fafc);
+    border-bottom: 1px solid var(--border-color, #e2e8f0);
+  }
+
+  :global([data-theme='dark']) .settings-tabs-bar {
+    background: #0f172a;
+    border-bottom-color: #334155;
+  }
+
+  .settings-tab-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 7px 12px;
+    background: transparent;
+    border: 1px solid transparent;
+    border-bottom: 2px solid transparent;
+    border-radius: 6px 6px 0 0;
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--text-muted, #64748b);
+    cursor: pointer;
+    margin-bottom: -1px;
+    transition: all 0.14s ease;
+  }
+
+  .settings-tab-btn:hover {
+    color: var(--text-heading, #0f172a);
+    background: rgba(2, 132, 199, 0.05);
+  }
+
+  :global([data-theme='dark']) .settings-tab-btn:hover {
+    color: #f1f5f9;
+    background: rgba(56, 189, 248, 0.06);
+  }
+
+  .settings-tab-btn.active {
+    background: var(--bg-card, #ffffff);
+    color: var(--primary-color, #0284c7);
+    border-color: var(--border-color, #e2e8f0);
+    border-bottom-color: var(--bg-card, #ffffff);
+    font-weight: 700;
+  }
+
+  :global([data-theme='dark']) .settings-tab-btn.active {
+    background: #1e293b;
+    color: #38bdf8;
+    border-color: #334155;
+    border-bottom-color: #1e293b;
+  }
+
+  .tab-badge {
+    font-size: 0.66rem;
+    font-weight: 700;
+    padding: 1px 6px;
+    border-radius: 10px;
+    background: var(--bg-muted, #e2e8f0);
+    color: var(--text-muted, #64748b);
+  }
+
+  :global([data-theme='dark']) .tab-badge {
+    background: #334155;
+    color: #cbd5e1;
+  }
+
+  .settings-tab-btn.active .tab-badge {
+    background: rgba(2, 132, 199, 0.14);
+    color: var(--primary-color, #0284c7);
+  }
+
+  :global([data-theme='dark']) .settings-tab-btn.active .tab-badge {
+    background: rgba(56, 189, 248, 0.18);
+    color: #7dd3fc;
+  }
+
+  .tab-badge-active {
+    background: rgba(245, 158, 11, 0.16) !important;
+    color: #b45309 !important;
+  }
+
+  :global([data-theme='dark']) .tab-badge-active {
+    background: rgba(245, 158, 11, 0.24) !important;
+    color: #fbbf24 !important;
   }
 
   .modal-body {
@@ -2001,5 +2578,220 @@
   :global([data-theme='dark']) .btn-secondary {
     border-color: #475569;
     color: #cbd5e1;
+  }
+
+  .validation-active-badge {
+    background: rgba(245, 158, 11, 0.16);
+    color: #b45309;
+    border: 1px solid rgba(245, 158, 11, 0.35);
+  }
+
+  :global([data-theme='dark']) .validation-active-badge {
+    background: rgba(245, 158, 11, 0.22);
+    color: #fbbf24;
+    border-color: rgba(251, 191, 36, 0.35);
+  }
+
+  .validation-rules-card {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .validation-toggles-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .validation-rule-group {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+  }
+
+  .validation-check-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    background: var(--bg-card, #ffffff);
+    border: 1px solid var(--border-color, #e2e8f0);
+    border-radius: 5px;
+    cursor: pointer;
+  }
+
+  :global([data-theme='dark']) .validation-check-item {
+    background: #0f172a;
+    border-color: #334155;
+  }
+
+  .validation-check-item input[type='checkbox'] {
+    margin: 0;
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+
+  .validation-check-text {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 4px 10px;
+    width: 100%;
+  }
+
+  .validation-check-title {
+    font-size: 0.76rem;
+    font-weight: 700;
+    color: var(--text-heading, #0f172a);
+  }
+
+  .validation-check-desc {
+    font-size: 0.68rem;
+    color: var(--text-muted, #64748b);
+  }
+
+  .validation-check-desc code,
+  .validation-check-title code,
+  .validation-acronym-box code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+      monospace;
+    font-size: 0.68rem;
+    background: rgba(0, 0, 0, 0.05);
+    padding: 0 3px;
+    border-radius: 3px;
+  }
+
+  :global([data-theme='dark']) .validation-check-desc code,
+  :global([data-theme='dark']) .validation-check-title code,
+  :global([data-theme='dark']) .validation-acronym-box code {
+    background: rgba(255, 255, 255, 0.1);
+  }
+
+  .validation-acronym-box {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .validation-subpanel {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    padding: 6px 8px;
+    background: rgba(2, 132, 199, 0.04);
+    border: 1px solid rgba(2, 132, 199, 0.15);
+    border-radius: 5px;
+  }
+
+  :global([data-theme='dark']) .validation-subpanel {
+    background: rgba(56, 189, 248, 0.04);
+    border-color: rgba(56, 189, 248, 0.18);
+  }
+
+  .validation-custom-rules-area {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    border-top: 1px dashed var(--border-color, #cbd5e1);
+    padding-top: 6px;
+  }
+
+  :global([data-theme='dark']) .validation-custom-rules-area {
+    border-top-color: #334155;
+  }
+
+  .custom-rules-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+
+  .custom-rules-hint {
+    font-size: 0.68rem;
+    color: var(--text-muted, #64748b);
+  }
+
+  .custom-rule-add-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+
+  .custom-rule-input {
+    flex: 1 1 130px;
+    min-width: 110px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+      monospace;
+    font-size: 0.75rem;
+  }
+
+  .custom-rule-arrow {
+    color: var(--text-muted, #64748b);
+    font-size: 0.78rem;
+    font-weight: 700;
+  }
+
+  .custom-rule-regex-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    color: var(--text-color, #334155);
+    cursor: pointer;
+    user-select: none;
+  }
+
+  .custom-rules-list {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    max-height: 90px;
+    overflow-y: auto;
+  }
+
+  .custom-rule-chip-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 2px 6px;
+    background: var(--bg-card, #ffffff);
+    border: 1px solid var(--border-color, #e2e8f0);
+    border-radius: 4px;
+    font-size: 0.74rem;
+  }
+
+  :global([data-theme='dark']) .custom-rule-chip-row {
+    background: #0f172a;
+    border-color: #334155;
+  }
+
+  .rule-regex-badge {
+    font-size: 0.62rem;
+    font-weight: 700;
+    padding: 0 4px;
+    border-radius: 3px;
+    background: rgba(124, 58, 237, 0.12);
+    color: #7c3aed;
+  }
+
+  .rule-find-code {
+    color: #dc2626;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+      monospace;
+    font-size: 0.72rem;
+  }
+
+  .rule-replace-code {
+    color: #059669;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+      monospace;
+    font-size: 0.72rem;
+    margin-right: auto;
   }
 </style>
