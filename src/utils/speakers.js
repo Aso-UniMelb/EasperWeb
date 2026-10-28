@@ -481,7 +481,9 @@ export function calculateSegmentSplit(seg, splitTime = null, minDuration = 0.05)
 }
 
 /**
- * Calculates the horizontal layout of the waveform timeline and speaker pillars.
+ * Calculates the horizontal layout of the waveform timeline and speaker pillars,
+ * keeping the time ruler fixed at 50px and scaling the wave track and speaker pillars
+ * proportionally to the remaining width.
  * @param {number} totalWidth
  * @param {Array} [speakers]
  * @returns {Object}
@@ -493,15 +495,25 @@ export function getWaveformPillarLayout(totalWidth, speakers = []) {
       : [{ id: 1, name: 'Speaker 1', initials: 'S1' }];
 
   const numSpeakers = Math.max(1, Math.min(5, activeSpeakers.length));
-  const rulerWidth = 38;
 
-  // Pillar width per speaker (between 18px and 26px)
-  const pillarWidth = Math.max(18, Math.min(26, Math.floor(92 / numSpeakers)));
+  // Fixed 50px time ruler; wave and speaker pillars scale proportionally
+  const rulerWidth = 50;
+  const basePillarWidth = Math.max(18, Math.min(26, Math.floor(92 / numSpeakers)));
+  const baseWaveWidth =
+    numSpeakers === 1 ? 82 : numSpeakers === 2 ? 76 : numSpeakers === 3 ? 70 : 66;
+  const baseFlexWidth = baseWaveWidth + numSpeakers * basePillarWidth;
+  const baseTotalWidth = rulerWidth + baseFlexWidth;
+
+  const effectiveTotal = Math.max(baseTotalWidth, Number(totalWidth) || baseTotalWidth);
+  const availableFlexWidth = Math.max(baseFlexWidth, effectiveTotal - rulerWidth);
+  const scale = availableFlexWidth / baseFlexWidth;
+
+  const pillarWidth = Math.max(basePillarWidth, Math.round(basePillarWidth * scale));
   const totalPillarsWidth = numSpeakers * pillarWidth;
 
-  // Waveform track occupies the center between ruler and speaker pillars
+  // Waveform track occupies the remaining center space so all columns sum to effectiveTotal
   const waveLeft = rulerWidth;
-  const waveWidth = Math.max(50, totalWidth - rulerWidth - totalPillarsWidth);
+  const waveWidth = Math.max(baseWaveWidth, effectiveTotal - rulerWidth - totalPillarsWidth);
   const waveRight = waveLeft + waveWidth;
 
   const pillars = activeSpeakers.map((spk, idx) => {
@@ -517,7 +529,7 @@ export function getWaveformPillarLayout(totalWidth, speakers = []) {
   });
 
   return {
-    totalWidth,
+    totalWidth: effectiveTotal,
     rulerWidth,
     waveLeft,
     waveWidth,
@@ -540,7 +552,7 @@ export function calculateSidebarColWidth(speakers = []) {
       ? Math.max(1, Math.min(5, speakers.length))
       : 1;
   const pillarW = Math.max(18, Math.min(26, Math.floor(92 / num)));
-  const rulerW = 38;
+  const rulerW = 50;
   const targetWaveW = num === 1 ? 82 : num === 2 ? 76 : num === 3 ? 70 : 66;
   return rulerW + targetWaveW + num * pillarW;
 }

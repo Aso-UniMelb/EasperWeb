@@ -30,10 +30,65 @@
     ],
   );
 
-  let sidebarWidth = $derived(calculateSidebarColWidth(projectSpeakers));
+  let defaultSidebarWidth = $derived(calculateSidebarColWidth(projectSpeakers));
+  let customSidebarWidth = $state(null);
+  let isResizingSidebar = $state(false);
+  let resizeStartX = 0;
+  let resizeStartWidth = 0;
+
+  let sidebarWidth = $derived(
+    customSidebarWidth !== null
+      ? Math.max(defaultSidebarWidth, customSidebarWidth)
+      : defaultSidebarWidth,
+  );
   let pillarLayout = $derived(
     getWaveformPillarLayout(sidebarWidth, projectSpeakers),
   );
+
+  function handleResizePointerDown(e) {
+    if (e.button !== 0) return;
+    isResizingSidebar = true;
+    resizeStartX = e.clientX;
+    resizeStartWidth = sidebarWidth;
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch (_) {}
+    e.preventDefault();
+    e.stopPropagation();
+  }
+
+  function handleResizePointerMove(e) {
+    if (!isResizingSidebar) return;
+    const deltaX = e.clientX - resizeStartX;
+    const minW = defaultSidebarWidth;
+    const maxW = 600;
+    customSidebarWidth = Math.max(
+      minW,
+      Math.min(maxW, Math.round(resizeStartWidth + deltaX)),
+    );
+    requestAnimationFrame(() => transcriptState.drawVerticalWaveform());
+  }
+
+  function handleResizePointerUp(e) {
+    if (!isResizingSidebar) return;
+    isResizingSidebar = false;
+    try {
+      if (
+        e.currentTarget.hasPointerCapture &&
+        e.currentTarget.hasPointerCapture(e.pointerId)
+      ) {
+        e.currentTarget.releasePointerCapture(e.pointerId);
+      }
+    } catch (_) {}
+    requestAnimationFrame(() => transcriptState.drawVerticalWaveform());
+  }
+
+  function handleResizeDoubleClick(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    customSidebarWidth = null;
+    requestAnimationFrame(() => transcriptState.drawVerticalWaveform());
+  }
 
   // Ctrl + Scroll / Cmd + Scroll to adjust vertical zoom while keeping playhead visible
   $effect(() => {
@@ -69,22 +124,44 @@
     };
   });
 
-  // Global keyboard shortcuts for Undo (Ctrl+Z / Cmd+Z) and Redo (Ctrl+Y / Ctrl+Shift+Z / Cmd+Shift+Z)
+  // Global keyboard shortcuts for Play/Pause (Ctrl+Space / Cmd+Space), Play/Pause Interval (Shift+Space), Undo (Ctrl+Z / Cmd+Z) and Redo (Ctrl+Y / Ctrl+Shift+Z / Cmd+Shift+Z)
   $effect(() => {
     const handleKeyDown = (e) => {
+      const isMac =
+        typeof navigator !== 'undefined' &&
+        navigator.platform?.toUpperCase().indexOf('MAC') >= 0;
+      const cmdOrCtrl = isMac ? e.metaKey || e.ctrlKey : e.ctrlKey;
+
+      // Shift+Space to toggle play/pause of the selected interval
+      if (
+        !cmdOrCtrl &&
+        !e.altKey &&
+        e.shiftKey &&
+        (e.code === 'Space' || e.key === ' ')
+      ) {
+        if (transcriptState.waveformState && audioState.isIntervalSelected) {
+          e.preventDefault();
+          transcriptState.toggleIntervalPlayback();
+        }
+        return;
+      }
+
+      if (!cmdOrCtrl) return;
+
+      if (e.code === 'Space' || e.key === ' ') {
+        if (transcriptState.waveformState) {
+          e.preventDefault();
+          transcriptState.toggleWaveformPlayback();
+        }
+        return;
+      }
+
       // Check if user is typing in a textarea, input, or contenteditable element
       const tag = document.activeElement?.tagName?.toLowerCase();
       const isContentEditable = document.activeElement?.isContentEditable;
       if (tag === 'textarea' || tag === 'input' || isContentEditable) {
         return; // Allow native browser text editing undo
       }
-
-      const isMac =
-        typeof navigator !== 'undefined' &&
-        navigator.platform?.toUpperCase().indexOf('MAC') >= 0;
-      const cmdOrCtrl = isMac ? e.metaKey : e.ctrlKey;
-
-      if (!cmdOrCtrl) return;
 
       const key = e.key.toLowerCase();
       if (key === 'z' && !e.shiftKey) {
@@ -161,12 +238,16 @@
   // Smooth 60fps animation loop during audio playback to continuously glide the playhead and auto-scroll
   let playAnimFrame = null;
   $effect(() => {
-    if (transcriptState.isAudioPlaying) {
+    if (transcriptState.isAudioPlaying || audioState.isPlayingInterval) {
       let active = true;
-      const loop = () => {
+      let lastReactiveSyncMs = 0;
+      const loop = (now = 0) => {
         if (!active) return;
-        if (audioState.audioElement) {
-          audioState.playerCurrentTime = audioState.audioElement.currentTime;
+        const curTime = audioState.getCurrentPlaybackTime();
+        transcriptState.updatePlayheadSegment(curTime);
+        if (now - lastReactiveSyncMs >= 100) {
+          audioState.playerCurrentTime = curTime;
+          lastReactiveSyncMs = now;
         }
         transcriptState.drawPlayheadFrame();
 
@@ -175,9 +256,6 @@
           transcriptState.waveformContainerEl &&
           transcriptState.waveformState?.duration
         ) {
-          const curTime = audioState.audioElement
-            ? audioState.audioElement.currentTime
-            : audioState.playerCurrentTime;
           const currentY =
             ((curTime - (transcriptState.waveformState.startTime || 0)) /
               transcriptState.waveformState.duration) *
@@ -203,9 +281,7 @@
         if (playAnimFrame) cancelAnimationFrame(playAnimFrame);
       };
     } else {
-      if (audioState.audioElement) {
-        audioState.playerCurrentTime = audioState.audioElement.currentTime;
-      }
+      audioState.playerCurrentTime = audioState.getCurrentPlaybackTime();
       requestAnimationFrame(() => transcriptState.drawVerticalWaveform());
     }
   });
@@ -297,8 +373,9 @@
         : 'btn-play'}"
       onclick={() => transcriptState.toggleWaveformPlayback()}
       title={transcriptState.isAudioPlaying
-        ? 'Pause playback'
-        : 'Play from current playhead position'}
+        ? 'Pause playback (Ctrl+Space)'
+        : 'Play from current playhead position (Ctrl+Space)'}
+      aria-label={transcriptState.isAudioPlaying ? 'Pause' : 'Play'}
       disabled={!transcriptState.waveformState}
     >
       <i
@@ -306,8 +383,48 @@
           ? 'fa-pause'
           : 'fa-play'}"
       ></i>
-      <span>{transcriptState.isAudioPlaying ? 'Pause' : 'Play'}</span>
     </button>
+
+    <!-- Play / Pause Selected Time Frame Button -->
+    <div class="interval-play-group">
+      <button
+        type="button"
+        class="btn-header-tool btn-waveform-interval-play {audioState.isPlayingInterval
+          ? 'is-playing'
+          : ''}"
+        onclick={() => transcriptState.toggleIntervalPlayback()}
+        disabled={!transcriptState.waveformState ||
+          !audioState.isIntervalSelected}
+        title={audioState.isIntervalSelected
+          ? `${audioState.isPlayingInterval ? 'Pause' : 'Play'} selected time frame [${formatTimeSec(audioState.audioRangeStart)} – ${formatTimeSec(audioState.audioRangeEnd)}] (Shift+Space)`
+          : 'Drag on the wave column to select a time frame (Shift+Space)'}
+        aria-label={audioState.isPlayingInterval
+          ? 'Pause selected range'
+          : 'Play selected range'}
+      >
+        <i
+          class="fa-solid {audioState.isPlayingInterval
+            ? 'fa-pause'
+            : 'fa-arrows-left-right-to-line'}"
+        ></i>
+      </button>
+      {#if audioState.isIntervalSelected}
+        <button
+          type="button"
+          class="btn-clear-interval"
+          onclick={() => {
+            audioState.resetInterval();
+            requestAnimationFrame(() => transcriptState.drawVerticalWaveform());
+          }}
+          title="Clear selected time frame ({formatTimeSec(
+            audioState.audioRangeStart,
+          )} – {formatTimeSec(audioState.audioRangeEnd)})"
+          aria-label="Clear selected time frame"
+        >
+          <i class="fa-solid fa-xmark"></i>
+        </button>
+      {/if}
+    </div>
 
     <div class="header-action-divider"></div>
 
@@ -553,6 +670,21 @@
           ></canvas>
         {/each}
       </div>
+
+      <!-- Right Boundary Resizer Handle -->
+      <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+      <div
+        class="waveform-sidebar-resizer {isResizingSidebar ? 'is-resizing' : ''}"
+        onpointerdown={handleResizePointerDown}
+        onpointermove={handleResizePointerMove}
+        onpointerup={handleResizePointerUp}
+        onpointercancel={handleResizePointerUp}
+        ondblclick={handleResizeDoubleClick}
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize waveform sidebar width"
+        title="Drag to resize waveform sidebar width (Double-click to reset)"
+      ></div>
     </div>
 
     <!-- Right Column: Gradually Appended Transcribed Segments -->
@@ -1286,5 +1418,106 @@
     background-color: #334155;
     border-color: #38bdf8;
     color: #38bdf8;
+  }
+
+  .waveform-sidebar-col {
+    position: relative;
+  }
+
+  .waveform-sidebar-resizer {
+    position: absolute;
+    top: 0;
+    right: -4px;
+    bottom: 0;
+    width: 8px;
+    cursor: col-resize;
+    z-index: 30;
+    touch-action: none;
+    transition: background-color 0.15s ease;
+  }
+
+  .waveform-sidebar-resizer::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 3px;
+    width: 2px;
+    background-color: transparent;
+    transition: background-color 0.15s ease;
+  }
+
+  .waveform-sidebar-resizer:hover::after,
+  .waveform-sidebar-resizer.is-resizing::after {
+    background-color: #38bdf8;
+  }
+
+  .interval-play-group {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    flex-shrink: 0;
+  }
+
+  .btn-waveform-play {
+    min-width: 30px;
+    width: 30px;
+    height: 30px;
+    padding: 0;
+    justify-content: center;
+  }
+
+  .btn-waveform-interval-play {
+    min-width: 30px;
+    width: 30px;
+    height: 30px;
+    padding: 0;
+    justify-content: center;
+  }
+
+  .btn-waveform-interval-play.is-playing {
+    background-color: #fef3c7;
+    border-color: #f59e0b;
+    color: #b45309;
+  }
+
+  :global([data-theme='dark']) .btn-waveform-interval-play.is-playing {
+    background-color: rgba(245, 158, 11, 0.2);
+    border-color: #f59e0b;
+    color: #fbbf24;
+  }
+
+  .btn-clear-interval {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 30px;
+    padding: 0;
+    border-radius: 6px;
+    border: 1px solid var(--border-color, #cbd5e1);
+    background-color: var(--bg-card, #ffffff);
+    color: var(--text-muted, #64748b);
+    font-size: 0.72rem;
+    cursor: pointer;
+    transition: all 0.14s ease;
+  }
+
+  .btn-clear-interval:hover {
+    border-color: #ef4444;
+    color: #ef4444;
+    background-color: rgba(239, 68, 68, 0.08);
+  }
+
+  :global([data-theme='dark']) .btn-clear-interval {
+    background-color: rgba(30, 41, 59, 0.8);
+    border-color: #475569;
+    color: #94a3b8;
+  }
+
+  :global([data-theme='dark']) .btn-clear-interval:hover {
+    border-color: #f87171;
+    color: #f87171;
+    background-color: rgba(248, 113, 113, 0.15);
   }
 </style>

@@ -127,7 +127,7 @@ export function drawTile(state, tileIndex) {
   );
   const firstTick = Math.ceil(tTileStart / tickInterval) * tickInterval;
 
-  ctx.font = `${width < 100 ? '8px' : '9px'} ui-monospace, SFMono-Regular, Menlo, monospace`;
+  ctx.font = '600 10px ui-monospace, SFMono-Regular, Menlo, monospace';
   ctx.textAlign = 'right';
   ctx.textBaseline = 'middle';
 
@@ -137,12 +137,12 @@ export function drawTile(state, tileIndex) {
 
     ctx.strokeStyle = '#1e293b';
     ctx.beginPath();
-    ctx.moveTo(rulerWidth - (width < 100 ? 3 : 5), y);
+    ctx.moveTo(rulerWidth - 4, y);
     ctx.lineTo(width, y);
     ctx.stroke();
 
-    ctx.fillStyle = '#64748b';
-    ctx.fillText(formatTimeSec(t), rulerWidth - (width < 100 ? 3 : 7), y);
+    ctx.fillStyle = '#cbd5e1';
+    ctx.fillText(formatTimeSec(t), rulerWidth - 5, y);
   }
 
   // Interval selection indicator on waveform track
@@ -154,7 +154,16 @@ export function drawTile(state, tileIndex) {
 
     if (ySel2 >= tileTop && ySel1 <= tileBottom) {
       ctx.save();
-      ctx.strokeStyle = '#0284c7';
+
+      // Very light red background fill inside the selected range on the waveform track
+      const fillStart = Math.max(tileTop, ySel1);
+      const fillEnd = Math.min(tileBottom, ySel2);
+      if (fillEnd > fillStart) {
+        ctx.fillStyle = 'rgba(239, 68, 68, 0.14)';
+        ctx.fillRect(trackLeft, fillStart, trackWidth, fillEnd - fillStart);
+      }
+
+      ctx.strokeStyle = 'rgba(239, 68, 68, 0.65)';
       ctx.lineWidth = 1.5;
       ctx.setLineDash([4, 3]);
 
@@ -164,7 +173,7 @@ export function drawTile(state, tileIndex) {
         ctx.lineTo(width, ySel1);
         ctx.stroke();
 
-        ctx.fillStyle = '#38bdf8';
+        ctx.fillStyle = '#f87171';
         ctx.font = `bold ${width < 100 ? '8px' : '9px'} ui-monospace, SFMono-Regular, Menlo, monospace`;
         ctx.textAlign = 'right';
         ctx.textBaseline = 'bottom';
@@ -177,45 +186,14 @@ export function drawTile(state, tileIndex) {
         ctx.lineTo(width, ySel2);
         ctx.stroke();
 
-        ctx.fillStyle = '#38bdf8';
+        ctx.fillStyle = '#f87171';
         ctx.font = `bold ${width < 100 ? '8px' : '9px'} ui-monospace, SFMono-Regular, Menlo, monospace`;
         ctx.textAlign = 'right';
         ctx.textBaseline = 'top';
         ctx.fillText(`◀ ${formatTimeSec(selEnd)}`, rulerWidth - (width < 100 ? 2 : 4), ySel2 + 1);
       }
 
-      // Tint outside the selected interval slightly to emphasize the selected portion
-      ctx.fillStyle = 'rgba(15, 23, 42, 0.28)';
-      if (tileTop < ySel1) {
-        const fillBottom = Math.min(tileBottom, ySel1);
-        ctx.fillRect(trackLeft, tileTop, trackWidth, fillBottom - tileTop);
-      }
-      if (tileBottom > ySel2) {
-        const fillTop = Math.max(tileTop, ySel2);
-        ctx.fillRect(trackLeft, fillTop, trackWidth, tileBottom - fillTop);
-      }
-
       ctx.restore();
-    }
-  }
-
-  // Ambient highlight on the waveform track for currently selected segment
-  if (state.selectedSegmentId && Array.isArray(state.segments)) {
-    const selectedSeg = state.segments.find((s) => s.id === state.selectedSegmentId);
-    if (selectedSeg) {
-      const segStart = selectedSeg.start ?? 0;
-      const segEnd = selectedSeg.end ?? segStart + 0.5;
-      const y1 = Math.max(0, ((segStart - startTime) / duration) * totalHeight);
-      const y2 = Math.min(totalHeight, ((segEnd - startTime) / duration) * totalHeight);
-      if (y2 >= tileTop - 20 && y1 <= tileBottom + 20) {
-        const h = Math.max(3, y2 - y1);
-        const spkColor = getSpeakerColor(selectedSeg.speakerId || 1);
-        ctx.fillStyle = spkColor.waveformBg || 'rgba(56, 189, 248, 0.16)';
-        ctx.fillRect(trackLeft, y1, trackWidth, h);
-        ctx.strokeStyle = 'rgba(56, 189, 248, 0.4)';
-        ctx.lineWidth = 1;
-        ctx.strokeRect(trackLeft, y1, trackWidth, h);
-      }
     }
   }
 
@@ -508,9 +486,7 @@ export function drawTile(state, tileIndex) {
   ctx.stroke();
 
   // Playhead
-  const currentTime = audioState.audioElement
-    ? audioState.audioElement.currentTime
-    : audioState.playerCurrentTime;
+  const currentTime = audioState.getCurrentPlaybackTime();
 
   if (currentTime >= startTime && currentTime <= endTime) {
     const playY = ((currentTime - startTime) / duration) * totalHeight;
@@ -532,25 +508,6 @@ export function drawTile(state, tileIndex) {
       ctx.textAlign = 'right';
       ctx.textBaseline = 'middle';
       ctx.fillText(formatTimeSec(currentTime), rulerWidth - (width < 100 ? 3 : 6), playY);
-    }
-  }
-
-  // Hover time indicator
-  if (
-    state.waveformHoverTime !== null &&
-    state.waveformHoverTime >= startTime &&
-    state.waveformHoverTime <= endTime
-  ) {
-    const hoverY = ((state.waveformHoverTime - startTime) / duration) * totalHeight;
-    if (hoverY >= tileTop - 5 && hoverY <= tileBottom + 5) {
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.45)';
-      ctx.setLineDash([3, 3]);
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.moveTo(trackLeft, hoverY);
-      ctx.lineTo(width, hoverY);
-      ctx.stroke();
-      ctx.setLineDash([]);
     }
   }
 
@@ -678,9 +635,7 @@ export function drawPlayheadFrame(state) {
   if (!state.waveformWrapEl || !state.waveformState) return;
   const { startTime = 0, duration = 1 } = state.waveformState;
   const totalHeight = state.waveformCalculatedHeight;
-  const currentTime = audioState.audioElement
-    ? audioState.audioElement.currentTime
-    : audioState.playerCurrentTime;
+  const currentTime = audioState.getCurrentPlaybackTime();
 
   const playY = ((currentTime - startTime) / duration) * totalHeight;
   const tiles = state.waveformTiles;

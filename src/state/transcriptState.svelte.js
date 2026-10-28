@@ -270,6 +270,8 @@ class TranscriptState {
   isAudioPlaying = $state(false);
   activeSnippetPlayId = $state(null);
   activeLoopSegmentId = $state(null);
+  currentPlayheadSegmentId = $state(null);
+  _lastPlayheadSegment = null;
   activeSegmentPlayCleanup = null;
 
   // Vertical Waveform visualization state
@@ -292,6 +294,8 @@ class TranscriptState {
   });
   wasDraggingHandle = false;
   boundaryDragState = null;
+  intervalDragState = null;
+  wasDraggingInterval = false;
   waveformHoverTime = $state(null);
   waveformHoverY = $state(0);
   waveformWrapEl = $state(null);
@@ -701,12 +705,42 @@ class TranscriptState {
     return totalTiles.filter((t) => t.top + t.height >= viewTop && t.top <= viewBottom);
   }
 
+  updatePlayheadSegment(curTime) {
+    if (this.activeSnippetPlayId) {
+      if (this.currentPlayheadSegmentId !== this.activeSnippetPlayId) {
+        this.currentPlayheadSegmentId = this.activeSnippetPlayId;
+      }
+      return;
+    }
+    const last = this._lastPlayheadSegment;
+    if (
+      last &&
+      curTime >= (last.start ?? 0) &&
+      curTime < (last.end ?? 0)
+    ) {
+      if (this.currentPlayheadSegmentId !== last.id) {
+        this.currentPlayheadSegmentId = last.id;
+      }
+      return;
+    }
+    const found =
+      this.segments.find(
+        (s) => curTime >= (s.start ?? 0) && curTime < (s.end ?? 0),
+      ) || null;
+    this._lastPlayheadSegment = found;
+    const nextId = found ? found.id : null;
+    if (this.currentPlayheadSegmentId !== nextId) {
+      this.currentPlayheadSegmentId = nextId;
+    }
+  }
+
   get currentActiveSegment() {
+    const curTime = audioState.getCurrentPlaybackTime();
     return (
       this.segments.find(
         (s) =>
-          audioState.playerCurrentTime >= (s.start ?? 0) &&
-          audioState.playerCurrentTime < (s.end ?? 0),
+          curTime >= (s.start ?? 0) &&
+          curTime < (s.end ?? 0),
       ) || null
     );
   }
@@ -714,9 +748,7 @@ class TranscriptState {
   get activePlayingSegmentId() {
     return (
       this.activeSnippetPlayId ||
-      (this.isAudioPlaying && this.currentActiveSegment
-        ? this.currentActiveSegment.id
-        : null)
+      (this.isAudioPlaying ? this.currentPlayheadSegmentId : null)
     );
   }
 
@@ -766,7 +798,7 @@ class TranscriptState {
     return maxBottom;
   }
 
-  selectSegment(segmentId, scrollIntoView = false) {
+  selectSegment(segmentId, scrollIntoView = false, skipRedraw = false) {
     this.selectedSegmentId = segmentId;
     if (projectState.activeProject) {
       projectState.activeProject.lastSelectedSegmentId = segmentId;
@@ -775,7 +807,9 @@ class TranscriptState {
     if (scrollIntoView) {
       this.scrollToSegment(segmentId, { smooth: true, block: 'center' });
     }
-    requestAnimationFrame(() => this.drawVerticalWaveform());
+    if (!skipRedraw) {
+      requestAnimationFrame(() => this.drawVerticalWaveform());
+    }
   }
 
   scrollToSegment(segmentId, options = {}) {
@@ -819,13 +853,13 @@ class TranscriptState {
 
   playSegmentAudio(segment, loop = false) {
     const audioEl = audioState.audioElement;
-    if (!audioEl || !segment) return;
-    this.selectSegment(segment.id, false);
+    if ((!audioEl && !audioState.cachedDecodedAudio) || !segment) return;
+    this.selectSegment(segment.id, false, true);
 
     const isCurrentlyPlayingThis =
       (this.activePlayingSegmentId === segment.id ||
         this.activeSnippetPlayId === segment.id) &&
-      (this.isAudioPlaying || !audioEl.paused);
+      (this.isAudioPlaying || audioState.isWebAudioPlaying || (audioEl && !audioEl.paused));
 
     const isCurrentlyLoopingThis =
       isCurrentlyPlayingThis && this.activeLoopSegmentId === segment.id;
@@ -841,9 +875,13 @@ class TranscriptState {
         (loop && isCurrentlyLoopingThis) ||
         (!loop && !isCurrentlyLoopingThis)
       ) {
-        audioEl.pause();
+        audioState.stopWebAudioRange(true);
+        if (audioEl && !audioEl.paused) {
+          audioEl.pause();
+        }
         this.activeSnippetPlayId = null;
         this.activeLoopSegmentId = null;
+        this.currentPlayheadSegmentId = null;
         this.isAudioPlaying = false;
         requestAnimationFrame(() => this.drawVerticalWaveform());
         return;
@@ -852,9 +890,45 @@ class TranscriptState {
 
     this.activeSnippetPlayId = segment.id;
     this.activeLoopSegmentId = loop ? segment.id : null;
+    this.currentPlayheadSegmentId = segment.id;
     this.isAudioPlaying = true;
+    if (audioState.isPlayingInterval) {
+      if (audioState.intervalPlayCleanup) {
+        audioState.intervalPlayCleanup();
+        audioState.intervalPlayCleanup = null;
+      }
+      audioState.isPlayingInterval = false;
+    }
     const start = Math.max(0, segment.start ?? 0);
     const end = Math.max(start + 0.05, segment.end ?? (start + 1));
+
+    // Prefer sample-accurate Web Audio API playback when available at 1.0x speed
+    const stopWebAudio = audioState.playWebAudioRange(start, end, {
+      loop,
+      onEnded: () => {
+        this.activeSegmentPlayCleanup = null;
+        this.activeSnippetPlayId = null;
+        this.activeLoopSegmentId = null;
+        this.currentPlayheadSegmentId = null;
+        this.isAudioPlaying = false;
+        requestAnimationFrame(() => this.drawVerticalWaveform());
+      },
+    });
+
+    if (stopWebAudio) {
+      this.activeSegmentPlayCleanup = () => {
+        stopWebAudio(false);
+        this.activeSnippetPlayId = null;
+        this.activeLoopSegmentId = null;
+        this.currentPlayheadSegmentId = null;
+        this.isAudioPlaying = false;
+        requestAnimationFrame(() => this.drawVerticalWaveform());
+      };
+      requestAnimationFrame(() => this.drawVerticalWaveform());
+      return;
+    }
+
+    if (!audioEl) return;
     audioEl.playbackRate = audioState.playbackSpeed;
     audioEl.currentTime = start;
     audioState.playerCurrentTime = start;
@@ -889,6 +963,7 @@ class TranscriptState {
       }
       this.activeSnippetPlayId = null;
       this.activeLoopSegmentId = null;
+      this.currentPlayheadSegmentId = null;
       this.isAudioPlaying = false;
       requestAnimationFrame(() => this.drawVerticalWaveform());
     };
@@ -925,6 +1000,7 @@ class TranscriptState {
       this.activeSegmentPlayCleanup = null;
       this.activeSnippetPlayId = null;
       this.activeLoopSegmentId = null;
+      this.currentPlayheadSegmentId = null;
       this.isAudioPlaying = false;
       requestAnimationFrame(() => this.drawVerticalWaveform());
     };
@@ -946,9 +1022,8 @@ class TranscriptState {
       const rate = audioEl.playbackRate || 1;
       const remainingMs = ((end - cur) / rate) * 1000;
 
-      // When within 35ms of the segment end, schedule a micro-timeout
-      if (remainingMs <= 35 && remainingMs >= 0) {
-        if (stopTimer) clearTimeout(stopTimer);
+      // Schedule a single micro-timeout when within 35ms of segment end (avoid timer thrashing)
+      if (remainingMs <= 35 && remainingMs >= 0 && !stopTimer) {
         stopTimer = setTimeout(
           loop ? restartLoop : stopPlayback,
           Math.max(0, remainingMs),
@@ -966,17 +1041,7 @@ class TranscriptState {
           restartLoop();
         } else {
           stopPlayback();
-          return;
         }
-      }
-      const rate = audioEl.playbackRate || 1;
-      const remainingMs = ((end - cur) / rate) * 1000;
-      if (remainingMs <= 250 && remainingMs >= 0) {
-        if (stopTimer) clearTimeout(stopTimer);
-        stopTimer = setTimeout(
-          loop ? restartLoop : stopPlayback,
-          Math.max(0, remainingMs),
-        );
       }
     };
 
@@ -995,6 +1060,7 @@ class TranscriptState {
       }
       this.activeSnippetPlayId = null;
       this.activeLoopSegmentId = null;
+      this.currentPlayheadSegmentId = null;
       this.isAudioPlaying = false;
       requestAnimationFrame(() => this.drawVerticalWaveform());
     };
@@ -1006,6 +1072,11 @@ class TranscriptState {
     if (!audioEl || !timestamp || !Array.isArray(timestamp)) return;
     const [start] = timestamp;
     if (start !== null && start !== undefined && !isNaN(start)) {
+      if (this.activeSegmentPlayCleanup) {
+        this.activeSegmentPlayCleanup();
+        this.activeSegmentPlayCleanup = null;
+      }
+      audioState.stopWebAudioRange(false);
       audioEl.playbackRate = audioState.playbackSpeed;
       audioEl.currentTime = start;
       audioEl.play().catch(() => {});
@@ -1015,23 +1086,66 @@ class TranscriptState {
   toggleWaveformPlayback() {
     const audioEl = audioState.audioElement;
     if (!audioEl) return;
+    if (audioState.isPlayingInterval) {
+      if (audioState.intervalPlayCleanup) {
+        audioState.intervalPlayCleanup();
+        audioState.intervalPlayCleanup = null;
+      }
+      audioState.isPlayingInterval = false;
+    }
     if (this.isAudioPlaying) {
-      audioEl.pause();
+      if (this.activeSegmentPlayCleanup) {
+        this.activeSegmentPlayCleanup();
+        this.activeSegmentPlayCleanup = null;
+      }
+      audioState.stopWebAudioRange(true);
+      if (!audioEl.paused) {
+        audioEl.pause();
+      }
       this.isAudioPlaying = false;
+      this.currentPlayheadSegmentId = null;
     } else {
+      audioState.stopWebAudioRange(true);
       audioEl.playbackRate = audioState.playbackSpeed;
+      const curPos = audioState.getCurrentPlaybackTime();
       if (this.waveformState) {
         const start = this.waveformState.startTime || 0;
         const end = start + (this.waveformState.duration || 0);
-        if (
-          audioState.playerCurrentTime < start ||
-          audioState.playerCurrentTime >= end - 0.1
-        ) {
+        if (curPos < start || curPos >= end - 0.1) {
           audioEl.currentTime = start;
         }
       }
+      this.updatePlayheadSegment(audioEl.currentTime);
       audioEl.play().catch(() => {});
       this.isAudioPlaying = true;
+    }
+    requestAnimationFrame(() => this.drawVerticalWaveform());
+  }
+
+  toggleIntervalPlayback() {
+    const audioEl = audioState.audioElement;
+    if ((!audioEl && !audioState.cachedDecodedAudio) || !audioState.isIntervalSelected) return;
+
+    if (this.activeSegmentPlayCleanup) {
+      this.activeSegmentPlayCleanup();
+      this.activeSegmentPlayCleanup = null;
+    }
+    this.activeSnippetPlayId = null;
+    this.activeLoopSegmentId = null;
+    this.currentPlayheadSegmentId = null;
+
+    if (audioState.isPlayingInterval) {
+      audioState.togglePlayInterval();
+      this.isAudioPlaying = false;
+    } else {
+      if (this.isAudioPlaying) {
+        audioState.stopWebAudioRange(true);
+        if (audioEl && !audioEl.paused) {
+          audioEl.pause();
+        }
+        this.isAudioPlaying = false;
+      }
+      audioState.togglePlayInterval();
     }
     requestAnimationFrame(() => this.drawVerticalWaveform());
   }
@@ -1390,7 +1504,8 @@ class TranscriptState {
     } else if (this.activeSegmentPlayCleanup) {
       this.activeSegmentPlayCleanup();
       this.activeSegmentPlayCleanup = null;
-      if (audioState.audioElement) {
+      audioState.stopWebAudioRange(true);
+      if (audioState.audioElement && !audioState.audioElement.paused) {
         audioState.audioElement.pause();
       }
     }
@@ -1608,8 +1723,15 @@ class TranscriptState {
     this.closeContextMenu();
     const audioEl = audioState.audioElement;
     if (audioEl) {
+      if (this.activeSegmentPlayCleanup) {
+        this.activeSegmentPlayCleanup();
+        this.activeSegmentPlayCleanup = null;
+      }
+      audioState.stopWebAudioRange(false);
       audioEl.playbackRate = audioState.playbackSpeed;
       audioEl.currentTime = t;
+      audioState.playerCurrentTime = t;
+      this.updatePlayheadSegment(t);
       audioEl.play().catch(() => {});
       this.isAudioPlaying = true;
       requestAnimationFrame(() => this.drawVerticalWaveform());
@@ -1658,7 +1780,7 @@ class TranscriptState {
     const height = this.waveformCalculatedHeight;
     const hitRadius = 10;
 
-    // 1. If clientX is provided, check if the pointer is within a specific speaker's pillar
+    // 1. Only allow grabbing boundary handles inside a specific speaker's pillar column
     if (clientX !== null && clientX !== undefined) {
       const x = clientX - rect.left;
       const speakers = projectState.activeProject?.speakers || [
@@ -1686,22 +1808,6 @@ class TranscriptState {
           if (Math.abs(y - yEnd) <= hitRadius) {
             return { handle: 'end', segmentId: seg.id };
           }
-        }
-      }
-    }
-
-    // 2. Fallback: check selected segment handles (works anywhere across waveform width for selected segment)
-    if (this.selectedSegmentId) {
-      const selectedSeg = this.segments.find((s) => s.id === this.selectedSegmentId);
-      if (selectedSeg) {
-        const yStart = (((selectedSeg.start ?? 0) - startTime) / duration) * height;
-        const yEnd = (((selectedSeg.end ?? 0) - startTime) / duration) * height;
-
-        if (Math.abs(y - yStart) <= hitRadius) {
-          return { handle: 'start', segmentId: selectedSeg.id };
-        }
-        if (Math.abs(y - yEnd) <= hitRadius) {
-          return { handle: 'end', segmentId: selectedSeg.id };
         }
       }
     }
@@ -1784,6 +1890,35 @@ class TranscriptState {
       requestAnimationFrame(() => this.drawVerticalWaveform());
       return;
     }
+
+    // Check if pointerdown is on the wave column (between waveLeft and waveRight, not on speaker columns)
+    const rect = this.waveformWrapEl.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    const speakers = projectState.activeProject?.speakers || [
+      { id: 1, name: 'Speaker 1', initials: 'S1' },
+    ];
+    const pillarLayout = getWaveformPillarLayout(rect.width, speakers);
+
+    if (x >= pillarLayout.waveLeft && x <= pillarLayout.waveRight) {
+      const ratio = Math.max(0, Math.min(1, y / Math.max(1, rect.height)));
+      const startTime =
+        (this.waveformState.startTime ?? 0) +
+        ratio * (this.waveformState.duration ?? 0);
+      this.intervalDragState = {
+        startY: y,
+        startTime,
+        hasMoved: false,
+      };
+      this.wasDraggingInterval = false;
+      try {
+        e.currentTarget?.setPointerCapture(e.pointerId);
+      } catch (_) {}
+    } else {
+      this.intervalDragState = null;
+      this.wasDraggingInterval = false;
+    }
+
     this.wasDraggingHandle = false;
     this.boundaryDragState = null;
   }
@@ -1800,6 +1935,29 @@ class TranscriptState {
     const startTime = this.waveformState.startTime || 0;
     const time = startTime + ratio * duration;
     this.waveformHoverTime = Math.floor(time);
+
+    if (this.intervalDragState) {
+      if (Math.abs(y - this.intervalDragState.startY) >= 4) {
+        this.intervalDragState.hasMoved = true;
+      }
+      if (this.intervalDragState.hasMoved) {
+        const totalDur = audioState.totalAudioDuration || duration || 0;
+        if (totalDur > 0 && audioState.totalAudioDuration === 0) {
+          audioState.totalAudioDuration = Number(totalDur.toFixed(2));
+        }
+        const t1 = Math.max(0, Math.min(totalDur, this.intervalDragState.startTime));
+        const t2 = Math.max(0, Math.min(totalDur, time));
+        const rawStart = Number(Math.min(t1, t2).toFixed(2));
+        const rawEnd = Number(Math.max(t1, t2).toFixed(2));
+        audioState.audioRangeStart = rawStart;
+        audioState.audioRangeEnd = Math.min(
+          totalDur,
+          Math.max(rawEnd, Number((rawStart + 0.1).toFixed(2))),
+        );
+        requestAnimationFrame(() => this.drawVerticalWaveform());
+      }
+      return;
+    }
 
     if (this.activeDragHandle && this.selectedSegmentId) {
       const result = adjustSameSpeakerBoundariesOnDrag({
@@ -1863,6 +2021,28 @@ class TranscriptState {
   }
 
   handleWaveformPointerUp(e) {
+    if (this.intervalDragState) {
+      const dragged = this.intervalDragState.hasMoved;
+      this.intervalDragState = null;
+      try {
+        if (
+          e.currentTarget?.hasPointerCapture &&
+          e.currentTarget.hasPointerCapture(e.pointerId)
+        ) {
+          e.currentTarget.releasePointerCapture(e.pointerId);
+        }
+      } catch (_) {}
+
+      if (dragged) {
+        this.wasDraggingInterval = true;
+        setTimeout(() => {
+          this.wasDraggingInterval = false;
+        }, 50);
+        requestAnimationFrame(() => this.drawVerticalWaveform());
+        return;
+      }
+    }
+
     if (this.activeDragHandle) {
       try {
         if (
@@ -1938,6 +2118,10 @@ class TranscriptState {
       this.wasDraggingHandle = false;
       return;
     }
+    if (this.wasDraggingInterval) {
+      this.wasDraggingInterval = false;
+      return;
+    }
     const audioEl = audioState.audioElement;
     if (!this.waveformWrapEl || !this.waveformState || !audioEl) return;
     const rect = this.waveformWrapEl.getBoundingClientRect();
@@ -1973,13 +2157,31 @@ class TranscriptState {
     }
 
     if (clickedSeg) {
-      this.selectSegment(clickedSeg.id, false);
+      this.selectSegment(clickedSeg.id, false, true);
     }
 
-    audioEl.playbackRate = audioState.playbackSpeed;
+    if (this.activeSegmentPlayCleanup) {
+      this.activeSegmentPlayCleanup();
+      this.activeSegmentPlayCleanup = null;
+    }
+    if (audioState.isPlayingInterval) {
+      if (audioState.intervalPlayCleanup) {
+        audioState.intervalPlayCleanup();
+        audioState.intervalPlayCleanup = null;
+      }
+      audioState.isPlayingInterval = false;
+    }
+
+    audioState.stopWebAudioRange(false);
+    if (!audioEl.paused) {
+      audioEl.pause();
+    }
     audioEl.currentTime = time;
-    audioEl.play().catch(() => {});
-    this.isAudioPlaying = true;
+    audioState.playerCurrentTime = time;
+    this.activeSnippetPlayId = null;
+    this.activeLoopSegmentId = null;
+    this.currentPlayheadSegmentId = null;
+    this.isAudioPlaying = false;
     requestAnimationFrame(() => this.drawVerticalWaveform());
   }
 
@@ -2024,6 +2226,38 @@ class TranscriptState {
     }
     const nextSeg = targetSeg ? this.getNextSegment(targetSeg) : null;
 
+    if (targetSeg) {
+      this.selectSegment(targetSeg.id, false, true);
+    }
+
+    const audioEl = audioState.audioElement;
+    if (audioEl || audioState.isWebAudioPlaying) {
+      if (this.activeSegmentPlayCleanup) {
+        this.activeSegmentPlayCleanup();
+        this.activeSegmentPlayCleanup = null;
+      }
+      if (audioState.isPlayingInterval) {
+        if (audioState.intervalPlayCleanup) {
+          audioState.intervalPlayCleanup();
+          audioState.intervalPlayCleanup = null;
+        }
+        audioState.isPlayingInterval = false;
+      }
+
+      audioState.stopWebAudioRange(false);
+      if (audioEl) {
+        if (!audioEl.paused) {
+          audioEl.pause();
+        }
+        audioEl.currentTime = time;
+      }
+      audioState.playerCurrentTime = time;
+      this.activeSnippetPlayId = null;
+      this.activeLoopSegmentId = null;
+      this.currentPlayheadSegmentId = null;
+      this.isAudioPlaying = false;
+    }
+
     const menuW = 280;
     // Estimate menu height based on content
     const modelCount = modelState.models?.length || 1;
@@ -2055,6 +2289,7 @@ class TranscriptState {
       nextSegment: nextSeg || null,
       targetPillarSpeakerId: targetPillar ? targetPillar.speakerId : null,
     };
+    requestAnimationFrame(() => this.drawVerticalWaveform());
   }
 
   getTileCanvas(index) {
