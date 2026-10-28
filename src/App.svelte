@@ -13,6 +13,7 @@
   import ModelsPage from './pages/ModelsPage.svelte';
   import GuidePage from './pages/GuidePage.svelte';
   import LexiconsPage from './pages/LexiconsPage.svelte';
+  import WhatsNewPage from './pages/WhatsNewPage.svelte';
   import ProjectManagerModal from './components/project/ProjectManagerModal.svelte';
   import NewProjectModal from './components/project/NewProjectModal.svelte';
   import ProjectSettingsModal from './components/project/ProjectSettingsModal.svelte';
@@ -246,6 +247,8 @@
       projectState.currentView = 'guide';
     } else if (router.currentRoute === 'lexicons') {
       projectState.currentView = 'lexicons';
+    } else if (router.currentRoute === 'whats-new') {
+      projectState.currentView = 'whats-new';
     }
   });
 </script>
@@ -267,6 +270,8 @@
     <GuidePage />
   {:else if router.currentRoute === 'lexicons'}
     <LexiconsPage />
+  {:else if router.currentRoute === 'whats-new'}
+    <WhatsNewPage />
   {:else}
     <HomePage />
   {/if}

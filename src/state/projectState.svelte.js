@@ -118,6 +118,14 @@ class ProjectState {
     router.navigate('/guide');
   }
 
+  goToWhatsNew() {
+    if (this.activeProject) {
+      this.persistActiveProjectNow().catch(() => {});
+    }
+    this.currentView = 'whats-new';
+    router.navigate('/whats-new');
+  }
+
   getNextNumericId() {
     const existingIds = this.projects
       .map((p) => p.numericId)

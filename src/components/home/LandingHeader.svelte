@@ -67,6 +67,15 @@
         <i class="fa-solid fa-book-bookmark nav-link-icon"></i>
         <span>Lexicons</span>
       </button>
+
+      <button
+        type="button"
+        class="nav-link"
+        onclick={() => router.navigate('/whats-new')}
+      >
+        <i class="fa-solid fa-bullhorn nav-link-icon"></i>
+        <span>What's New</span>
+      </button>
     </nav>
 
     <!-- Right: Utility Actions & CTA -->
@@ -168,6 +177,17 @@
       >
         <i class="fa-solid fa-book-bookmark"></i>
         <span>Lexicons</span>
+      </button>
+      <button
+        type="button"
+        class="mobile-nav-item"
+        onclick={() => {
+          isMobileMenuOpen = false;
+          router.navigate('/whats-new');
+        }}
+      >
+        <i class="fa-solid fa-bullhorn"></i>
+        <span>What's New</span>
       </button>
     </div>
   {/if}

@@ -828,6 +828,16 @@
         <i class="fa-solid fa-book"></i>
         <span>Guide</span>
       </button>
+
+      <button
+        type="button"
+        class="nav-tab {router.currentRoute === 'whats-new' ? 'active' : ''}"
+        onclick={() => projectState.goToWhatsNew()}
+        title="What's New & Updates"
+      >
+        <i class="fa-solid fa-bullhorn"></i>
+        <span>What's New</span>
+      </button>
     </nav>
   {/if}
 
@@ -1064,6 +1074,25 @@
         <div class="drawer-item-content">
           <span class="drawer-item-title">Guide</span>
           <span class="drawer-item-sub">Documentation for linguists</span>
+        </div>
+      </button>
+
+      <button
+        type="button"
+        class="drawer-nav-item {router.currentRoute === 'whats-new'
+          ? 'active'
+          : ''}"
+        onclick={() => {
+          projectState.goToWhatsNew();
+          closeDrawer();
+        }}
+      >
+        <div class="drawer-item-icon-box">
+          <i class="fa-solid fa-bullhorn"></i>
+        </div>
+        <div class="drawer-item-content">
+          <span class="drawer-item-title">What's New</span>
+          <span class="drawer-item-sub">Latest updates &amp; changelog</span>
         </div>
       </button>
     </nav>

@@ -75,6 +75,15 @@
             <button
               type="button"
               class="footer-link-btn"
+              onclick={() => router.navigate('/whats-new')}
+            >
+              What's New
+            </button>
+          </li>
+          <li>
+            <button
+              type="button"
+              class="footer-link-btn"
               onclick={() => router.navigate('/guide')}
             >
               User Guide

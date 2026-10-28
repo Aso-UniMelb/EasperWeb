@@ -125,6 +125,13 @@ class Router {
       return;
     }
 
+    // 7. What's New: /whats-new or /updates
+    if (normalized === '/whats-new' || normalized === '/updates') {
+      this.currentRoute = 'whats-new';
+      this.params = {};
+      return;
+    }
+
     // Fallback to home
     this.currentRoute = 'home';
     this.params = {};
