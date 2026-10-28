@@ -8,8 +8,10 @@
   import { router } from '../services/router.svelte.js';
   import { lexiconState } from '../state/lexiconState.svelte.js';
 
-  // The transcriber is the one view that trades the tab bar for project controls
-  let isStudio = $derived(router.currentRoute === 'transcriber');
+  // The transcriber studio is the one view that trades the tab bar for project controls
+  let isStudio = $derived(
+    router.currentRoute === 'transcriber' && Boolean(router.params.id),
+  );
 
   let jsonFileInputEl = $state(null);
   let isProjectMenuOpen = $state(false);
@@ -292,7 +294,7 @@
     </div>
 
     <!-- Active Project Menu in Workspace / Transcriber View -->
-    {#if router.currentRoute === 'transcriber' && projectState.activeProject}
+    {#if isStudio && projectState.activeProject}
       <div class="project-dropdown-container" bind:this={projectMenuContainer}>
         <button
           type="button"
@@ -778,16 +780,11 @@
       <button
         type="button"
         class="nav-tab {router.currentRoute === 'transcriber' ? 'active' : ''}"
-        onclick={() => projectState.goToWorkspace()}
+        onclick={() => router.navigate('/transcriber')}
         title="Audio Transcription Studio"
       >
         <i class="fa-solid fa-microphone"></i>
         <span>Transcriber</span>
-        {#if projectState.activeProject?.numericId && router.currentRoute === 'transcriber'}
-          <span class="nav-id-bubble"
-            >#{projectState.activeProject.numericId}</span
-          >
-        {/if}
       </button>
 
       <button
@@ -934,7 +931,7 @@
           ? 'active'
           : ''}"
         onclick={() => {
-          projectState.goToWorkspace();
+          router.navigate('/transcriber');
           closeDrawer();
         }}
       >
@@ -944,17 +941,12 @@
         <div class="drawer-item-content">
           <div class="drawer-item-row">
             <span class="drawer-item-title">Transcriber</span>
-            {#if projectState.activeProject?.numericId}
-              <span class="nav-id-bubble"
-                >#{projectState.activeProject.numericId}</span
-              >
-            {/if}
           </div>
           <span class="drawer-item-sub">Audio Studio &amp; Timings</span>
         </div>
       </button>
 
-      {#if router.currentRoute === 'transcriber' && projectState.activeProject}
+      {#if isStudio && projectState.activeProject}
         <div class="drawer-project-actions">
           <button
             type="button"
@@ -1302,19 +1294,6 @@
     background: #1e293b;
     color: #38bdf8;
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
-  }
-
-  .nav-id-bubble {
-    font-size: 0.68rem;
-    background: var(--primary-light, #e0f2fe);
-    color: var(--primary-color, #0284c7);
-    padding: 1px 5px;
-    border-radius: 4px;
-  }
-
-  :global([data-theme='dark']) .nav-id-bubble {
-    background: rgba(56, 189, 248, 0.18);
-    color: #38bdf8;
   }
 
   /* Drawer Toggle Button */

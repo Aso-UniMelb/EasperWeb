@@ -251,7 +251,7 @@
 </script>
 
 <main
-  class="container {router.currentRoute === 'transcriber'
+  class="container {router.currentRoute === 'transcriber' && router.params.id
     ? 'container-studio'
     : ''} {router.currentRoute === 'home' ? 'container-landing' : ''}"
 >

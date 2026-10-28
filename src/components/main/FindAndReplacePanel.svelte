@@ -7,6 +7,7 @@
     findAllMatches,
     replaceSingleMatch,
     replaceAllMatches,
+    validateFindRegex,
   } from '../../utils/findAndReplace.js';
 
   let { onClose = () => {} } = $props();
@@ -16,6 +17,7 @@
   let targetTier = $state('main'); // 'main' | specific sub-tier id | 'all'
   let matchCase = $state(false);
   let wholeWord = $state(false);
+  let useRegex = $state(false);
 
   let activeMatchIndex = $state(-1);
   let feedbackMessage = $state('');
@@ -34,6 +36,10 @@
 
   const hasSentenceSubTiers = $derived(sentenceSubTiers.length > 0);
 
+  const regexError = $derived(
+    useRegex && findText ? validateFindRegex(findText, { matchCase, wholeWord }) : null,
+  );
+
   // Derived matching results based on current search criteria and reactive segments
   const searchResults = $derived(
     findAllMatches({
@@ -43,6 +49,7 @@
       subTiers: projectState.activeProject?.subTiers || [],
       matchCase,
       wholeWord,
+      useRegex,
       mainTierTitle,
     }),
   );
@@ -91,9 +98,15 @@
   }
 
   function handleFindNext() {
-    if (!findText.trim()) {
+    if (!findText) {
       feedbackType = 'warning';
       feedbackMessage = 'Please enter text to find.';
+      return;
+    }
+
+    if (regexError) {
+      feedbackType = 'error';
+      feedbackMessage = `Invalid regular expression: ${regexError}`;
       return;
     }
 
@@ -118,7 +131,7 @@
   }
 
   function handleFindPrev() {
-    if (!findText.trim() || matches.length === 0) return;
+    if (!findText || regexError || matches.length === 0) return;
 
     if (activeMatchIndex <= 0) {
       activeMatchIndex = matches.length - 1;
@@ -132,9 +145,15 @@
   }
 
   function handleReplaceThis() {
-    if (!findText.trim()) {
+    if (!findText) {
       feedbackType = 'warning';
       feedbackMessage = 'Please enter text to find.';
+      return;
+    }
+
+    if (regexError) {
+      feedbackType = 'error';
+      feedbackMessage = `Invalid regular expression: ${regexError}`;
       return;
     }
 
@@ -159,6 +178,10 @@
       segments: transcriptState.segments,
       match: currentMatch,
       replaceText,
+      findText,
+      matchCase,
+      wholeWord,
+      useRegex,
     });
 
     if (success) {
@@ -208,9 +231,15 @@
   }
 
   function handleReplaceAll() {
-    if (!findText.trim()) {
+    if (!findText) {
       feedbackType = 'warning';
       feedbackMessage = 'Please enter text to find.';
+      return;
+    }
+
+    if (regexError) {
+      feedbackType = 'error';
+      feedbackMessage = `Invalid regular expression: ${regexError}`;
       return;
     }
 
@@ -231,6 +260,7 @@
       subTiers: projectState.activeProject?.subTiers || [],
       matchCase,
       wholeWord,
+      useRegex,
       mainTierTitle,
     });
 
@@ -337,6 +367,15 @@
             >
               \b
             </button>
+            <button
+              type="button"
+              class="btn-option-toggle {useRegex ? 'active' : ''}"
+              onclick={() => (useRegex = !useRegex)}
+              title="Use Regular Expression ({useRegex ? 'Active' : 'Literal search'})"
+              aria-label="Use regular expression"
+            >
+              .*
+            </button>
           </div>
         </div>
 
@@ -345,8 +384,8 @@
           <input
             id="fr-find-input"
             type="text"
-            class="fr-text-input"
-            placeholder="Text to find..."
+            class="fr-text-input {regexError ? 'input-invalid' : ''}"
+            placeholder={useRegex ? 'Regex pattern...' : 'Text to find...'}
             bind:value={findText}
             onkeydown={handleFindKeyDown}
             autocomplete="off"
@@ -432,10 +471,15 @@
       <!-- 4. Stats Badge & Actions Cluster -->
       <div class="action-container">
         <div class="status-box">
-          {#if !findText.trim()}
+          {#if !findText}
             <span class="status-chip chip-neutral">
               <i class="fa-solid fa-i-cursor"></i>
               <span>Enter search text</span>
+            </span>
+          {:else if regexError}
+            <span class="status-chip chip-error" title={regexError}>
+              <i class="fa-solid fa-circle-xmark"></i>
+              <span>Invalid regex</span>
             </span>
           {:else if totalMatches === 0}
             <span class="status-chip chip-warning">
@@ -462,7 +506,7 @@
             type="button"
             class="btn-action-tool btn-find-next"
             onclick={handleFindNext}
-            disabled={!findText.trim() || totalMatches === 0}
+            disabled={!findText || Boolean(regexError) || totalMatches === 0}
             title="Find next matching occurrence (Enter)"
           >
             <i class="fa-solid fa-chevron-down"></i>
@@ -473,7 +517,7 @@
             type="button"
             class="btn-action-tool btn-replace-this"
             onclick={handleReplaceThis}
-            disabled={!findText.trim() || totalMatches === 0}
+            disabled={!findText || Boolean(regexError) || totalMatches === 0}
             title="Replace current occurrence and advance"
           >
             <i class="fa-solid fa-check"></i>
@@ -484,7 +528,7 @@
             type="button"
             class="btn-action-tool btn-replace-all"
             onclick={handleReplaceAll}
-            disabled={!findText.trim() || totalMatches === 0}
+            disabled={!findText || Boolean(regexError) || totalMatches === 0}
             title="Replace all matching occurrences across chosen tiers (Undo with Ctrl+Z)"
           >
             <i class="fa-solid fa-arrows-rotate"></i>
@@ -709,6 +753,18 @@
     box-shadow: 0 0 0 2px rgba(251, 191, 36, 0.25);
   }
 
+  .fr-text-input.input-invalid,
+  .fr-text-input.input-invalid:focus {
+    border-color: #ef4444;
+    box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.2);
+  }
+
+  :global([data-theme='dark']) .fr-text-input.input-invalid,
+  :global([data-theme='dark']) .fr-text-input.input-invalid:focus {
+    border-color: #f87171;
+    box-shadow: 0 0 0 2px rgba(248, 113, 113, 0.25);
+  }
+
   .btn-clear-text {
     position: absolute;
     right: 5px;
@@ -808,6 +864,12 @@
     border: 1px solid rgba(245, 158, 11, 0.25);
   }
 
+  .chip-error {
+    background: rgba(239, 68, 68, 0.12);
+    color: #dc2626;
+    border: 1px solid rgba(239, 68, 68, 0.25);
+  }
+
   :global([data-theme='dark']) .chip-neutral {
     background: rgba(148, 163, 184, 0.15);
     color: #94a3b8;
@@ -824,6 +886,12 @@
     background: rgba(251, 191, 36, 0.15);
     color: #fbbf24;
     border-color: rgba(251, 191, 36, 0.3);
+  }
+
+  :global([data-theme='dark']) .chip-error {
+    background: rgba(248, 113, 113, 0.15);
+    color: #f87171;
+    border-color: rgba(248, 113, 113, 0.3);
   }
 
   .actions-cluster {
@@ -971,6 +1039,11 @@
     color: #075985;
   }
 
+  .alert-error {
+    background: #fef2f2;
+    color: #991b1b;
+  }
+
   :global([data-theme='dark']) .alert-success {
     background: rgba(6, 95, 70, 0.25);
     color: #6ee7b7;
@@ -987,6 +1060,12 @@
     background: rgba(7, 89, 133, 0.25);
     color: #7dd3fc;
     border-top-color: #075985;
+  }
+
+  :global([data-theme='dark']) .alert-error {
+    background: rgba(153, 27, 27, 0.25);
+    color: #fca5a5;
+    border-top-color: #991b1b;
   }
 
   .stats-pills {

@@ -14,32 +14,60 @@ export function escapeRegExp(string) {
 }
 
 /**
- * Builds a search RegExp with optional case sensitivity and Unicode word boundary support.
+ * Builds a search RegExp with optional case sensitivity, Unicode word boundary, and regex support.
  * @param {string} findText
  * @param {Object} [options]
  * @param {boolean} [options.matchCase=false]
  * @param {boolean} [options.wholeWord=false]
+ * @param {boolean} [options.useRegex=false]
  * @returns {RegExp|null}
  */
-export function buildFindRegex(findText, { matchCase = false, wholeWord = false } = {}) {
+export function buildFindRegex(
+  findText,
+  { matchCase = false, wholeWord = false, useRegex = false } = {},
+) {
   if (!findText || typeof findText !== 'string') return null;
 
-  const escaped = escapeRegExp(findText);
+  const basePattern = useRegex ? findText : escapeRegExp(findText);
   let pattern;
 
   if (wholeWord) {
     // Unicode-aware word boundary: (?<=^|[^\p{L}\p{N}_]) and (?=$|[^\p{L}\p{N}_])
-    pattern = `(?<=^|[^\\p{L}\\p{N}_])${escaped}(?=$|[^\\p{L}\\p{N}_])`;
+    pattern = `(?<=^|[^\\p{L}\\p{N}_])(?:${basePattern})(?=$|[^\\p{L}\\p{N}_])`;
   } else {
-    pattern = escaped;
+    pattern = basePattern;
   }
 
   const flags = matchCase ? 'gu' : 'giu';
   try {
     return new RegExp(pattern, flags);
   } catch (e) {
-    console.error('[findAndReplace] Failed to compile RegExp:', e);
     return null;
+  }
+}
+
+/**
+ * Validates whether the provided regex string compiles cleanly.
+ * @param {string} findText
+ * @param {Object} [options]
+ * @param {boolean} [options.matchCase=false]
+ * @param {boolean} [options.wholeWord=false]
+ * @returns {string|null} Error message if invalid, or null if valid
+ */
+export function validateFindRegex(
+  findText,
+  { matchCase = false, wholeWord = false } = {},
+) {
+  if (!findText || typeof findText !== 'string') return null;
+  const pattern = wholeWord
+    ? `(?<=^|[^\\p{L}\\p{N}_])(?:${findText})(?=$|[^\\p{L}\\p{N}_])`
+    : findText;
+  const flags = matchCase ? 'gu' : 'giu';
+  try {
+    new RegExp(pattern, flags);
+    return null;
+  } catch (e) {
+    return e.message || 'Invalid regular expression';
   }
 }
 
@@ -94,6 +122,7 @@ export function getSearchableTiers(targetTier, subTiers = [], mainTierTitle = 'M
  * @param {Array<Object>} [params.subTiers=[]]
  * @param {boolean} [params.matchCase=false]
  * @param {boolean} [params.wholeWord=false]
+ * @param {boolean} [params.useRegex=false]
  * @param {string} [params.mainTierTitle='Main Transcription']
  * @returns {{ matches: Array<Object>, totalMatches: number, matchingSegmentsCount: number }}
  */
@@ -104,13 +133,14 @@ export function findAllMatches({
   subTiers = [],
   matchCase = false,
   wholeWord = false,
+  useRegex = false,
   mainTierTitle = 'Main Transcription',
 } = {}) {
   if (!findText || !Array.isArray(segments) || segments.length === 0) {
     return { matches: [], totalMatches: 0, matchingSegmentsCount: 0 };
   }
 
-  const regex = buildFindRegex(findText, { matchCase, wholeWord });
+  const regex = buildFindRegex(findText, { matchCase, wholeWord, useRegex });
   if (!regex) {
     return { matches: [], totalMatches: 0, matchingSegmentsCount: 0 };
   }
@@ -171,9 +201,21 @@ export function findAllMatches({
  * @param {Array<Object>} params.segments
  * @param {Object} params.match - Match object from findAllMatches
  * @param {string} params.replaceText
+ * @param {string} [params.findText='']
+ * @param {boolean} [params.matchCase=false]
+ * @param {boolean} [params.wholeWord=false]
+ * @param {boolean} [params.useRegex=false]
  * @returns {{ updatedSegments: Array<Object>, success: boolean, newText: string }}
  */
-export function replaceSingleMatch({ segments, match, replaceText = '' }) {
+export function replaceSingleMatch({
+  segments,
+  match,
+  replaceText = '',
+  findText = '',
+  matchCase = false,
+  wholeWord = false,
+  useRegex = false,
+}) {
   if (!match || !Array.isArray(segments)) {
     return { updatedSegments: segments, success: false, newText: '' };
   }
@@ -194,9 +236,22 @@ export function replaceSingleMatch({ segments, match, replaceText = '' }) {
     return { updatedSegments: segments, success: false, newText: currentText };
   }
 
+  let replacement = replaceText;
+  if (useRegex && findText) {
+    const singleRegex = buildFindRegex(findText, { matchCase, wholeWord, useRegex });
+    if (singleRegex) {
+      // Remove global flag so .replace only replaces the matched slice with group expansion
+      const nonGlobalFlags = singleRegex.flags.replace('g', '');
+      try {
+        const localRegex = new RegExp(singleRegex.source, nonGlobalFlags);
+        replacement = actualSlice.replace(localRegex, replaceText);
+      } catch (_) {}
+    }
+  }
+
   const newText =
     currentText.slice(0, match.index) +
-    replaceText +
+    replacement +
     currentText.slice(match.index + match.length);
 
   const updatedSegments = segments.map((s, idx) => {
@@ -228,6 +283,7 @@ export function replaceSingleMatch({ segments, match, replaceText = '' }) {
  * @param {Array<Object>} [params.subTiers=[]]
  * @param {boolean} [params.matchCase=false]
  * @param {boolean} [params.wholeWord=false]
+ * @param {boolean} [params.useRegex=false]
  * @param {string} [params.mainTierTitle='Main Transcription']
  * @returns {{ updatedSegments: Array<Object>, totalReplaced: number, modifiedSegmentsCount: number }}
  */
@@ -239,13 +295,14 @@ export function replaceAllMatches({
   subTiers = [],
   matchCase = false,
   wholeWord = false,
+  useRegex = false,
   mainTierTitle = 'Main Transcription',
 } = {}) {
   if (!findText || !Array.isArray(segments) || segments.length === 0) {
     return { updatedSegments: segments, totalReplaced: 0, modifiedSegmentsCount: 0 };
   }
 
-  const regex = buildFindRegex(findText, { matchCase, wholeWord });
+  const regex = buildFindRegex(findText, { matchCase, wholeWord, useRegex });
   if (!regex) {
     return { updatedSegments: segments, totalReplaced: 0, modifiedSegmentsCount: 0 };
   }
@@ -270,8 +327,10 @@ export function replaceAllMatches({
         if (count > 0) {
           totalReplaced += count;
           segmentModified = true;
-          // Use replacer function so `$` in replaceText is inserted literally
-          newSegText = text.replace(regex, () => replaceText);
+          // In regex mode allow capture group references ($1, $&, etc.); otherwise literal
+          newSegText = useRegex
+            ? text.replace(regex, replaceText)
+            : text.replace(regex, () => replaceText);
         }
       } else {
         const tierKey = String(tier.key);
@@ -285,7 +344,9 @@ export function replaceAllMatches({
           totalReplaced += count;
           segmentModified = true;
           if (!newSubTexts) newSubTexts = {};
-          newSubTexts[tierKey] = text.replace(regex, () => replaceText);
+          newSubTexts[tierKey] = useRegex
+            ? text.replace(regex, replaceText)
+            : text.replace(regex, () => replaceText);
         }
       }
     }
