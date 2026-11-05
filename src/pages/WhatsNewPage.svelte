@@ -18,6 +18,41 @@
   </header>
 
   <div class="updates-list">
+    <!-- November 5, 2026 -->
+    <section class="update-section">
+      <h2 class="update-date">
+        <span>November 5, 2026</span>
+        <span class="sub-app-badge badge-transcriber">
+          <i class="fa-solid fa-microphone"></i> Transcriber
+        </span>
+      </h2>
+      <ul class="update-bullets">
+        <li>
+          <strong>Whistle Speech Recognition Model (CPU WebAssembly):</strong>
+          Added native support for the ultra-compact Whistle model (<code>Cactus-Compute/whistle</code>, ~17 MB).
+          Runs entirely on CPU WebAssembly with word-level timestamps and zero GPU requirements.
+          Renamed "Official Whisper" to "Official Models" and added Whistle with its 7 default European languages (<code>en</code>, <code>de</code>, <code>fr</code>, <code>es</code>, <code>it</code>, <code>nl</code>, <code>pl</code>) plus Auto-detect.
+          Also added support to load local <code>.cact</code> container files in the Local Folder tab and Hugging Face Hub.
+        </li>
+        <li>
+          <strong>ELAN Hierarchy (Symbolic Subdivision &amp; Association):</strong>
+          Added full support for ELAN linguistic stereotypes (<em>Symbolic Subdivision</em> and <em>Symbolic Association</em>).
+          Importing an ELAN (<code>.eaf</code>) file now preserves tier hierarchies and allows mapping parent tiers to speakers and dependent tiers to sub-tiers.
+          Exporting automatically reconstructs valid parent-child tier structures with full round-trip fidelity.
+        </li>
+        <li>
+          <strong>Validation Issues Summary &amp; Review:</strong>
+          Added a summary counter and quick-review tools for transcription validation issues.
+          Users can now filter the segment list to display only segments with validation errors, and jump between issues with dedicated previous/next navigation buttons.
+        </li>
+        <li>
+          <strong>Undo/Redo &amp; Large Project Performance:</strong>
+          Optimized the history snapshot engine for large recordings with numerous segments.
+          Replaced full JSON serialization with lightweight structural cloning and equality checks, eliminating UI latency and capping history memory usage.
+        </li>
+      </ul>
+    </section>
+
     <!-- October 28, 2026 -->
     <section class="update-section">
       <h2 class="update-date">
