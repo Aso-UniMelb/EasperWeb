@@ -1,7 +1,11 @@
 <script>
   import { onMount } from 'svelte';
   import Header from '../components/Header.svelte';
-  import { modelState, WHISPER_LANGUAGES } from '../state/modelState.svelte.js';
+  import {
+    modelState,
+    WHISPER_LANGUAGES,
+    WHISTLE_LANGUAGES,
+  } from '../state/modelState.svelte.js';
   import { projectState } from '../state/projectState.svelte.js';
   import { appState } from '../state/appState.svelte.js';
   import { router } from '../services/router.svelte.js';
@@ -12,6 +16,7 @@
 
   let activeAddTab = $state('presets'); // 'presets' | 'folder' | 'hub'
   let presetLanguages = $state({
+    'whistle': 'en',
     'whisper-base': 'en',
     'whisper-small': 'en',
   });
@@ -36,6 +41,15 @@
   let isSavingHub = $state(false);
   let hubError = $state('');
 
+  function selectHubPreset(repoId, defaultTitle, defaultLang = 'en') {
+    hubModelId = repoId;
+    if (!hubTitle.trim() || hubTitle === 'Whistle' || hubTitle === 'Whisper-base' || hubTitle === 'Whisper-small') {
+      hubTitle = defaultTitle;
+    }
+    hubLanguage = defaultLang;
+    hubError = '';
+  }
+
   function handleFolderChosen(e) {
     folderError = '';
     const fileList = e.target.files;
@@ -56,12 +70,12 @@
 
   async function handleSaveLocalFolder() {
     if (!rawFolderFiles || rawFolderFiles.length === 0) {
-      folderError = 'Please choose a folder with ONNX files.';
+      folderError = 'Please choose a folder with model files.';
       return;
     }
     if (!localAnalysis?.isValid) {
       folderError =
-        'Folder must contain config.json and at least one .onnx weights file.';
+        'Folder must contain a .cact model file (e.g. whistle.cact) or config.json with .onnx weights.';
       return;
     }
     if (!localTitle.trim()) {
@@ -80,6 +94,7 @@
         files: rawFolderFiles,
         language: localLanguage.trim() || 'en',
         dtype: localDtype,
+        architecture: localAnalysis.architecture || 'whisper',
       });
 
       // Reset form
@@ -110,13 +125,19 @@
     isSavingHub = true;
     hubError = '';
 
+    const cleanRepo = hubModelId.trim();
+    const isWhistle =
+      cleanRepo.toLowerCase().includes('whistle') ||
+      cleanRepo.toLowerCase().endsWith('.cact');
+
     try {
       await modelState.saveCustomModel({
         title: hubTitle.trim(),
         modelSource: 'hub',
-        modelId: hubModelId.trim(),
+        modelId: cleanRepo,
         language: hubLanguage.trim() || 'en',
-        dtype: 'q8',
+        dtype: isWhistle ? 'wasm' : 'q8',
+        architecture: isWhistle ? 'whistle' : 'whisper',
       });
 
       // Reset form
@@ -181,15 +202,15 @@
           </div>
 
           <div class="panel-header-right">
-            {#if !modelState.isPresetAdded('whisper-base') || !modelState.isPresetAdded('whisper-small')}
+            {#if !modelState.isPresetAdded('whistle') || !modelState.isPresetAdded('whisper-base') || !modelState.isPresetAdded('whisper-small')}
               <button
                 type="button"
                 class="btn-restore-presets"
                 onclick={() => (activeAddTab = 'presets')}
-                title="Browse official Whisper models to add"
+                title="Browse official models to add"
               >
                 <i class="fa-solid fa-wand-magic-sparkles"></i>
-                <span>Add Official Whisper</span>
+                <span>Add Official Models</span>
               </button>
             {/if}
             {#if modelState.selectedModel}
@@ -209,8 +230,8 @@
               <h4>No Models in Library</h4>
               <p>
                 Speech recognition requires an ASR model. You can quickly add an
-                official Whisper model below to download for offline use or
-                import your own:
+                official model below to download for offline use or
+                import your own fine-tuned weights:
               </p>
               <div class="empty-quick-add-group">
                 <div class="empty-lang-picker">
@@ -232,6 +253,19 @@
                 <button
                   type="button"
                   class="btn btn-primary btn-block"
+                  onclick={() =>
+                    modelState.addPresetModel(
+                      'whistle',
+                      ['en', 'de', 'fr', 'es', 'it', 'nl', 'pl'].includes(emptyStateLang) ? emptyStateLang : 'en',
+                      true,
+                    )}
+                >
+                  <i class="fa-solid fa-cloud-arrow-down"></i>
+                  <span>Add & Download Whistle (~17MB, CPU WASM)</span>
+                </button>
+                <button
+                  type="button"
+                  class="btn btn-subtle-outline btn-block"
                   onclick={() =>
                     modelState.addPresetModel(
                       'whisper-base',
@@ -311,8 +345,13 @@
                     </span>
                     <span class="meta-chip">
                       <i class="fa-solid fa-microchip"></i>
-                      {m.dtype || 'q8'}
+                      {m.architecture === 'whistle' || m.dtype === 'wasm' ? 'WASM CPU' : (m.dtype || 'q8')}
                     </span>
+                    {#if m.architecture === 'whistle'}
+                      <span class="meta-chip text-muted">
+                        Whistle
+                      </span>
+                    {/if}
                     {#if m.modelSource === 'folder' && m.fileCount}
                       <span class="meta-chip text-muted">
                         {m.fileCount} files
@@ -452,7 +491,7 @@
             onclick={() => (activeAddTab = 'presets')}
           >
             <i class="fa-solid fa-wand-magic-sparkles"></i>
-            <span>Official Whisper</span>
+            <span>Official Models</span>
           </button>
           <button
             type="button"
@@ -478,9 +517,8 @@
               class="text-sm text-muted"
               style="margin-top: 0; margin-bottom: 14px;"
             >
-              Add standard ONNX-quantized Whisper models optimized for
-              in-browser execution. Download them once to enable 100% offline
-              speech recognition.
+              Add standard speech recognition models optimized for in-browser execution (Whisper &amp; Whistle).
+              Download them once to enable 100% offline speech recognition.
             </p>
 
             <div class="preset-cards-grid">
@@ -523,14 +561,25 @@
                       <i class="fa-solid fa-bolt"></i>
                       {preset.speed}
                     </span>
-                    <span class="meta-chip">
-                      <i class="fa-solid fa-language"></i>
-                      Multilingual (99+ languages)
-                    </span>
-                    <span class="meta-chip">
-                      <i class="fa-solid fa-microchip"></i>
-                      WASM Q8 &amp; WebGPU Q4
-                    </span>
+                    {#if preset.architecture === 'whistle'}
+                      <span class="meta-chip">
+                        <i class="fa-solid fa-language"></i>
+                        7 Languages (en, de, fr, es, it, nl, pl)
+                      </span>
+                      <span class="meta-chip">
+                        <i class="fa-solid fa-microchip"></i>
+                        💻 CPU WebAssembly Only
+                      </span>
+                    {:else}
+                      <span class="meta-chip">
+                        <i class="fa-solid fa-language"></i>
+                        Multilingual (99+ languages)
+                      </span>
+                      <span class="meta-chip">
+                        <i class="fa-solid fa-microchip"></i>
+                        WASM Q8 &amp; WebGPU Q4
+                      </span>
+                    {/if}
                   </div>
 
                   <div class="preset-card-actions">
@@ -546,11 +595,19 @@
                         class="preset-lang-select"
                         bind:value={presetLanguages[presetKey]}
                       >
-                        {#each WHISPER_LANGUAGES as lang}
-                          <option value={lang.code}
-                            >{lang.name} ({lang.code})</option
-                          >
-                        {/each}
+                        {#if preset.architecture === 'whistle'}
+                          {#each WHISTLE_LANGUAGES as lang}
+                            <option value={lang.code}
+                              >{lang.name} ({lang.code})</option
+                            >
+                          {/each}
+                        {:else}
+                          {#each WHISPER_LANGUAGES as lang}
+                            <option value={lang.code}
+                              >{lang.name} ({lang.code})</option
+                            >
+                          {/each}
+                        {/if}
                       </select>
                     </div>
 
@@ -636,11 +693,7 @@
               class="text-sm text-muted"
               style="margin-top: 0; margin-bottom: 14px;"
             >
-              Select a local folder containing your fine-tuned model. The folder
-              must contain <code>config.json</code> and ONNX weights (e.g.
-              <code>model_quantized.onnx</code>
-              or
-              <code>encoder_model.onnx</code>).
+              Select a local folder containing your fine-tuned model or a <code>.cact</code> file (e.g. <code>whistle.cact</code>, or <code>config.json</code> with ONNX weights).
             </p>
 
             <div class="drop-zone-area" style="margin-bottom: 14px;">
@@ -664,7 +717,7 @@
                 <span class="drop-text-sub">
                   {localFileCount > 0
                     ? `${localFileCount} files found`
-                    : 'Select a directory with ONNX files'}
+                    : 'Select a directory with ONNX or .cact files'}
                 </span>
               </label>
             </div>
@@ -677,38 +730,54 @@
                 style="margin-bottom: 14px;"
               >
                 {#if localAnalysis.isValid}
-                  <div class="analysis-status text-success">
-                    <i class="fa-solid fa-check-circle"></i>
-                    <span>Valid ONNX Model Detected</span>
-                  </div>
-                  <div class="analysis-details text-xs">
-                    <div>
-                      Encoder: <code
-                        >{localAnalysis.hasEncoder ? 'Yes' : 'No'}</code
-                      >
-                      &bull; Decoder:
-                      <code>{localAnalysis.hasDecoder ? 'Yes' : 'No'}</code>
-                      &bull; Config:
-                      <code>{localAnalysis.hasConfig ? 'Yes' : 'No'}</code>
-                      &bull; Tokenizer:
-                      <code>{localAnalysis.hasTokenizer ? 'Yes' : 'No'}</code>
+                  {#if localAnalysis.isCact}
+                    <div class="analysis-status text-success">
+                      <i class="fa-solid fa-check-circle"></i>
+                      <span>Valid Cactus (.cact) Model Detected</span>
                     </div>
-                    <div>
-                      Weights format: <strong
-                        >{localAnalysis.detectedDtype.toUpperCase()}</strong
-                      >
+                    <div class="analysis-details text-xs">
+                      <div>
+                        Model file: <code>{localAnalysis.cactFiles[0]}</code>
+                        &bull; Architecture: <strong>Whistle</strong>
+                        &bull; Execution: <strong>CPU WebAssembly (WASM)</strong>
+                      </div>
+                      <div>
+                        Format: <strong>Cactus Container (~17 MB)</strong> &bull; Zero GPU requirement
+                      </div>
                     </div>
-                  </div>
+                  {:else}
+                    <div class="analysis-status text-success">
+                      <i class="fa-solid fa-check-circle"></i>
+                      <span>Valid ONNX Model Detected</span>
+                    </div>
+                    <div class="analysis-details text-xs">
+                      <div>
+                        Encoder: <code
+                          >{localAnalysis.hasEncoder ? 'Yes' : 'No'}</code
+                        >
+                        &bull; Decoder:
+                        <code>{localAnalysis.hasDecoder ? 'Yes' : 'No'}</code>
+                        &bull; Config:
+                        <code>{localAnalysis.hasConfig ? 'Yes' : 'No'}</code>
+                        &bull; Tokenizer:
+                        <code>{localAnalysis.hasTokenizer ? 'Yes' : 'No'}</code>
+                      </div>
+                      <div>
+                        Weights format: <strong
+                          >{localAnalysis.detectedDtype.toUpperCase()}</strong
+                        >
+                      </div>
+                    </div>
+                  {/if}
                 {:else}
                   <div class="analysis-status text-danger">
                     <i class="fa-solid fa-triangle-exclamation"></i>
                     <span>Incomplete Model Folder</span>
                   </div>
                   <div class="analysis-details text-xs text-muted">
-                    Missing required components. Please ensure the folder has <code
-                      >config.json</code
-                    >
-                    and valid <code>.onnx</code> weights files.
+                    Missing required components. Please ensure the folder contains a <code
+                      >.cact</code
+                    > file (e.g. <code>whistle.cact</code>) or <code>config.json</code> with valid <code>.onnx</code> weights files.
                   </div>
                 {/if}
               </div>
@@ -720,7 +789,7 @@
                 id="local-model-title"
                 type="text"
                 class="form-control"
-                placeholder="e.g. Whisper-Base Bislama"
+                placeholder="e.g. Whistle or Whisper-Base Bislama"
                 bind:value={localTitle}
               />
             </div>
@@ -735,7 +804,7 @@
                   id="local-model-lang"
                   type="text"
                   class="form-control"
-                  placeholder="e.g. en, fa, ckb"
+                  placeholder="e.g. en, de, fr, es, fa"
                   bind:value={localLanguage}
                 />
               </div>
@@ -747,8 +816,12 @@
                   class="form-control"
                   bind:value={localDtype}
                 >
-                  <option value="q8">q8 (8-bit quantized, fast)</option>
-                  <option value="fp32">fp32 (Full precision)</option>
+                  {#if localAnalysis?.isCact}
+                    <option value="wasm">wasm (CPU WebAssembly Only)</option>
+                  {:else}
+                    <option value="q8">q8 (8-bit quantized, fast)</option>
+                    <option value="fp32">fp32 (Full precision)</option>
+                  {/if}
                 </select>
               </div>
             </div>
@@ -782,10 +855,37 @@
               class="text-sm text-muted"
               style="margin-top: 0; margin-bottom: 14px;"
             >
-              Specify an ONNX-converted Whisper model repository hosted on
-              Hugging Face Hub. Transformers.js will download and cache the ONNX
-              weights directly in your browser.
+              Specify an ONNX-converted Whisper model or Cactus Whistle model hosted on
+              Hugging Face Hub. Models are downloaded and cached directly in your browser.
             </p>
+
+            <div class="hub-presets-bar" style="margin-bottom: 14px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center;">
+              <span class="text-xs text-muted" style="font-weight: 500;">Quick Suggestions:</span>
+              <button
+                type="button"
+                class="badge badge-info"
+                style="cursor: pointer; padding: 5px 9px; font-size: 11px; border: none;"
+                onclick={() => selectHubPreset('Cactus-Compute/whistle', 'Whistle', 'en')}
+              >
+                <i class="fa-solid fa-bolt"></i> Cactus-Compute/whistle (16.9 MB, WASM)
+              </button>
+              <button
+                type="button"
+                class="badge badge-secondary"
+                style="cursor: pointer; padding: 5px 9px; font-size: 11px; border: none;"
+                onclick={() => selectHubPreset('onnx-community/whisper-base', 'Whisper-base', 'en')}
+              >
+                onnx-community/whisper-base
+              </button>
+              <button
+                type="button"
+                class="badge badge-secondary"
+                style="cursor: pointer; padding: 5px 9px; font-size: 11px; border: none;"
+                onclick={() => selectHubPreset('onnx-community/whisper-small', 'Whisper-small', 'en')}
+              >
+                onnx-community/whisper-small
+              </button>
+            </div>
 
             <div class="form-group" style="margin-bottom: 12px;">
               <label for="hub-model-id">Hugging Face Repository ID</label>
@@ -793,14 +893,14 @@
                 id="hub-model-id"
                 type="text"
                 class="form-control"
-                placeholder="e.g. onnx-community/whisper-tiny"
+                placeholder="e.g. Cactus-Compute/whistle or onnx-community/whisper-tiny"
                 bind:value={hubModelId}
               />
               <span
                 class="form-hint text-xs text-muted"
                 style="display: block; margin-top: 4px;"
               >
-                Must be an ONNX-format model (e.g. <code
+                Supports Cactus Whistle (<code>Cactus-Compute/whistle</code>) or ONNX Whisper models (e.g. <code
                   >onnx-community/whisper-base</code
                 >
                 or <code>onnx-community/whisper-large-v3-turbo</code>)
@@ -813,7 +913,7 @@
                 id="hub-model-title"
                 type="text"
                 class="form-control"
-                placeholder="e.g. Whisper-Base Bislama"
+                placeholder="e.g. Whistle or Whisper-Base Bislama"
                 bind:value={hubTitle}
               />
             </div>
@@ -824,7 +924,7 @@
                 id="hub-model-lang"
                 type="text"
                 class="form-control"
-                placeholder="e.g. en, es, fr"
+                placeholder="e.g. en, es, fr, de"
                 bind:value={hubLanguage}
               />
             </div>

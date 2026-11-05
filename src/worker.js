@@ -1,4 +1,10 @@
 import { pipeline, env } from '@huggingface/transformers';
+import {
+  getWhistleInstance,
+  transcribeWhistleSlice,
+  disposeWhistle,
+  isWhistleModel,
+} from './utils/whistleRunner.js';
 import { getVadSession, getSpeechTimestamps, segmentsCleanup, setupOrtWasmEnvironment } from './vad.js';
 import { getDiarizerSession, extractSpeakerEmbedding } from './diarizer.js';
 import { diarizeSegmentsWithPyannote } from './pyannote.js';
@@ -376,9 +382,46 @@ async function getTranscriber({ modelSource, modelId, folderName, files, dtype, 
 self.onmessage = async (event) => {
   const { type, payload } = event.data;
   if (type === 'download_model') {
-    const { modelId, dtype = 'q8', device = 'auto' } = payload;
+    const { modelId, architecture, dtype = 'q8', device = 'auto' } = payload;
     const downloadStartTime = performance.now();
     try {
+      if (isWhistleModel({ architecture, modelId })) {
+        self.postMessage({
+          type: 'status',
+          payload: { message: `Downloading Whistle CPU WebAssembly model (~17 MB) for offline use...` },
+        });
+
+        await getWhistleInstance({
+          modelSource: 'hub',
+          modelId,
+          onProgress: (info) => {
+            self.postMessage({
+              type: 'progress',
+              payload: info,
+            });
+            self.postMessage({
+              type: 'model_download_progress',
+              payload: {
+                modelId,
+                progress: info.progress,
+                loaded: info.loaded,
+                total: info.total || 16919407,
+              },
+            });
+          },
+        });
+
+        self.postMessage({
+          type: 'model_download_complete',
+          payload: {
+            modelId,
+            duration: (performance.now() - downloadStartTime) / 1000,
+            totalBytes: 16919407,
+          },
+        });
+        return;
+      }
+
       self.postMessage({
         type: 'status',
         payload: { message: `Downloading model "${modelId}" for offline use...` },
@@ -505,7 +548,37 @@ self.onmessage = async (event) => {
     }
   } else if (type === 'load') {
     try {
-      const { modelSource, modelId, folderName, files, dtype, device = 'auto' } = payload;
+      const { modelSource, modelId, architecture, folderName, files, dtype, device = 'auto' } = payload;
+      if (isWhistleModel({ architecture, modelId, files })) {
+        self.postMessage({
+          type: 'status',
+          payload: { message: 'Loading Whistle CPU WebAssembly model...' },
+        });
+        const { whistle, loadTime, activeDevice } = await getWhistleInstance({
+          modelSource,
+          modelId,
+          folderName,
+          files,
+          onProgress: (progressInfo) => {
+            self.postMessage({
+              type: 'progress',
+              payload: progressInfo,
+            });
+          },
+        });
+        self.postMessage({
+          type: 'loaded',
+          payload: {
+            modelKey: `whistle:${modelId || folderName || 'whistle'}:wasm`,
+            modelLoadTime: loadTime,
+            activeDevice: 'wasm',
+            hardwareConcurrency: navigator.hardwareConcurrency || 4,
+            crossOriginIsolated: Boolean(self.crossOriginIsolated),
+          },
+        });
+        return;
+      }
+
       const { loadTime, activeDevice } = await getTranscriber({ modelSource, modelId, folderName, files, dtype, device });
       self.postMessage({
         type: 'loaded',
@@ -528,6 +601,7 @@ self.onmessage = async (event) => {
     transcriber = null;
     currentModelKey = null;
     cachedLoadTime = null;
+    await disposeWhistle();
     console.log('[Worker] Model unloaded and memory cleared.');
     self.postMessage({
       type: 'unloaded',
@@ -541,6 +615,7 @@ self.onmessage = async (event) => {
         fullAudioDuration = duration,
         modelSource,
         modelId,
+        architecture,
         folderName,
         files,
         dtype,
@@ -556,14 +631,45 @@ self.onmessage = async (event) => {
         ? audioData 
         : new Float32Array(audioData);
 
-      const { transcriber: pipe, loadTime } = await getTranscriber({
-        modelSource,
-        modelId,
-        folderName,
-        files,
-        dtype,
-        device,
-      });
+      const isWhistle = isWhistleModel({ architecture, modelId, files });
+      let pipe = null;
+      let whistle = null;
+      let loadTime = 0;
+      let activeDevice = 'wasm';
+
+      if (isWhistle) {
+        self.postMessage({
+          type: 'status',
+          payload: { message: 'Loading Whistle CPU WebAssembly model...' }
+        });
+        const whistleRes = await getWhistleInstance({
+          modelSource,
+          modelId,
+          folderName,
+          files,
+          onProgress: (progressInfo) => {
+            self.postMessage({
+              type: 'progress',
+              payload: progressInfo,
+            });
+          },
+        });
+        whistle = whistleRes.whistle;
+        loadTime = whistleRes.loadTime;
+        activeDevice = 'wasm';
+      } else {
+        const transRes = await getTranscriber({
+          modelSource,
+          modelId,
+          folderName,
+          files,
+          dtype,
+          device,
+        });
+        pipe = transRes.transcriber;
+        loadTime = transRes.loadTime;
+        activeDevice = transRes.activeDevice;
+      }
 
       const transcribeStartTime = performance.now();
 
@@ -584,6 +690,13 @@ self.onmessage = async (event) => {
 
       // Helper function to transcribe/translate an audio slice with cross-attentions fallback
       const transcribeSlice = async (sliceData) => {
+        if (isWhistle) {
+          return await transcribeWhistleSlice(whistle, sliceData, {
+            language,
+            wordTimestamps: usedTimestampMode !== 'none',
+          });
+        }
+
         const langParam = (language && language.trim() && language.trim() !== 'auto')
           ? language.trim()
           : null;
@@ -1326,6 +1439,7 @@ self.onmessage = async (event) => {
         end,
         modelSource,
         modelId,
+        architecture,
         folderName,
         files,
         dtype,
@@ -1337,6 +1451,55 @@ self.onmessage = async (event) => {
       const float32Audio = audioData instanceof Float32Array 
         ? audioData 
         : new Float32Array(audioData);
+
+      const isWhistle = isWhistleModel({ architecture, modelId, files });
+      if (isWhistle) {
+        self.postMessage({
+          type: 'status',
+          payload: { message: `Initializing Whistle model for segment [${Number(start).toFixed(1)}s - ${Number(end).toFixed(1)}s]...` }
+        });
+
+        const { whistle } = await getWhistleInstance({
+          modelSource,
+          modelId,
+          folderName,
+          files,
+        });
+
+        self.postMessage({
+          type: 'transcribing_single_segment',
+          payload: {
+            id: segmentId,
+            start: Number(start),
+            end: Number(end),
+          }
+        });
+
+        self.postMessage({
+          type: 'status',
+          payload: { message: `Transcribing segment [${Number(start).toFixed(1)}s - ${Number(end).toFixed(1)}s] with Whistle...` }
+        });
+
+        const res = await transcribeWhistleSlice(whistle, float32Audio, {
+          language,
+          wordTimestamps: false,
+        });
+
+        const rawText = res.text || '';
+        const segText = cleanSpeechText(rawText);
+
+        self.postMessage({
+          type: 'segment_transcribed',
+          payload: {
+            segmentId,
+            start: Number(start),
+            end: Number(end),
+            text: segText,
+            rawText,
+          }
+        });
+        return;
+      }
 
       self.postMessage({
         type: 'status',
@@ -1412,6 +1575,7 @@ self.onmessage = async (event) => {
         audioData,
         modelSource,
         modelId,
+        architecture,
         folderName,
         files,
         dtype,
@@ -1435,6 +1599,109 @@ self.onmessage = async (event) => {
         ? audioData 
         : new Float32Array(audioData);
       const totalLen = float32Audio.length;
+
+      const isWhistle = isWhistleModel({ architecture, modelId, files });
+      if (isWhistle) {
+        self.postMessage({
+          type: 'status',
+          payload: { message: `Initializing Whistle model for ${segments.length} empty segments...` }
+        });
+
+        const { whistle } = await getWhistleInstance({
+          modelSource,
+          modelId,
+          folderName,
+          files,
+        });
+
+        const activeLang = (language && language.trim()) ? language.trim() : 'en';
+        let successCount = 0;
+
+        for (let i = 0; i < segments.length; i++) {
+          const seg = segments[i];
+          const segStartSec = Math.max(0, seg.start ?? 0);
+          const segEndSec = Math.max(segStartSec + 0.1, seg.end ?? (segStartSec + 1));
+
+          const startSample = Math.max(0, Math.min(totalLen - 1, Math.floor(segStartSec * 16000)));
+          let endSample = Math.min(totalLen, Math.ceil(segEndSec * 16000));
+
+          if (endSample <= startSample) {
+            endSample = Math.min(totalLen, startSample + 3200);
+          }
+
+          if (endSample <= startSample) {
+            continue;
+          }
+
+          const segAudio = float32Audio.slice(startSample, endSample);
+
+          self.postMessage({
+            type: 'transcribing_single_segment',
+            payload: {
+              id: seg.id,
+              start: Number(seg.start),
+              end: Number(seg.end),
+              index: i,
+              total: segments.length,
+            }
+          });
+
+          const pct = Math.round(((i + 1) / segments.length) * 100);
+          self.postMessage({
+            type: 'progress',
+            payload: {
+              file: `Transcribing empty segment ${i + 1} of ${segments.length} [${segStartSec.toFixed(1)}s - ${segEndSec.toFixed(1)}s]`,
+              progress: pct,
+              loaded: i + 1,
+              total: segments.length,
+            }
+          });
+
+          try {
+            const res = await transcribeWhistleSlice(whistle, segAudio, {
+              language: activeLang,
+              wordTimestamps: false,
+            });
+
+            const rawText = res.text || '';
+            const segText = cleanSpeechText(rawText);
+
+            successCount++;
+
+            self.postMessage({
+              type: 'segment_transcribed',
+              payload: {
+                segmentId: seg.id,
+                start: Number(seg.start),
+                end: Number(seg.end),
+                text: segText,
+                rawText,
+                index: i,
+                total: segments.length,
+              }
+            });
+          } catch (segErr) {
+            console.error(`[Worker] Error transcribing empty segment ${seg.id} with Whistle:`, segErr);
+            self.postMessage({
+              type: 'segment_transcribe_error',
+              payload: {
+                segmentId: seg.id,
+                message: segErr?.message || String(segErr),
+              }
+            });
+          }
+        }
+
+        self.postMessage({
+          type: 'batch_transcription_complete',
+          payload: {
+            transcribedCount: successCount,
+            totalSegments: segments.length,
+            message: `Successfully transcribed ${successCount} segment(s) with Whistle.`,
+          }
+        });
+        return;
+      }
 
       self.postMessage({
         type: 'status',

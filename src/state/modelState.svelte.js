@@ -20,15 +20,44 @@ import {
   WHISPER_LANGUAGES,
   getLanguageName,
 } from '../services/whisperLanguages.js';
+import {
+  WHISTLE_LANGUAGES,
+  getWhistleLanguageName,
+  isWhistleLanguage,
+} from '../services/whistleLanguages.js';
 
-export { WHISPER_LANGUAGES, getLanguageName };
+export {
+  WHISPER_LANGUAGES,
+  getLanguageName,
+  WHISTLE_LANGUAGES,
+  getWhistleLanguageName,
+  isWhistleLanguage,
+};
 
 export const AVAILABLE_PRESETS = [
+  {
+    baseId: 'whistle',
+    id: 'whistle',
+    title: 'Whistle',
+    baseTitle: 'Whistle',
+    architecture: 'whistle',
+    modelSource: 'hub',
+    modelId: 'Cactus-Compute/whistle',
+    language: 'en',
+    supportedLanguages: ['auto', 'en', 'de', 'fr', 'es', 'it', 'nl', 'pl'],
+    dtype: 'wasm',
+    device: 'wasm',
+    isPreset: true,
+    sizeApprox: '~17 MB',
+    speed: 'Ultra-Fast (~17MB total)',
+    description: 'Ultra-compact 16.9 MB local speech recognition model running on CPU WebAssembly. High efficiency with word-level timestamps and zero GPU requirement.',
+  },
   {
     baseId: 'whisper-base',
     id: 'whisper-base',
     title: 'Whisper-base',
     baseTitle: 'Whisper-base',
+    architecture: 'whisper',
     modelSource: 'hub',
     modelId: 'onnx-community/whisper-base',
     language: 'en',
@@ -43,6 +72,7 @@ export const AVAILABLE_PRESETS = [
     id: 'whisper-small',
     title: 'Whisper-small',
     baseTitle: 'Whisper-small',
+    architecture: 'whisper',
     modelSource: 'hub',
     modelId: 'onnx-community/whisper-small',
     language: 'en',
@@ -104,17 +134,50 @@ class ModelState {
   async checkAllModelsCached() {
     if (typeof caches === 'undefined') return;
     try {
-      const cache = await caches.open('transformers-cache');
-      const requests = await cache.keys();
-      const urls = requests.map((r) => r.url.toLowerCase());
+      const cacheNames = await caches.keys();
+      const urls = [];
+      let hasCactusCache = false;
+
+      for (const name of cacheNames) {
+        if (name.toLowerCase().includes('cactus-needle')) {
+          hasCactusCache = true;
+        }
+        try {
+          const c = await caches.open(name);
+          const requests = await c.keys();
+          for (const r of requests) {
+            urls.push(r.url.toLowerCase());
+          }
+        } catch (e) {}
+      }
 
       const newlyCached = [];
-
       const allToCheck = [...this.models, ...AVAILABLE_PRESETS];
 
       for (const m of allToCheck) {
         if (m.modelSource === 'folder') {
           newlyCached.push(m.id);
+          continue;
+        }
+
+        const isWhistle =
+          m.architecture === 'whistle' ||
+          m.baseId === 'whistle' ||
+          (m.modelId && m.modelId.toLowerCase().includes('whistle'));
+
+        if (isWhistle) {
+          const whistleCached =
+            hasCactusCache ||
+            urls.some(
+              (u) =>
+                u.includes('whistle.cact') ||
+                u.includes('cactus-compute') ||
+                u.includes('needle.wasm'),
+            );
+          if (whistleCached) {
+            newlyCached.push(m.id);
+            if (m.modelId) newlyCached.push(m.modelId);
+          }
           continue;
         }
 
@@ -144,7 +207,11 @@ class ModelState {
   downloadModelForOffline(model) {
     if (!model) return;
     const targetModelId = model.modelId || model.id;
-    const dtype = model.dtype || 'q4';
+    const isWhistle =
+      model.architecture === 'whistle' ||
+      model.baseId === 'whistle' ||
+      (targetModelId && String(targetModelId).toLowerCase().includes('whistle'));
+    const dtype = isWhistle ? 'wasm' : (model.dtype || 'q4');
 
     if (this.isModelCached(targetModelId)) {
       return;
@@ -163,8 +230,9 @@ class ModelState {
         type: 'download_model',
         payload: {
           modelId: targetModelId,
+          architecture: isWhistle ? 'whistle' : 'whisper',
           dtype,
-          device: this.preferredDevice,
+          device: isWhistle ? 'wasm' : this.preferredDevice,
         },
       });
     }
@@ -275,7 +343,13 @@ class ModelState {
     if (!basePreset) return null;
 
     const cleanLang = (languageCode || 'en').toLowerCase().trim();
-    const langName = getLanguageName(cleanLang);
+    const isWhistle =
+      basePreset.architecture === 'whistle' ||
+      basePreset.baseId === 'whistle' ||
+      basePreset.id === 'whistle';
+    const langName = isWhistle
+      ? getWhistleLanguageName(cleanLang)
+      : getLanguageName(cleanLang);
     const instanceId = `${basePreset.baseId || basePreset.id}-${cleanLang}`;
     const instanceTitle = `${basePreset.baseTitle || basePreset.title} (${langName})`;
 
@@ -327,7 +401,7 @@ class ModelState {
     for (const preset of AVAILABLE_PRESETS) {
       await this.addPresetModel(preset.id, 'en', false);
     }
-    appState.statusMessage = 'Added official Whisper models to library.';
+    appState.statusMessage = 'Added official models to library.';
   }
 
   async clearModelCache(modelIdentifier, altIdentifier = '') {
@@ -391,7 +465,11 @@ class ModelState {
         );
         let lang = 'en';
         if (!base) {
-          if (pId.startsWith('whisper-base')) {
+          if (pId.startsWith('whistle')) {
+            base = AVAILABLE_PRESETS.find((p) => p.baseId === 'whistle');
+            const dashIdx = pId.lastIndexOf('-');
+            if (dashIdx !== -1) lang = pId.slice(dashIdx + 1);
+          } else if (pId.startsWith('whisper-base')) {
             base = AVAILABLE_PRESETS.find((p) => p.baseId === 'whisper-base');
             const dashIdx = pId.lastIndexOf('-');
             if (dashIdx !== -1) lang = pId.slice(dashIdx + 1);
@@ -404,7 +482,11 @@ class ModelState {
           lang = base.language || 'en';
         }
         if (base) {
-          const langName = getLanguageName(lang);
+          const isWhistle =
+            base.architecture === 'whistle' || base.baseId === 'whistle';
+          const langName = isWhistle
+            ? getWhistleLanguageName(lang)
+            : getLanguageName(lang);
           activePresets.push({
             ...base,
             id: pId,
@@ -514,9 +596,18 @@ class ModelState {
     const onnxFiles = entries
       .filter((e) => e.path.toLowerCase().endsWith('.onnx'))
       .map((e) => e.path);
+    const cactFiles = entries
+      .filter((e) => e.path.toLowerCase().endsWith('.cact'))
+      .map((e) => e.path);
 
+    const isCactModel = cactFiles.length > 0;
     let detectedDtype = 'q8';
-    if (onnxFiles.some((p) => p.includes('quantized') || p.includes('_q8') || p.includes('_q4'))) {
+    let architecture = 'whisper';
+
+    if (isCactModel) {
+      detectedDtype = 'wasm';
+      architecture = 'whistle';
+    } else if (onnxFiles.some((p) => p.includes('quantized') || p.includes('_q8') || p.includes('_q4'))) {
       detectedDtype = 'q8';
     } else if (onnxFiles.some((p) => p.includes('_fp16'))) {
       detectedDtype = 'fp16';
@@ -524,15 +615,23 @@ class ModelState {
       detectedDtype = 'fp32';
     }
 
+    const isValid = (hasConfig && onnxFiles.length > 0) || isCactModel;
+    const defaultName = isCactModel
+      ? cactFiles[0].split('/').pop().replace(/\.cact$/i, '')
+      : 'selected-folder';
+
     return {
       entries,
-      topFolderName: topFolderName || 'selected-folder',
+      topFolderName: topFolderName || defaultName,
       hasConfig,
       hasTokenizer,
       hasPreprocessor,
       onnxFiles,
+      cactFiles,
+      isCact: isCactModel,
+      architecture,
       totalFiles: entries.length,
-      isValid: hasConfig && onnxFiles.length > 0,
+      isValid,
       detectedDtype,
     };
   }
@@ -545,11 +644,28 @@ class ModelState {
     files = [],
     language = 'en',
     dtype = 'q8',
+    architecture = 'whisper',
   }) {
     const id = 'model_' + Date.now();
     const cleanTitle = title?.trim() || folderName || modelId || 'Custom Model';
     const cleanLang = language?.trim() || 'en';
-    const normalizedDtype = dtype === 'q4' ? 'q8' : (dtype || 'q8');
+
+    const isWhistle =
+      architecture === 'whistle' ||
+      dtype === 'wasm' ||
+      cleanTitle.toLowerCase().includes('whistle') ||
+      (modelId && modelId.toLowerCase().includes('whistle')) ||
+      (Array.isArray(files) &&
+        files.some((f) =>
+          (f.path || f.file?.name || '').toLowerCase().endsWith('.cact'),
+        ));
+
+    const finalArchitecture = isWhistle ? 'whistle' : 'whisper';
+    const normalizedDtype = isWhistle
+      ? 'wasm'
+      : dtype === 'q4'
+        ? 'q8'
+        : dtype || 'q8';
 
     const record = {
       id,
@@ -558,7 +674,9 @@ class ModelState {
       modelId: modelId?.trim() || '',
       folderName: folderName || '',
       language: cleanLang,
+      architecture: finalArchitecture,
       dtype: normalizedDtype,
+      device: isWhistle ? 'wasm' : undefined,
       fileCount: Array.isArray(files) ? files.length : 0,
       isPreset: false,
       createdAt: new Date().toISOString(),
@@ -662,6 +780,15 @@ class ModelState {
     appState.statusMessage = 'Loading model...';
 
     try {
+      const isWhistle =
+        this.selectedModel?.architecture === 'whistle' ||
+        this.modelDtype === 'wasm' ||
+        (this.hubModelId && this.hubModelId.toLowerCase().includes('whistle')) ||
+        (this.rawLocalFiles &&
+          this.rawLocalFiles.some((f) =>
+            (f.path || f.file?.name || '').toLowerCase().endsWith('.cact'),
+          ));
+
       worker.postMessage({
         type: 'load',
         payload: {
@@ -669,8 +796,9 @@ class ModelState {
           modelId: this.hubModelId.trim() || MODEL_ID,
           folderName: this.localFolderName,
           files: this.rawLocalFiles,
-          dtype: this.modelDtype,
-          device: this.preferredDevice,
+          architecture: isWhistle ? 'whistle' : 'whisper',
+          dtype: isWhistle ? 'wasm' : this.modelDtype,
+          device: isWhistle ? 'wasm' : this.preferredDevice,
         },
       });
     } catch (err) {
