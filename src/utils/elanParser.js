@@ -153,6 +153,22 @@ export function parseEaf(xmlString, fileName = 'unknown.eaf') {
     }
   });
 
+  // Extract Linguistic Types & Constraints/Stereotypes
+  const linguisticTypeMap = new Map();
+  const ltElements = xmlDoc.querySelectorAll('LINGUISTIC_TYPE');
+  ltElements.forEach((el) => {
+    const id = el.getAttribute('LINGUISTIC_TYPE_ID');
+    if (id) {
+      const isTimeAlignable = el.getAttribute('TIME_ALIGNABLE') === 'true';
+      const constraints = el.getAttribute('CONSTRAINTS') || '';
+      linguisticTypeMap.set(id, {
+        id,
+        isTimeAlignable,
+        constraints,
+      });
+    }
+  });
+
   // Map of annotationId -> { start, end, text } for resolving REF_ANNOTATION
   const annotationMap = new Map();
 
@@ -167,6 +183,13 @@ export function parseEaf(xmlString, fileName = 'unknown.eaf') {
     const linguisticType = tierEl.getAttribute('LINGUISTIC_TYPE_REF') || '';
     const participant = tierEl.getAttribute('PARTICIPANT') || '';
     const annotator = tierEl.getAttribute('ANNOTATOR') || '';
+
+    const ltInfo = linguisticTypeMap.get(linguisticType);
+    let stereotype = ltInfo?.constraints || '';
+    if (!stereotype) {
+      stereotype = parentRef ? 'Symbolic_Association' : 'None';
+    }
+    const isTimeAlignable = ltInfo ? ltInfo.isTimeAlignable : !parentRef;
 
     const rawAnnotations = [];
     const annotationNodes = tierEl.querySelectorAll('ANNOTATION');
@@ -184,7 +207,15 @@ export function parseEaf(xmlString, fileName = 'unknown.eaf') {
         const end = ts2 && timeSlots.has(ts2) ? timeSlots.get(ts2) : null;
 
         if (start !== null && end !== null) {
-          const annObj = { id: aid, start, end, text, isRef: false, parentAid: null };
+          const annObj = {
+            id: aid,
+            start,
+            end,
+            text,
+            isRef: false,
+            parentAid: null,
+            prevAid: null,
+          };
           rawAnnotations.push(annObj);
           if (aid) annotationMap.set(aid, annObj);
         }
@@ -193,6 +224,7 @@ export function parseEaf(xmlString, fileName = 'unknown.eaf') {
         if (ref) {
           const aid = ref.getAttribute('ANNOTATION_ID');
           const parentAid = ref.getAttribute('ANNOTATION_REF');
+          const prevAid = ref.getAttribute('PREVIOUS_ANNOTATION') || null;
           const textValEl = ref.querySelector('ANNOTATION_VALUE');
           const text = textValEl ? textValEl.textContent || '' : '';
 
@@ -205,6 +237,7 @@ export function parseEaf(xmlString, fileName = 'unknown.eaf') {
               text,
               isRef: true,
               parentAid,
+              prevAid,
             };
             rawAnnotations.push(annObj);
             if (aid) annotationMap.set(aid, annObj);
@@ -213,38 +246,96 @@ export function parseEaf(xmlString, fileName = 'unknown.eaf') {
       }
     });
 
-    // 4. Handle Parent-Child sub-tier alignment / interval concatenation
-    // When sub-tiers share the same interval, concatenate text
+    // 4. Handle Sub-Tier Ordering & Annotation Processing
     const processedAnnotations = [];
-    let tempAnn = null;
 
-    for (const ann of rawAnnotations) {
-      if (!ann.isRef) {
-        processedAnnotations.push({
-          id: ann.id,
-          start: ann.start,
-          end: ann.end,
-          text: ann.text,
-          isRef: false,
-          parentAid: null,
-        });
-      } else {
-        // Child tier annotation
-        if (!tempAnn) {
-          tempAnn = { id: ann.id, start: ann.start, end: ann.end, text: ann.text, isRef: true, parentAid: ann.parentAid };
-        } else if (ann.start === tempAnn.start && ann.end === tempAnn.end) {
-          tempAnn.text = `${tempAnn.text} ${ann.text}`.trim();
-        } else {
-          processedAnnotations.push(tempAnn);
-          tempAnn = { id: ann.id, start: ann.start, end: ann.end, text: ann.text, isRef: true, parentAid: ann.parentAid };
+    if (stereotype === 'Symbolic_Subdivision') {
+      // Reconstruct order using PREVIOUS_ANNOTATION chaining per parent
+      const byParent = new Map();
+      for (const ann of rawAnnotations) {
+        const p = ann.parentAid || '__root__';
+        if (!byParent.has(p)) byParent.set(p, []);
+        byParent.get(p).push(ann);
+      }
+      for (const group of byParent.values()) {
+        if (group.length <= 1) {
+          processedAnnotations.push(...group);
+          continue;
+        }
+        const nextMap = new Map();
+        let head = null;
+        for (const ann of group) {
+          if (ann.prevAid) {
+            nextMap.set(ann.prevAid, ann);
+          } else if (!head) {
+            head = ann;
+          }
+        }
+        if (!head) head = group[0];
+        const visited = new Set();
+        let curr = head;
+        while (curr && !visited.has(curr.id)) {
+          visited.add(curr.id);
+          processedAnnotations.push(curr);
+          curr = nextMap.get(curr.id);
+        }
+        for (const ann of group) {
+          if (!visited.has(ann.id)) {
+            processedAnnotations.push(ann);
+          }
         }
       }
-    }
-    if (tempAnn) {
-      processedAnnotations.push(tempAnn);
+    } else {
+      // For sentence-level sub-tiers or alignable tiers, merge same-interval annotations
+      let tempAnn = null;
+      for (const ann of rawAnnotations) {
+        if (!ann.isRef) {
+          processedAnnotations.push({
+            id: ann.id,
+            start: ann.start,
+            end: ann.end,
+            text: ann.text,
+            isRef: false,
+            parentAid: null,
+            prevAid: null,
+          });
+        } else {
+          if (!tempAnn) {
+            tempAnn = {
+              id: ann.id,
+              start: ann.start,
+              end: ann.end,
+              text: ann.text,
+              isRef: true,
+              parentAid: ann.parentAid,
+              prevAid: ann.prevAid,
+            };
+          } else if (
+            ann.start === tempAnn.start &&
+            ann.end === tempAnn.end &&
+            ann.parentAid === tempAnn.parentAid
+          ) {
+            tempAnn.text = `${tempAnn.text} ${ann.text}`.trim();
+          } else {
+            processedAnnotations.push(tempAnn);
+            tempAnn = {
+              id: ann.id,
+              start: ann.start,
+              end: ann.end,
+              text: ann.text,
+              isRef: true,
+              parentAid: ann.parentAid,
+              prevAid: ann.prevAid,
+            };
+          }
+        }
+      }
+      if (tempAnn) {
+        processedAnnotations.push(tempAnn);
+      }
     }
 
-    // Sort chronologically
+    // Sort chronologically (stable for equal timestamps)
     processedAnnotations.sort((a, b) => a.start - b.start);
 
     for (const ann of processedAnnotations) {
@@ -260,6 +351,8 @@ export function parseEaf(xmlString, fileName = 'unknown.eaf') {
       tierId,
       parentRef,
       linguisticType,
+      stereotype,
+      isTimeAlignable,
       participant,
       annotator,
       sampleText: processedAnnotations.find((a) => a.text && a.text.trim())?.text || '',

@@ -145,5 +145,111 @@ describe('ELAN import with annotators and main tier title', () => {
     expect(compiled.segments[0].subTexts['1']).toBe('How are you');
     expect(compiled.subTiers[0].annotator).toBe('John Doe');
   });
+
+  it('imports Symbolic_Subdivision and Symbolic_Association into word and sentence sub-tiers with exact token arrays', () => {
+    const rawXml = `<?xml version="1.0" encoding="UTF-8"?>
+<ANNOTATION_DOCUMENT AUTHOR="Linguist" DATE="2026-11-05T00:00:00" VERSION="3.0" FORMAT="3.0">
+  <HEADER TIME_UNITS="milliseconds" />
+  <TIME_ORDER>
+    <TIME_SLOT TIME_SLOT_ID="ts1" TIME_VALUE="500" />
+    <TIME_SLOT TIME_SLOT_ID="ts2" TIME_VALUE="3500" />
+  </TIME_ORDER>
+  <TIER TIER_ID="Speaker1" PARTICIPANT="Speaker1" LINGUISTIC_TYPE_REF="default-lt">
+    <ANNOTATION>
+      <ALIGNABLE_ANNOTATION ANNOTATION_ID="a1" TIME_SLOT_REF1="ts1" TIME_SLOT_REF2="ts2">
+        <ANNOTATION_VALUE>The quick foxes</ANNOTATION_VALUE>
+      </ALIGNABLE_ANNOTATION>
+    </ANNOTATION>
+  </TIER>
+  <TIER TIER_ID="words@Speaker1" PARENT_REF="Speaker1" PARTICIPANT="Speaker1" LINGUISTIC_TYPE_REF="sym-sub-lt">
+    <ANNOTATION>
+      <REF_ANNOTATION ANNOTATION_ID="a2" ANNOTATION_REF="a1">
+        <ANNOTATION_VALUE>The</ANNOTATION_VALUE>
+      </REF_ANNOTATION>
+    </ANNOTATION>
+    <ANNOTATION>
+      <REF_ANNOTATION ANNOTATION_ID="a3" ANNOTATION_REF="a1" PREVIOUS_ANNOTATION="a2">
+        <ANNOTATION_VALUE>quick</ANNOTATION_VALUE>
+      </REF_ANNOTATION>
+    </ANNOTATION>
+    <ANNOTATION>
+      <REF_ANNOTATION ANNOTATION_ID="a4" ANNOTATION_REF="a1" PREVIOUS_ANNOTATION="a3">
+        <ANNOTATION_VALUE>foxes</ANNOTATION_VALUE>
+      </REF_ANNOTATION>
+    </ANNOTATION>
+  </TIER>
+  <TIER TIER_ID="POS@Speaker1" PARENT_REF="words@Speaker1" LINGUISTIC_TYPE_REF="sym-assoc-lt">
+    <ANNOTATION>
+      <REF_ANNOTATION ANNOTATION_ID="a5" ANNOTATION_REF="a2">
+        <ANNOTATION_VALUE>DET</ANNOTATION_VALUE>
+      </REF_ANNOTATION>
+    </ANNOTATION>
+    <ANNOTATION>
+      <REF_ANNOTATION ANNOTATION_ID="a6" ANNOTATION_REF="a3">
+        <ANNOTATION_VALUE>ADJ</ANNOTATION_VALUE>
+      </REF_ANNOTATION>
+    </ANNOTATION>
+    <ANNOTATION>
+      <REF_ANNOTATION ANNOTATION_ID="a7" ANNOTATION_REF="a4">
+        <ANNOTATION_VALUE>NOUN</ANNOTATION_VALUE>
+      </REF_ANNOTATION>
+    </ANNOTATION>
+  </TIER>
+  <TIER TIER_ID="Translation@Speaker1" PARENT_REF="Speaker1" LINGUISTIC_TYPE_REF="sym-assoc-lt">
+    <ANNOTATION>
+      <REF_ANNOTATION ANNOTATION_ID="a8" ANNOTATION_REF="a1">
+        <ANNOTATION_VALUE>Die schnellen Füchse</ANNOTATION_VALUE>
+      </REF_ANNOTATION>
+    </ANNOTATION>
+  </TIER>
+  <LINGUISTIC_TYPE LINGUISTIC_TYPE_ID="default-lt" TIME_ALIGNABLE="true" />
+  <LINGUISTIC_TYPE LINGUISTIC_TYPE_ID="sym-sub-lt" CONSTRAINTS="Symbolic_Subdivision" TIME_ALIGNABLE="false" />
+  <LINGUISTIC_TYPE LINGUISTIC_TYPE_ID="sym-assoc-lt" CONSTRAINTS="Symbolic_Association" TIME_ALIGNABLE="false" />
+</ANNOTATION_DOCUMENT>`;
+
+    const parsed = parseEaf(rawXml, 'foxes.eaf');
+
+    // 1. Check parsed stereotypes
+    const wordsTier = parsed.tiers.find((t) => t.tierId === 'words@Speaker1');
+    const posTier = parsed.tiers.find((t) => t.tierId === 'POS@Speaker1');
+    const transTier = parsed.tiers.find((t) => t.tierId === 'Translation@Speaker1');
+
+    expect(wordsTier.stereotype).toBe('Symbolic_Subdivision');
+    expect(posTier.stereotype).toBe('Symbolic_Association');
+    expect(transTier.stereotype).toBe('Symbolic_Association');
+
+    // 2. Check detected defaults
+    const detected = detectTierDefaults(parsed);
+    expect(detected.speakers).toHaveLength(1);
+    expect(detected.speakers[0].name).toBe('Speaker1');
+
+    // POS should be detected as 'word' type, Translation as 'sentence'
+    const posSubTier = detected.subTiers.find((st) => st.name === 'POS');
+    const transSubTier = detected.subTiers.find((st) => st.name === 'Translation');
+    expect(posSubTier).toBeDefined();
+    expect(posSubTier.type).toBe('word');
+    expect(transSubTier).toBeDefined();
+    expect(transSubTier.type).toBe('sentence');
+
+    // 3. Compile to project
+    const compiled = compileElanToProject({
+      eafData: parsed,
+      tierConfigs: detected.tierConfigs,
+      speakers: detected.speakers,
+      subTiers: detected.subTiers,
+    });
+
+    expect(compiled.segments).toHaveLength(1);
+    const seg = compiled.segments[0];
+    expect(seg.text).toBe('The quick foxes');
+    expect(seg.start).toBe(0.5);
+    expect(seg.end).toBe(3.5);
+
+    // POS word annotations array mapped 1:1 through the Symbolic_Subdivision hierarchy
+    expect(seg.subTexts[String(posSubTier.id)]).toEqual(['DET', 'ADJ', 'NOUN']);
+
+    // Sentence translation mapped to string
+    expect(seg.subTexts[String(transSubTier.id)]).toBe('Die schnellen Füchse');
+  });
 });
 

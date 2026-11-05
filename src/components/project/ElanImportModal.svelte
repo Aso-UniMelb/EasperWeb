@@ -858,6 +858,28 @@
                                   {tier.annotator}
                                 </span>
                               {/if}
+                              {#if tier.stereotype && tier.stereotype !== 'None'}
+                                <span
+                                  class="badge-stereotype badge-stereotype-{tier.stereotype.toLowerCase()}"
+                                  title="ELAN Constraint Stereotype: {tier.stereotype}"
+                                >
+                                  {#if tier.stereotype === 'Symbolic_Subdivision'}
+                                    <i class="fa-solid fa-layer-group"></i>
+                                    Symbolic Subdivision
+                                  {:else if tier.stereotype === 'Symbolic_Association'}
+                                    <i class="fa-solid fa-link"></i>
+                                    Symbolic Association
+                                  {:else if tier.stereotype === 'Time_Subdivision'}
+                                    <i class="fa-solid fa-clock"></i>
+                                    Time Subdivision
+                                  {:else if tier.stereotype === 'Included_In'}
+                                    <i class="fa-solid fa-arrows-left-right-to-line"></i>
+                                    Included In
+                                  {:else}
+                                    {tier.stereotype}
+                                  {/if}
+                                </span>
+                              {/if}
                             </div>
                             {#if tier.sampleText}
                               <p class="tier-sample" title={tier.sampleText}>
@@ -1676,6 +1698,64 @@
     display: inline-flex;
     align-items: center;
     gap: 3px;
+  }
+
+  .badge-stereotype {
+    font-size: 0.68rem;
+    padding: 1px 5px;
+    border-radius: 4px;
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    font-weight: 500;
+  }
+
+  .badge-stereotype-symbolic_subdivision {
+    background: #f3e8ff;
+    color: #7e22ce;
+    border: 1px solid rgba(147, 51, 234, 0.25);
+  }
+
+  :global([data-theme='dark']) .badge-stereotype-symbolic_subdivision {
+    background: rgba(147, 51, 234, 0.2);
+    color: #d8b4fe;
+    border-color: rgba(168, 85, 247, 0.35);
+  }
+
+  .badge-stereotype-symbolic_association {
+    background: #eff6ff;
+    color: #1d4ed8;
+    border: 1px solid rgba(59, 130, 246, 0.25);
+  }
+
+  :global([data-theme='dark']) .badge-stereotype-symbolic_association {
+    background: rgba(59, 130, 246, 0.2);
+    color: #93c5fd;
+    border-color: rgba(96, 165, 250, 0.35);
+  }
+
+  .badge-stereotype-time_subdivision {
+    background: #ecfdf5;
+    color: #047857;
+    border: 1px solid rgba(16, 185, 129, 0.25);
+  }
+
+  :global([data-theme='dark']) .badge-stereotype-time_subdivision {
+    background: rgba(16, 185, 129, 0.2);
+    color: #6ee7b7;
+    border-color: rgba(52, 211, 153, 0.35);
+  }
+
+  .badge-stereotype-included_in {
+    background: #fffbeb;
+    color: #b45309;
+    border: 1px solid rgba(245, 158, 11, 0.25);
+  }
+
+  :global([data-theme='dark']) .badge-stereotype-included_in {
+    background: rgba(245, 158, 11, 0.2);
+    color: #fcd34d;
+    border-color: rgba(251, 191, 36, 0.35);
   }
 
   :global([data-theme='dark']) .badge-annotator {

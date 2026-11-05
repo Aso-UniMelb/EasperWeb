@@ -10,7 +10,13 @@
  * matching for independent time-aligned layers.
  */
 
-import { MAX_SUB_TIERS, SUB_TIER_PRESETS, normalizeSubTiers } from './subTiers.js';
+import {
+  MAX_SUB_TIERS,
+  SUB_TIER_PRESETS,
+  SUB_TIER_TYPE_WORD,
+  SUB_TIER_TYPE_SENTENCE,
+  normalizeSubTiers,
+} from './subTiers.js';
 import { getSpeakerInitials } from './speakers.js';
 
 function cleanSpeechText(str) {
@@ -114,9 +120,16 @@ export function detectTierDefaults(eafData) {
   const detectedSubTierNames = new Set();
   const subTierMap = new Map(); // subTierName.toLowerCase() -> subTierId
   const subTierAnnotatorMap = new Map(); // subTierName.toLowerCase() -> annotator
+  const subTierTypeMap = new Map(); // subTierName.toLowerCase() -> 'word' | 'sentence'
 
-  // Helper to register a sub-tier name and optional annotator
-  const registerSubTier = (rawName, annotator = '') => {
+  const tierMap = new Map(tiers.map((t) => [t.tierId, t]));
+
+  // Helper to register a sub-tier name, optional annotator, and type
+  const registerSubTier = (
+    rawName,
+    annotator = '',
+    type = SUB_TIER_TYPE_SENTENCE,
+  ) => {
     const clean = (rawName || '').trim();
     if (!clean) return null;
     const lower = clean.toLowerCase();
@@ -124,12 +137,16 @@ export function detectTierDefaults(eafData) {
       if (annotator?.trim() && !subTierAnnotatorMap.get(lower)) {
         subTierAnnotatorMap.set(lower, annotator.trim());
       }
+      if (type === SUB_TIER_TYPE_WORD) {
+        subTierTypeMap.set(lower, SUB_TIER_TYPE_WORD);
+      }
       return subTierMap.get(lower);
     }
     if (detectedSubTierNames.size < MAX_SUB_TIERS) {
       const id = detectedSubTierNames.size + 1;
       detectedSubTierNames.add(clean);
       subTierMap.set(lower, id);
+      subTierTypeMap.set(lower, type);
       if (annotator?.trim()) {
         subTierAnnotatorMap.set(lower, annotator.trim());
       }
@@ -140,14 +157,33 @@ export function detectTierDefaults(eafData) {
 
   // Inspect dependent tiers for common patterns
   for (const t of dependentTiers) {
-    // Pattern: "SubTierName@SpeakerName"
     const atMatch = t.tierId.match(/^([^@]+)@/);
-    if (atMatch) {
-      registerSubTier(atMatch[1], t.annotator);
-    } else if (t.tierId) {
-      // Check if matches known presets or tier name
-      registerSubTier(t.tierId, t.annotator);
+    const subName = atMatch ? atMatch[1].trim() : t.tierId.trim();
+
+    const parentTier = tierMap.get(t.parentRef);
+    let type = SUB_TIER_TYPE_SENTENCE;
+    if (
+      t.stereotype === 'Symbolic_Subdivision' ||
+      parentTier?.stereotype === 'Symbolic_Subdivision' ||
+      /^(pos|morph|morphs|morphemes?|gloss|glosses|tokens?|words?)$/i.test(
+        subName,
+      )
+    ) {
+      type = SUB_TIER_TYPE_WORD;
     }
+
+    // If t is an intermediary subdivision tier (e.g. morphs@Speaker) with child tiers,
+    // don't register it as a sub-tier if child tiers already exist under it
+    const hasChildren = dependentTiers.some((other) => other.parentRef === t.tierId);
+    if (
+      hasChildren &&
+      /^(morphs?|morphemes?|words?)$/i.test(subName) &&
+      t.stereotype === 'Symbolic_Subdivision'
+    ) {
+      continue;
+    }
+
+    registerSubTier(subName, t.annotator, type);
   }
 
   // If no sub-tiers were detected, check if any root tiers look like sub-tiers
@@ -158,17 +194,24 @@ export function detectTierDefaults(eafData) {
         (p) => p.toLowerCase() === t.tierId.trim().toLowerCase(),
       );
       if (isPreset) {
-        registerSubTier(t.tierId.trim(), t.annotator);
+        const type = /^(pos|morph|morphs|gloss)$/i.test(t.tierId.trim())
+          ? SUB_TIER_TYPE_WORD
+          : SUB_TIER_TYPE_SENTENCE;
+        registerSubTier(t.tierId.trim(), t.annotator, type);
       }
     }
   }
 
-  // Build final subTiers array with annotator info preserved
-  const subTiers = Array.from(detectedSubTierNames).map((name) => ({
-    id: subTierMap.get(name.toLowerCase()),
-    name,
-    annotator: subTierAnnotatorMap.get(name.toLowerCase()) || '',
-  }));
+  // Build final subTiers array with annotator and type info preserved
+  const subTiers = Array.from(detectedSubTierNames).map((name) => {
+    const lower = name.toLowerCase();
+    return {
+      id: subTierMap.get(lower),
+      name,
+      type: subTierTypeMap.get(lower) || SUB_TIER_TYPE_SENTENCE,
+      annotator: subTierAnnotatorMap.get(lower) || '',
+    };
+  });
 
   // 4. Build Tier Configuration List
   const tierConfigs = tiers.map((t) => {
@@ -181,10 +224,16 @@ export function detectTierDefaults(eafData) {
     const subNameCandidate = atMatch ? atMatch[1].trim() : t.tierId.trim();
     const matchedSubId = subTierMap.get(subNameCandidate.toLowerCase()) || null;
 
+    const hasChildTiers = tiers.some((other) => other.parentRef === t.tierId);
+    const isIntermediarySubdivision =
+      t.stereotype === 'Symbolic_Subdivision' &&
+      hasChildTiers &&
+      /^(morphs?|morphemes?|words?)$/i.test(subNameCandidate);
+
     let role = 'ignore';
     let speakerId = 1;
     let subTierId = null;
-    let included = annotationCount > 0;
+    let included = annotationCount > 0 && !isIntermediarySubdivision;
 
     if (isRoot) {
       // Root tier: check if it was assigned to a speaker
@@ -217,6 +266,8 @@ export function detectTierDefaults(eafData) {
       annotator: t.annotator || '',
       parentRef: t.parentRef || null,
       linguisticType: t.linguisticType || '',
+      stereotype: t.stereotype || '',
+      isTimeAlignable: t.isTimeAlignable ?? !t.parentRef,
       annotationCount,
       sampleText,
       included,
@@ -278,6 +329,61 @@ export function compileElanToProject({
     tierDataMap.set(t.tierId, t);
   }
 
+  // Map all annotations across all tiers by ID for hierarchy resolution
+  const allAnnMap = new Map();
+  for (const t of eafData?.tiers || []) {
+    for (const ann of t.annotations || []) {
+      if (ann && ann.id) {
+        allAnnMap.set(ann.id, {
+          ...ann,
+          tierId: t.tierId,
+          stereotype: t.stereotype || '',
+        });
+      }
+    }
+  }
+
+  // Helper to walk up parentAid chain (e.g. POS tag -> Word token -> Utterance segment)
+  const resolveSegmentForAnnotation = (ann) => {
+    if (!ann) return null;
+    // 1. Direct parent is a segment
+    if (ann.parentAid && annIdToSegment.has(ann.parentAid)) {
+      return {
+        segment: annIdToSegment.get(ann.parentAid),
+        isDirectChild: true,
+        subdivisionTokenIndex: -1,
+        totalTokens: 0,
+      };
+    }
+
+    // 2. Walk up parentAid chain (e.g. POS -> Word -> Utterance)
+    let curr = ann;
+    const visited = new Set();
+    while (curr && curr.parentAid && !visited.has(curr.id)) {
+      visited.add(curr.id);
+      const parent = allAnnMap.get(curr.parentAid);
+      if (!parent) break;
+      if (annIdToSegment.has(parent.parentAid)) {
+        const seg = annIdToSegment.get(parent.parentAid);
+        const parentTier = tierDataMap.get(parent.tierId);
+        const siblings = parentTier
+          ? (parentTier.annotations || []).filter(
+              (a) => a.parentAid === parent.parentAid,
+            )
+          : [];
+        const tokenIndex = siblings.findIndex((a) => a.id === parent.id);
+        return {
+          segment: seg,
+          isDirectChild: false,
+          subdivisionTokenIndex: tokenIndex >= 0 ? tokenIndex : 0,
+          totalTokens: siblings.length,
+        };
+      }
+      curr = parent;
+    }
+    return null;
+  };
+
   // 1. Process Speaker Utterance Tiers into Segments
   const rawSegments = [];
   const annIdToSegment = new Map();
@@ -324,15 +430,46 @@ export function compileElanToProject({
     const tier = tierDataMap.get(cfg.tierId);
     if (!tier || !Array.isArray(tier.annotations)) continue;
 
+    const targetSubTier = cleanSubTiers.find(
+      (st) => String(st.id) === subTierIdStr,
+    );
+    const isWordSubTier = targetSubTier?.type === SUB_TIER_TYPE_WORD;
+
+    // Direct Symbolic_Subdivision on a word sub-tier:
+    // Group all annotations by parentAid so we preserve exact token sequence
+    if (isWordSubTier && tier.stereotype === 'Symbolic_Subdivision') {
+      const byParent = new Map();
+      for (const ann of tier.annotations) {
+        const textVal = cleanSpeechText(ann.text);
+        if (!textVal) continue;
+        const pAid = ann.parentAid;
+        if (!pAid) continue;
+        if (!byParent.has(pAid)) byParent.set(pAid, []);
+        byParent.get(pAid).push(textVal);
+      }
+      for (const [pAid, tokens] of byParent.entries()) {
+        const seg = annIdToSegment.get(pAid);
+        if (seg) {
+          seg.subTexts[subTierIdStr] = tokens;
+        }
+      }
+      continue;
+    }
+
     for (const ann of tier.annotations) {
       const subText = cleanSpeechText(ann.text);
       if (!subText) continue;
 
       let matchedSeg = null;
+      let tokenIndex = -1;
+      let totalTokens = 0;
 
-      // Method 1: Exact REF_ANNOTATION match via parentAid
-      if (ann.parentAid && annIdToSegment.has(ann.parentAid)) {
-        matchedSeg = annIdToSegment.get(ann.parentAid);
+      // Method 1: Hierarchy traversal via resolveSegmentForAnnotation
+      const resolved = resolveSegmentForAnnotation(ann);
+      if (resolved) {
+        matchedSeg = resolved.segment;
+        tokenIndex = resolved.subdivisionTokenIndex;
+        totalTokens = resolved.totalTokens;
       }
 
       // Method 2: Time-overlap fallback (for independent or time-subdivided sub-tiers)
@@ -344,7 +481,10 @@ export function compileElanToProject({
         let bestCandidate = null;
 
         for (const seg of rawSegments) {
-          const overlap = Math.max(0, Math.min(seg.end, annEnd) - Math.max(seg.start, annStart));
+          const overlap = Math.max(
+            0,
+            Math.min(seg.end, annEnd) - Math.max(seg.start, annStart),
+          );
           if (overlap > bestOverlap) {
             bestOverlap = overlap;
             bestCandidate = seg;
@@ -357,8 +497,21 @@ export function compileElanToProject({
       }
 
       if (matchedSeg) {
-        const existing = matchedSeg.subTexts[subTierIdStr];
-        matchedSeg.subTexts[subTierIdStr] = existing ? `${existing} ${subText}`.trim() : subText;
+        if (isWordSubTier && tokenIndex >= 0) {
+          if (!Array.isArray(matchedSeg.subTexts[subTierIdStr])) {
+            const initialLen = Math.max(totalTokens || 0, tokenIndex + 1);
+            matchedSeg.subTexts[subTierIdStr] = Array(initialLen).fill('');
+          }
+          while (matchedSeg.subTexts[subTierIdStr].length <= tokenIndex) {
+            matchedSeg.subTexts[subTierIdStr].push('');
+          }
+          matchedSeg.subTexts[subTierIdStr][tokenIndex] = subText;
+        } else {
+          const existing = matchedSeg.subTexts[subTierIdStr];
+          matchedSeg.subTexts[subTierIdStr] = existing
+            ? `${existing} ${subText}`.trim()
+            : subText;
+        }
       }
     }
   }

@@ -32,6 +32,7 @@ describe('ELAN export with word/morpheme sub-tiers', () => {
       subTiers,
       speakers,
       audioFileName: 'audio.wav',
+      subdivisionStereotype: 'Time_Subdivision',
     });
 
     // Verify XML contains linguistic types
@@ -107,6 +108,83 @@ describe('ELAN export with word/morpheme sub-tiers', () => {
     });
   });
 
+  it('exports word sub-tiers with Symbolic_Subdivision and chained PREVIOUS_ANNOTATION by default', () => {
+    const segments = [
+      {
+        id: 'seg-1',
+        start: 0,
+        end: 4.0,
+        speaker: 'Speaker1',
+        speakerId: 1,
+        text: 'book-s are here',
+        subTexts: {
+          '1': ['N', 'SUF', 'V', 'ADV'],
+        },
+      },
+    ];
+
+    const subTiers = [{ id: 1, name: 'POS', type: 'word' }];
+    const speakers = [{ id: 1, name: 'Speaker1', initials: 'S1' }];
+
+    // Default export (subdivisionStereotype defaults to 'Symbolic_Subdivision')
+    const xml = exportToEaf({
+      segments,
+      subTiers,
+      speakers,
+      audioFileName: 'audio.wav',
+    });
+
+    // Check Linguistic Types
+    expect(xml).toContain('LINGUISTIC_TYPE_ID="default-lt" TIME_ALIGNABLE="true"');
+    expect(xml).toContain(
+      'LINGUISTIC_TYPE_ID="sym-subdivision-lt" CONSTRAINTS="Symbolic_Subdivision" TIME_ALIGNABLE="false"',
+    );
+    expect(xml).toContain(
+      'LINGUISTIC_TYPE_ID="dependent-lt" CONSTRAINTS="Symbolic_Association" TIME_ALIGNABLE="false"',
+    );
+
+    // Check Tier Types
+    expect(xml).toContain(
+      '<TIER TIER_ID="morphs@Speaker1" PARENT_REF="Speaker1" PARTICIPANT="Speaker1" LINGUISTIC_TYPE_REF="sym-subdivision-lt">',
+    );
+    expect(xml).toContain(
+      '<TIER TIER_ID="POS@Speaker1" PARENT_REF="morphs@Speaker1" LINGUISTIC_TYPE_REF="dependent-lt">',
+    );
+
+    // Check PREVIOUS_ANNOTATION chaining on morphs tier
+    expect(xml).toContain('<REF_ANNOTATION ANNOTATION_ID="a2" ANNOTATION_REF="a1">');
+    expect(xml).toContain(
+      '<REF_ANNOTATION ANNOTATION_ID="a3" ANNOTATION_REF="a1" PREVIOUS_ANNOTATION="a2">',
+    );
+    expect(xml).toContain(
+      '<REF_ANNOTATION ANNOTATION_ID="a4" ANNOTATION_REF="a1" PREVIOUS_ANNOTATION="a3">',
+    );
+    expect(xml).toContain(
+      '<REF_ANNOTATION ANNOTATION_ID="a5" ANNOTATION_REF="a1" PREVIOUS_ANNOTATION="a4">',
+    );
+
+    // Check POS tags link 1:1 to morpheme annotations
+    expect(xml).toContain('<REF_ANNOTATION ANNOTATION_ID="a6" ANNOTATION_REF="a2">');
+    expect(xml).toContain('<REF_ANNOTATION ANNOTATION_ID="a7" ANNOTATION_REF="a3">');
+    expect(xml).toContain('<REF_ANNOTATION ANNOTATION_ID="a8" ANNOTATION_REF="a4">');
+    expect(xml).toContain('<REF_ANNOTATION ANNOTATION_ID="a9" ANNOTATION_REF="a5">');
+
+    // Parse back and verify extracted data
+    const parsed = parseEaf(xml, 'sym-test.eaf');
+    const morphTier = parsed.tiers.find((t) => t.tierId === 'morphs@Speaker1');
+    const posTier = parsed.tiers.find((t) => t.tierId === 'POS@Speaker1');
+
+    expect(morphTier.stereotype).toBe('Symbolic_Subdivision');
+    expect(morphTier.isTimeAlignable).toBe(false);
+    expect(morphTier.annotations).toHaveLength(4);
+    expect(morphTier.annotations.map((a) => a.text)).toEqual(['book', 's', 'are', 'here']);
+
+    expect(posTier.stereotype).toBe('Symbolic_Association');
+    expect(posTier.isTimeAlignable).toBe(false);
+    expect(posTier.annotations).toHaveLength(4);
+    expect(posTier.annotations.map((a) => a.text)).toEqual(['N', 'SUF', 'V', 'ADV']);
+  });
+
   it('preserves empty tags as empty annotations instead of dismissing them', () => {
     const segments = [
       {
@@ -163,7 +241,12 @@ describe('ELAN export with word/morpheme sub-tiers', () => {
 
     const speakers = [{ id: 1, name: 'Alice', initials: 'A' }];
 
-    const xml = exportToEaf({ segments, subTiers, speakers });
+    const xml = exportToEaf({
+      segments,
+      subTiers,
+      speakers,
+      subdivisionStereotype: 'Time_Subdivision',
+    });
     const parsed = parseEaf(xml, 'mixed.eaf');
 
     const aliceTier = parsed.tiers.find((t) => t.tierId === 'Alice');
