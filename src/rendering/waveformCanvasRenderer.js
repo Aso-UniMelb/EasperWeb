@@ -173,11 +173,34 @@ export function drawTile(state, tileIndex) {
         ctx.lineTo(width, ySel1);
         ctx.stroke();
 
-        ctx.fillStyle = '#f87171';
+        // Timestamp pill badge in ruler sidebar for interval start
+        const startText = formatTimeSec2(selStart);
         ctx.font = `bold ${width < 100 ? '8px' : '9px'} ui-monospace, SFMono-Regular, Menlo, monospace`;
+        const textMetrics = ctx.measureText(startText);
+        const badgeW = Math.max(textMetrics.width + 6, 44);
+        const badgeH = 13;
+        const badgeX = rulerWidth - 2 - badgeW;
+        const badgeY = Math.max(0, Math.min(totalHeight - badgeH, ySel1 - badgeH - 1));
+
+        ctx.save();
+        ctx.fillStyle = '#0f172a';
+        ctx.strokeStyle = '#ef4444';
+        ctx.lineWidth = 1;
+        ctx.setLineDash([]);
+        ctx.beginPath();
+        if (ctx.roundRect) {
+          ctx.roundRect(badgeX, badgeY, badgeW, badgeH, 3);
+        } else {
+          ctx.rect(badgeX, badgeY, badgeW, badgeH);
+        }
+        ctx.fill();
+        ctx.stroke();
+        ctx.restore();
+
+        ctx.fillStyle = '#fca5a5';
         ctx.textAlign = 'right';
-        ctx.textBaseline = 'bottom';
-        ctx.fillText(`▶ ${formatTimeSec(selStart)}`, rulerWidth - (width < 100 ? 2 : 4), ySel1 - 1);
+        ctx.textBaseline = 'middle';
+        ctx.fillText(startText, rulerWidth - 4, badgeY + badgeH / 2);
       }
 
       if (ySel2 >= tileTop && ySel2 <= tileBottom) {
@@ -186,11 +209,34 @@ export function drawTile(state, tileIndex) {
         ctx.lineTo(width, ySel2);
         ctx.stroke();
 
-        ctx.fillStyle = '#f87171';
+        // Timestamp pill badge in ruler sidebar for interval end
+        const endText = formatTimeSec2(selEnd);
         ctx.font = `bold ${width < 100 ? '8px' : '9px'} ui-monospace, SFMono-Regular, Menlo, monospace`;
+        const textMetrics = ctx.measureText(endText);
+        const badgeW = Math.max(textMetrics.width + 6, 44);
+        const badgeH = 13;
+        const badgeX = rulerWidth - 2 - badgeW;
+        const badgeY = Math.max(0, Math.min(totalHeight - badgeH, ySel2 + 1));
+
+        ctx.save();
+        ctx.fillStyle = '#0f172a';
+        ctx.strokeStyle = '#ef4444';
+        ctx.lineWidth = 1;
+        ctx.setLineDash([]);
+        ctx.beginPath();
+        if (ctx.roundRect) {
+          ctx.roundRect(badgeX, badgeY, badgeW, badgeH, 3);
+        } else {
+          ctx.rect(badgeX, badgeY, badgeW, badgeH);
+        }
+        ctx.fill();
+        ctx.stroke();
+        ctx.restore();
+
+        ctx.fillStyle = '#fca5a5';
         ctx.textAlign = 'right';
-        ctx.textBaseline = 'top';
-        ctx.fillText(`◀ ${formatTimeSec(selEnd)}`, rulerWidth - (width < 100 ? 2 : 4), ySel2 + 1);
+        ctx.textBaseline = 'middle';
+        ctx.fillText(endText, rulerWidth - 4, badgeY + badgeH / 2);
       }
 
       ctx.restore();

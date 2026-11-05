@@ -7,6 +7,8 @@ import {
   validateSegmentText,
   getValidationIssueAtOffset,
   parseAllowedTags,
+  scanAllSegmentsValidation,
+  applyBatchValidationFix,
 } from '../src/utils/segmentValidator.js';
 
 describe('segmentValidator', () => {
@@ -125,6 +127,40 @@ describe('segmentValidator', () => {
     const found = getValidationIssueAtOffset(issues, 9);
     expect(found).not.toBeNull();
     expect(found.text).toBe('gonna');
+  });
+
+  it('scans all segments in batch and returns aggregated summary', () => {
+    const rules = normalizeValidationRules({
+      validateTags: true,
+      allowedTags: ['<hes>', '<cough>'],
+      fixApostropheBacktick: true,
+      fixDoubleSpaces: true,
+    });
+
+    const segments = [
+      { id: 'seg-1', text: 'Hello  world <hes', start: 0, end: 2 },
+      { id: 'seg-2', text: 'Clean segment here', start: 2, end: 4 },
+      { id: 'seg-3', text: "It`s okay   now", start: 4, end: 6 },
+    ];
+
+    const summary = scanAllSegmentsValidation(segments, rules);
+    expect(summary.totalIssues).toBe(4); // 2 in seg-1 (double space, unclosed tag), 2 in seg-3 (backtick, 3 spaces)
+    expect(summary.affectedSegmentsCount).toBe(2);
+    expect(summary.flatIssues.length).toBe(4);
+    expect(summary.categoryCounts.tag).toBe(1);
+    expect(summary.categoryCounts.punctuation).toBe(3);
+  });
+
+  it('applies batch fixes for safe punctuation and spacing issues', () => {
+    const segments = [
+      { id: 'seg-1', text: 'Hello  world and it`s fine', start: 0, end: 2 },
+      { id: 'seg-2', text: "We don`t want   spaces", start: 2, end: 4 },
+    ];
+
+    const { updatedSegments, fixedCount } = applyBatchValidationFix(segments, 'all_safe');
+    expect(fixedCount).toBe(4);
+    expect(updatedSegments[0].text).toBe("Hello world and it's fine");
+    expect(updatedSegments[1].text).toBe("We don't want spaces");
   });
 });
 

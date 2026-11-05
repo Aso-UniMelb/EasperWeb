@@ -7,6 +7,10 @@
   import { transcriptState } from '../state/transcriptState.svelte.js';
   import { router } from '../services/router.svelte.js';
   import { lexiconState } from '../state/lexiconState.svelte.js';
+  import {
+    scanAllSegmentsValidation,
+    isValidationActive,
+  } from '../utils/segmentValidator.js';
 
   // The transcriber studio is the one view that trades the tab bar for project controls
   let isStudio = $derived(
@@ -20,6 +24,14 @@
   let exportMenuContainer = $state(null);
   let isAutomationMenuOpen = $state(false);
   let automationMenuContainer = $state(null);
+
+  const validationRules = $derived(
+    projectState.activeProject?.validationRules || null,
+  );
+  const isValidationRuleActive = $derived(isValidationActive(validationRules));
+  const validationSummary = $derived(
+    scanAllSegmentsValidation(transcriptState.segments, validationRules),
+  );
 
   function toggleProjectMenu(e) {
     if (e) e.stopPropagation();
@@ -753,6 +765,40 @@
                 </div>
                 <div class="item-desc">
                   Search and replace text in main transcription and sub-tiers
+                </div>
+              </div>
+            </button>
+
+            <!-- Validation Issues -->
+            <button
+              type="button"
+              class="automation-menu-item {transcriptState.activeDrawer ===
+              'validation'
+                ? 'active-item'
+                : ''}"
+              role="menuitem"
+              onclick={() => selectAutomationTool('validation')}
+              title="Inspect and fix transcription formatting, paralinguistic tags, and acronym validation issues"
+            >
+              <div class="item-icon-box icon-validation">
+                <i class="fa-solid fa-triangle-exclamation"></i>
+              </div>
+              <div class="item-text-box">
+                <div class="item-title-row">
+                  <span class="item-title">Validation Issues</span>
+                  {#if isValidationRuleActive && validationSummary.totalIssues > 0}
+                    <span class="item-status-pill pill-alert">
+                      {validationSummary.totalIssues}
+                    </span>
+                  {:else if isValidationRuleActive}
+                    <span class="item-status-pill pill-clean">0</span>
+                  {/if}
+                  {#if transcriptState.activeDrawer === 'validation'}
+                    <span class="item-status-pill">Active</span>
+                  {/if}
+                </div>
+                <div class="item-desc">
+                  Review and auto-fix formatting errors, tags, and custom rules
                 </div>
               </div>
             </button>

@@ -617,3 +617,148 @@ export function getValidationIssueAtOffset(issues, offset) {
   return null;
 }
 
+/**
+ * Scans all segments in the project and returns an aggregated validation summary.
+ * @param {Array<Object>} segments
+ * @param {Object} rawConfig
+ * @returns {{
+ *   totalIssues: number,
+ *   affectedSegmentsCount: number,
+ *   categoryCounts: { tag: number, punctuation: number, acronym: number, custom: number },
+ *   flatIssues: Array<{
+ *     issueId: string,
+ *     segmentId: string|number,
+ *     segmentIndex: number,
+ *     start: number,
+ *     end: number,
+ *     speaker: string,
+ *     speakerId: number,
+ *     issue: Object
+ *   }>,
+ *   segmentMap: Map<string|number, Array<Object>>
+ * }}
+ */
+export function scanAllSegmentsValidation(segments, rawConfig) {
+  const result = {
+    totalIssues: 0,
+    affectedSegmentsCount: 0,
+    categoryCounts: {
+      tag: 0,
+      punctuation: 0,
+      acronym: 0,
+      custom: 0,
+    },
+    flatIssues: [],
+    segmentMap: new Map(),
+  };
+
+  if (!Array.isArray(segments) || segments.length === 0) {
+    return result;
+  }
+
+  const isConfigActive = isValidationActive(rawConfig);
+  if (!isConfigActive) {
+    return result;
+  }
+
+  for (let idx = 0; idx < segments.length; idx++) {
+    const seg = segments[idx];
+    if (!seg || !seg.text) continue;
+
+    const { issues } = validateSegmentText(seg.text, rawConfig);
+    if (issues.length > 0) {
+      result.affectedSegmentsCount++;
+      result.totalIssues += issues.length;
+      result.segmentMap.set(seg.id, issues);
+
+      for (let issueIdx = 0; issueIdx < issues.length; issueIdx++) {
+        const iss = issues[issueIdx];
+        const cat = iss.type || 'custom';
+        if (result.categoryCounts[cat] !== undefined) {
+          result.categoryCounts[cat]++;
+        } else {
+          result.categoryCounts.custom++;
+        }
+
+        result.flatIssues.push({
+          issueId: `${seg.id}-${iss.start}-${iss.end}-${issueIdx}`,
+          segmentId: seg.id,
+          segmentIndex: idx + 1,
+          start: seg.start ?? 0,
+          end: seg.end ?? (seg.start ?? 0) + 1,
+          speaker: seg.speaker || `Speaker ${seg.speakerId || 1}`,
+          speakerId: Number(seg.speakerId) || 1,
+          issue: iss,
+        });
+      }
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Applies a single validation suggestion to a specific segment text.
+ * @param {string} text
+ * @param {Object} issue
+ * @param {string} suggestion
+ * @returns {string}
+ */
+export function applySingleValidationFix(text, issue, suggestion) {
+  if (typeof text !== 'string' || !issue || suggestion == null) {
+    return text;
+  }
+  const { start, end } = issue;
+  if (start < 0 || end > text.length || start > end) {
+    return text;
+  }
+  return text.slice(0, start) + suggestion + text.slice(end);
+}
+
+/**
+ * Performs batch auto-fixes on safe deterministic validation issues across segments.
+ * Supported types:
+ * - 'punctuation_apostrophe': replaces all backticks with standard apostrophes
+ * - 'punctuation_spaces': collapses multiple consecutive spaces into single spaces
+ * - 'all_safe': applies both apostrophe and space fixes
+ * @param {Array<Object>} segments
+ * @param {'all_safe'|'punctuation_apostrophe'|'punctuation_spaces'} fixType
+ * @returns {{ updatedSegments: Array<Object>, fixedCount: number }}
+ */
+export function applyBatchValidationFix(segments, fixType = 'all_safe') {
+  if (!Array.isArray(segments) || segments.length === 0) {
+    return { updatedSegments: segments, fixedCount: 0 };
+  }
+
+  let fixedCount = 0;
+  const updatedSegments = segments.map((seg) => {
+    let text = seg.text || '';
+    let initialText = text;
+
+    if (fixType === 'all_safe' || fixType === 'punctuation_spaces') {
+      const spaceRegex = / {2,}/g;
+      const count = (text.match(spaceRegex) || []).length;
+      if (count > 0) {
+        text = text.replace(spaceRegex, ' ');
+        fixedCount += count;
+      }
+    }
+
+    if (fixType === 'all_safe' || fixType === 'punctuation_apostrophe') {
+      const apostropheRegex = /[`´]/g;
+      const count = (text.match(apostropheRegex) || []).length;
+      if (count > 0) {
+        text = text.replace(apostropheRegex, "'");
+        fixedCount += count;
+      }
+    }
+
+    if (text !== initialText) {
+      return { ...seg, text };
+    }
+    return seg;
+  });
+
+  return { updatedSegments, fixedCount };
+}
+

@@ -293,14 +293,14 @@ describe('Same-Speaker Overlap Prevention Rules', () => {
   describe('Speaker Pillar Layout and Responsive Sidebar Width', () => {
     it('calculateSidebarColWidth produces responsive widths for 1 to 5 speakers', () => {
       // 1 speaker
-      expect(calculateSidebarColWidth([{ id: 1, name: 'S1' }])).toBe(146);
+      expect(calculateSidebarColWidth([{ id: 1, name: 'S1' }])).toBe(158);
       // 2 speakers
       expect(
         calculateSidebarColWidth([
           { id: 1, name: 'S1' },
           { id: 2, name: 'S2' },
         ]),
-      ).toBe(166);
+      ).toBe(178);
       // 3 speakers
       expect(
         calculateSidebarColWidth([
@@ -308,9 +308,9 @@ describe('Same-Speaker Overlap Prevention Rules', () => {
           { id: 2, name: 'S2' },
           { id: 3, name: 'S3' },
         ]),
-      ).toBe(186);
+      ).toBe(198);
       // Fallback with empty array
-      expect(calculateSidebarColWidth([])).toBe(146);
+      expect(calculateSidebarColWidth([])).toBe(158);
     });
 
     it('getWaveformPillarLayout calculates correct ruler, waveform, and pillar coordinates for 3 overlapping speakers', () => {
@@ -319,11 +319,11 @@ describe('Same-Speaker Overlap Prevention Rules', () => {
         { id: 2, name: 'Bob', initials: 'BO' },
         { id: 3, name: 'Charlie', initials: 'CH' },
       ];
-      const totalWidth = 186;
+      const totalWidth = 198;
       const layout = getWaveformPillarLayout(totalWidth, speakers);
 
-      expect(layout.rulerWidth).toBe(38);
-      expect(layout.waveLeft).toBe(38);
+      expect(layout.rulerWidth).toBe(50);
+      expect(layout.waveLeft).toBe(50);
       expect(layout.pillars.length).toBe(3);
 
       // Verify pillars are placed adjacent to each other without horizontal collision

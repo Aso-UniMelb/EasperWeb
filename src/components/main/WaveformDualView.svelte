@@ -4,7 +4,7 @@
   import { transcriptState } from '../../state/transcriptState.svelte.js';
   import { projectState } from '../../state/projectState.svelte.js';
   import { modelState } from '../../state/modelState.svelte.js';
-  import { formatTimeSec } from '../../utils/formatters.js';
+  import { formatTimeSec, formatTimeSec2 } from '../../utils/formatters.js';
   import {
     getSpeakerColor,
     getSpeakerInitials,
@@ -18,7 +18,12 @@
   import SpeechRecognitionSettingsPanel from './SpeechRecognitionSettingsPanel.svelte';
   import AutoTaggingSettingsPanel from './AutoTaggingSettingsPanel.svelte';
   import FindAndReplacePanel from './FindAndReplacePanel.svelte';
+  import ValidationIssuesPanel from './ValidationIssuesPanel.svelte';
   import WaveformBoundaryMagnifier from './WaveformBoundaryMagnifier.svelte';
+  import {
+    scanAllSegmentsValidation,
+    isValidationActive,
+  } from '../../utils/segmentValidator.js';
 
   let { onWorkerReset } = $props();
 
@@ -35,6 +40,52 @@
   let isResizingSidebar = $state(false);
   let resizeStartX = 0;
   let resizeStartWidth = 0;
+
+  // Validation Summary & Stepper state
+  const validationRules = $derived(
+    projectState.activeProject?.validationRules || null,
+  );
+  const isValidationRuleActive = $derived(isValidationActive(validationRules));
+  const validationSummary = $derived(
+    scanAllSegmentsValidation(transcriptState.segments, validationRules),
+  );
+  let validationStepperIndex = $state(0);
+
+  function jumpToValidationIssue(index) {
+    const list = validationSummary.flatIssues;
+    if (!list || list.length === 0) return;
+    const clampedIndex = Math.max(0, Math.min(list.length - 1, index));
+    validationStepperIndex = clampedIndex;
+    const item = list[clampedIndex];
+    if (item) {
+      transcriptState.selectSegment(item.segmentId, true);
+      setTimeout(() => {
+        const cardEl = document.getElementById(`segment-item-${item.segmentId}`);
+        if (!cardEl) return;
+        const textarea = cardEl.querySelector('textarea');
+        if (textarea) {
+          textarea.focus();
+          try {
+            textarea.setSelectionRange(item.issue.start, item.issue.end);
+          } catch (_) {}
+        }
+      }, 45);
+    }
+  }
+
+  function handleNextValidationIssue() {
+    const count = validationSummary.flatIssues.length;
+    if (count === 0) return;
+    const nextIdx = (validationStepperIndex + 1) % count;
+    jumpToValidationIssue(nextIdx);
+  }
+
+  function handlePrevValidationIssue() {
+    const count = validationSummary.flatIssues.length;
+    if (count === 0) return;
+    const prevIdx = (validationStepperIndex - 1 + count) % count;
+    jumpToValidationIssue(prevIdx);
+  }
 
   let sidebarWidth = $derived(
     customSidebarWidth !== null
@@ -396,7 +447,7 @@
         disabled={!transcriptState.waveformState ||
           !audioState.isIntervalSelected}
         title={audioState.isIntervalSelected
-          ? `${audioState.isPlayingInterval ? 'Pause' : 'Play'} selected time frame [${formatTimeSec(audioState.audioRangeStart)} – ${formatTimeSec(audioState.audioRangeEnd)}] (Shift+Space)`
+          ? `${audioState.isPlayingInterval ? 'Pause' : 'Play'} selected time frame [${formatTimeSec2(audioState.audioRangeStart)} – ${formatTimeSec2(audioState.audioRangeEnd)}] (Shift+Space)`
           : 'Drag on the wave column to select a time frame (Shift+Space)'}
         aria-label={audioState.isPlayingInterval
           ? 'Pause selected range'
@@ -416,9 +467,9 @@
             audioState.resetInterval();
             requestAnimationFrame(() => transcriptState.drawVerticalWaveform());
           }}
-          title="Clear selected time frame ({formatTimeSec(
+          title="Clear selected time frame ({formatTimeSec2(
             audioState.audioRangeStart,
-          )} – {formatTimeSec(audioState.audioRangeEnd)})"
+          )} – {formatTimeSec2(audioState.audioRangeEnd)})"
           aria-label="Clear selected time frame"
         >
           <i class="fa-solid fa-xmark"></i>
@@ -531,6 +582,61 @@
 
     <div class="header-action-divider"></div>
 
+    <!-- Live Validation Summary & Stepper Pill -->
+    {#if isValidationRuleActive}
+      <div class="validation-stepper-group">
+        <button
+          type="button"
+          class="btn-validation-summary-pill {validationSummary.totalIssues > 0
+            ? 'has-issues'
+            : 'is-clean'} {transcriptState.activeDrawer === 'validation'
+            ? 'is-active-drawer'
+            : ''}"
+          onclick={() => transcriptState.toggleDrawer('validation')}
+          title={validationSummary.totalIssues > 0
+            ? `${validationSummary.totalIssues} validation issue(s) in ${validationSummary.affectedSegmentsCount} segment(s). Click to toggle Validation Issues Panel.`
+            : 'All dialogue segments conform to project validation rules. Click to open panel.'}
+          aria-label="Validation issues summary"
+        >
+          <i
+            class="fa-solid {validationSummary.totalIssues > 0
+              ? 'fa-triangle-exclamation'
+              : 'fa-circle-check'}"
+          ></i>
+          <span class="val-pill-label">
+            {validationSummary.totalIssues > 0
+              ? `${validationSummary.totalIssues} issue${validationSummary.totalIssues === 1 ? '' : 's'}`
+              : 'Valid'}
+          </span>
+        </button>
+
+        {#if validationSummary.totalIssues > 0}
+          <div class="val-mini-stepper">
+            <button
+              type="button"
+              class="btn-val-step"
+              onclick={handlePrevValidationIssue}
+              title="Jump to previous validation issue"
+              aria-label="Previous validation issue"
+            >
+              <i class="fa-solid fa-chevron-left"></i>
+            </button>
+            <button
+              type="button"
+              class="btn-val-step"
+              onclick={handleNextValidationIssue}
+              title="Jump to next validation issue"
+              aria-label="Next validation issue"
+            >
+              <i class="fa-solid fa-chevron-right"></i>
+            </button>
+          </div>
+        {/if}
+      </div>
+
+      <div class="header-action-divider"></div>
+    {/if}
+
     <!-- Writing Direction Toggle (LTR <-> RTL) -->
     <button
       type="button"
@@ -590,6 +696,10 @@
         />
       {:else if transcriptState.activeDrawer === 'find-replace'}
         <FindAndReplacePanel
+          onClose={() => (transcriptState.activeDrawer = null)}
+        />
+      {:else if transcriptState.activeDrawer === 'validation'}
+        <ValidationIssuesPanel
           onClose={() => (transcriptState.activeDrawer = null)}
         />
       {/if}
@@ -1519,5 +1629,113 @@
     border-color: #f87171;
     color: #f87171;
     background-color: rgba(248, 113, 113, 0.15);
+  }
+
+  .validation-stepper-group {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    flex-shrink: 0;
+  }
+
+  .btn-validation-summary-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    height: 30px;
+    padding: 0 9px;
+    border-radius: 6px;
+    font-size: 0.76rem;
+    font-weight: 700;
+    cursor: pointer;
+    border: 1px solid transparent;
+    transition: all 0.15s ease;
+  }
+
+  .btn-validation-summary-pill.has-issues {
+    background-color: #fee2e2;
+    border-color: #fca5a5;
+    color: #b91c1c;
+  }
+
+  .btn-validation-summary-pill.has-issues:hover {
+    background-color: #fecaca;
+    border-color: #f87171;
+  }
+
+  .btn-validation-summary-pill.is-clean {
+    background-color: #ecfdf5;
+    border-color: #a7f3d0;
+    color: #047857;
+  }
+
+  .btn-validation-summary-pill.is-clean:hover {
+    background-color: #d1fae5;
+  }
+
+  .btn-validation-summary-pill.is-active-drawer {
+    box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.35);
+  }
+
+  .val-mini-stepper {
+    display: inline-flex;
+    align-items: center;
+    gap: 1px;
+    background: var(--bg-hover, #f1f5f9);
+    border: 1px solid var(--border-color, #cbd5e1);
+    border-radius: 6px;
+    padding: 1px;
+    height: 30px;
+    box-sizing: border-box;
+  }
+
+  .btn-val-step {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 26px;
+    border: none;
+    background: transparent;
+    color: var(--text-base, #334155);
+    font-size: 0.68rem;
+    cursor: pointer;
+    border-radius: 4px;
+    transition: background-color 0.12s ease;
+  }
+
+  .btn-val-step:hover {
+    background: var(--bg-card, #ffffff);
+    color: var(--primary, #3b82f6);
+  }
+
+  :global([data-theme='dark']) .btn-validation-summary-pill.has-issues {
+    background-color: rgba(239, 68, 68, 0.2);
+    border-color: rgba(239, 68, 68, 0.45);
+    color: #fca5a5;
+  }
+
+  :global([data-theme='dark']) .btn-validation-summary-pill.has-issues:hover {
+    background-color: rgba(239, 68, 68, 0.3);
+  }
+
+  :global([data-theme='dark']) .btn-validation-summary-pill.is-clean {
+    background-color: rgba(16, 185, 129, 0.18);
+    border-color: rgba(16, 185, 129, 0.35);
+    color: #6ee7b7;
+  }
+
+  :global([data-theme='dark']) .val-mini-stepper {
+    background: #0f172a;
+    border-color: #334155;
+  }
+
+  :global([data-theme='dark']) .btn-val-step {
+    color: #cbd5e1;
+  }
+
+  :global([data-theme='dark']) .btn-val-step:hover {
+    background: #1e293b;
+    color: #60a5fa;
   }
 </style>

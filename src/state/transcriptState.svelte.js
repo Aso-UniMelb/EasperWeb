@@ -118,7 +118,7 @@ class TranscriptState {
   // Transcript view mode: 'segments' | 'chunks' | 'plain' | 'stats'
   transcriptView = $state('segments');
 
-  // Active automation panel drawer: 'segmentation' | 'recognition' | 'tagging' | 'find-replace' | null
+  // Active automation panel drawer: 'segmentation' | 'recognition' | 'tagging' | 'find-replace' | 'validation' | null
   activeDrawer = $state(null);
 
   toggleDrawer(name) {
