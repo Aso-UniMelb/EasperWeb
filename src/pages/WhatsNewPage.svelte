@@ -323,7 +323,7 @@
     border-color: rgba(59, 130, 246, 0.35);
   }
 
-  :global([data-theme='dark']) .sub-app-badge.badge-dataset {
+  :global([data-theme='dark']) :global(.sub-app-badge.badge-dataset) {
     background: rgba(16, 185, 129, 0.18);
     color: #34d399;
     border-color: rgba(16, 185, 129, 0.35);

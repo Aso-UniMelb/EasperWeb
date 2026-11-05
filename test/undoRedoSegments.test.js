@@ -1,4 +1,5 @@
 globalThis.$state = (v) => v;
+globalThis.$state.raw = (v) => v;
 globalThis.$state.snapshot = (v) => JSON.parse(JSON.stringify(v));
 globalThis.$derived = (v) => v;
 globalThis.$derived.by = (fn) => fn();
@@ -57,14 +58,15 @@ describe('Segment Editing Undo / Redo Stack', () => {
       expect(transcriptState.canRedo).toBe(false);
     });
 
-    it('caps undo stack to MAX_UNDO_STEPS (50)', () => {
-      for (let i = 0; i < 60; i++) {
+    it('caps undo stack to MAX_UNDO_STEPS (25)', () => {
+      for (let i = 0; i < 40; i++) {
         transcriptState.segments = [{ id: `seg-${i}`, start: i, end: i + 1 }];
         transcriptState.pushUndo(`Action ${i}`);
       }
 
-      expect(transcriptState.undoStack.length).toBe(50);
-      expect(transcriptState.undoActionName).toBe('Action 59');
+      expect(transcriptState.undoStack.length).toBe(transcriptState.MAX_UNDO_STEPS);
+      expect(transcriptState.undoStack.length).toBe(25);
+      expect(transcriptState.undoActionName).toBe('Action 39');
     });
   });
 

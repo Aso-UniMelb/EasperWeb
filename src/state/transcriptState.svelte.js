@@ -71,6 +71,64 @@ export const VAD_DEFAULTS = Object.freeze({
   diarizationPeriodS: 0.5,
 });
 
+/**
+ * Fast deep snapshot of segments array avoiding JSON stringify/parse overhead.
+ * @param {Array<Object>} segments
+ * @returns {Array<Object>}
+ */
+export function cloneSegmentsSnapshot(segments) {
+  if (!Array.isArray(segments)) return [];
+  const len = segments.length;
+  const copy = new Array(len);
+  for (let i = 0; i < len; i++) {
+    const s = segments[i];
+    if (!s || typeof s !== 'object') {
+      copy[i] = s;
+      continue;
+    }
+    let subTextsCopy = null;
+    if (s.subTexts && typeof s.subTexts === 'object') {
+      subTextsCopy = {};
+      for (const k in s.subTexts) {
+        const v = s.subTexts[k];
+        subTextsCopy[k] = Array.isArray(v) ? v.slice() : v;
+      }
+    }
+    copy[i] = {
+      ...s,
+      subTexts: subTextsCopy,
+    };
+  }
+  return copy;
+}
+
+/**
+ * Fast shallow comparison of two segment snapshots without JSON stringify overhead.
+ * @param {Array<Object>} a
+ * @param {Array<Object>} b
+ * @returns {boolean}
+ */
+export function areSegmentsEqual(a, b) {
+  if (a === b) return true;
+  if (!a || !b || a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    const s1 = a[i];
+    const s2 = b[i];
+    if (
+      !s1 ||
+      !s2 ||
+      s1.id !== s2.id ||
+      s1.start !== s2.start ||
+      s1.end !== s2.end ||
+      s1.speakerId !== s2.speakerId ||
+      s1.text !== s2.text
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
 class TranscriptState {
   // Language & Timestamp settings
   language = $state('en');
@@ -399,9 +457,9 @@ class TranscriptState {
   metrics = $state(null);
 
   // Undo / Redo history stacks (limited to structural segment operations)
-  undoStack = $state([]);
-  redoStack = $state([]);
-  MAX_UNDO_STEPS = 50;
+  undoStack = $state.raw([]);
+  redoStack = $state.raw([]);
+  MAX_UNDO_STEPS = 25;
   preDragSegmentsSnapshot = null;
 
   get canUndo() {
@@ -432,15 +490,15 @@ class TranscriptState {
       if (Array.isArray(snapshotBefore)) {
         stateToSave = {
           actionName,
-          segments: JSON.parse(JSON.stringify(snapshotBefore)),
+          segments: cloneSegmentsSnapshot(snapshotBefore),
           selectedSegmentId: this.selectedSegmentId,
           timestamp: Date.now(),
         };
       } else {
         stateToSave = {
           actionName,
-          segments: JSON.parse(
-            JSON.stringify(snapshotBefore.segments || snapshotBefore),
+          segments: cloneSegmentsSnapshot(
+            snapshotBefore.segments || snapshotBefore,
           ),
           selectedSegmentId:
             snapshotBefore.selectedSegmentId ?? this.selectedSegmentId,
@@ -450,7 +508,7 @@ class TranscriptState {
     } else {
       stateToSave = {
         actionName,
-        segments: JSON.parse(JSON.stringify(this.segments)),
+        segments: cloneSegmentsSnapshot(this.segments),
         selectedSegmentId: this.selectedSegmentId,
         timestamp: Date.now(),
       };
@@ -476,7 +534,7 @@ class TranscriptState {
 
     const currentState = {
       actionName: previousState.actionName,
-      segments: JSON.parse(JSON.stringify(this.segments)),
+      segments: cloneSegmentsSnapshot(this.segments),
       selectedSegmentId: this.selectedSegmentId,
       timestamp: Date.now(),
     };
@@ -487,7 +545,7 @@ class TranscriptState {
       );
     }
 
-    this.segments = previousState.segments;
+    this.segments = cloneSegmentsSnapshot(previousState.segments);
     this.selectedSegmentId = previousState.selectedSegmentId;
 
     this.transcript = this.segments
@@ -533,7 +591,7 @@ class TranscriptState {
 
     const currentState = {
       actionName: nextState.actionName,
-      segments: JSON.parse(JSON.stringify(this.segments)),
+      segments: cloneSegmentsSnapshot(this.segments),
       selectedSegmentId: this.selectedSegmentId,
       timestamp: Date.now(),
     };
@@ -544,7 +602,7 @@ class TranscriptState {
       );
     }
 
-    this.segments = nextState.segments;
+    this.segments = cloneSegmentsSnapshot(nextState.segments);
     this.selectedSegmentId = nextState.selectedSegmentId;
 
     this.transcript = this.segments
@@ -1833,7 +1891,7 @@ class TranscriptState {
       this.activeDragHandle = handle;
       this.hoveredSegmentId = targetSegId;
       this.wasDraggingHandle = true;
-      this.preDragSegmentsSnapshot = JSON.parse(JSON.stringify(this.segments));
+      this.preDragSegmentsSnapshot = cloneSegmentsSnapshot(this.segments);
 
       const selectedSeg = this.segments.find(
         (s) => s.id === (targetSegId || this.selectedSegmentId),
@@ -2071,9 +2129,10 @@ class TranscriptState {
       }
 
       if (this.preDragSegmentsSnapshot) {
-        const hasChanged =
-          JSON.stringify(this.preDragSegmentsSnapshot) !==
-          JSON.stringify(this.segments);
+        const hasChanged = !areSegmentsEqual(
+          this.preDragSegmentsSnapshot,
+          this.segments,
+        );
         if (hasChanged) {
           this.pushUndo('Move boundary', this.preDragSegmentsSnapshot);
         }

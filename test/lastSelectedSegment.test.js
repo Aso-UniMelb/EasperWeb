@@ -1,4 +1,5 @@
 globalThis.$state = (v) => v;
+globalThis.$state.raw = (v) => v;
 globalThis.$state.snapshot = (v) => JSON.parse(JSON.stringify(v));
 globalThis.$derived = (v) => v;
 globalThis.$derived.by = (fn) => fn();
