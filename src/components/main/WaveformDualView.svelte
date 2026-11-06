@@ -141,7 +141,7 @@
     requestAnimationFrame(() => transcriptState.drawVerticalWaveform());
   }
 
-  // Ctrl + Scroll / Cmd + Scroll to adjust vertical zoom while keeping playhead visible
+  // Ctrl + Scroll / Cmd + Scroll to adjust vertical zoom while keeping viewport center visible
   $effect(() => {
     const handleWheel = (e) => {
       if (!e.ctrlKey && !e.metaKey) return;

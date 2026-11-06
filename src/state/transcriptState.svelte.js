@@ -654,7 +654,7 @@ class TranscriptState {
       : 400;
   }
 
-  setZoomLevel(newScale, preservePlayheadInView = true) {
+  setZoomLevel(newScale, preserveViewportCenter = true) {
     const clampedScale = Math.min(1500, Math.max(50, Math.round(newScale)));
     if (clampedScale === this.WAVEFORM_SCALE_PX_PER_SEC) return;
 
@@ -666,7 +666,7 @@ class TranscriptState {
       !waveform ||
       !waveform.duration ||
       isNaN(waveform.duration) ||
-      !preservePlayheadInView
+      !preserveViewportCenter
     ) {
       this.WAVEFORM_SCALE_PX_PER_SEC = clampedScale;
       requestAnimationFrame(() => this.drawVerticalWaveform());
@@ -675,35 +675,17 @@ class TranscriptState {
 
     const duration = waveform.duration;
     const startTime = waveform.startTime || 0;
-    const rawTime = audioState.audioElement
-      ? audioState.audioElement.currentTime
-      : audioState.playerCurrentTime;
-    const currentTime =
-      rawTime !== null && rawTime !== undefined && !isNaN(rawTime)
-        ? Number(rawTime)
-        : 0;
 
     // Current metrics before zoom
     const oldHeight = this.waveformCalculatedHeight;
     const oldScrollTop = container.scrollTop;
     const clientHeight = container.clientHeight || 400;
 
-    // Position of the red playhead line before zoom
-    const clampedTime = Math.max(
-      startTime,
-      Math.min(startTime + duration, currentTime),
-    );
-    const timeRatio = duration > 0 ? (clampedTime - startTime) / duration : 0;
-    const oldPlayY = Math.round(timeRatio * oldHeight);
-    const offsetInView = oldPlayY - oldScrollTop;
-
-    // Determine target offset in viewport:
-    // If the playhead was already comfortably visible in viewport, preserve its relative offset
-    // so it anchors smoothly. If it was outside or near edges, center it.
-    let targetOffsetInView = clientHeight / 2;
-    if (offsetInView >= 40 && offsetInView <= clientHeight - 40) {
-      targetOffsetInView = offsetInView;
-    }
+    // The time pivot is in the middle of the current view frame
+    const oldCenterY = oldScrollTop + clientHeight / 2;
+    const centerRatio =
+      oldHeight > 0 ? Math.max(0, Math.min(1, oldCenterY / oldHeight)) : 0;
+    const pivotTime = startTime + centerRatio * duration;
 
     // Apply the new zoom scale
     this.WAVEFORM_SCALE_PX_PER_SEC = clampedScale;
@@ -716,11 +698,13 @@ class TranscriptState {
       this.waveformWrapEl.style.minHeight = `${newHeight}px`;
     }
 
-    // Position of the red playhead line after zoom
-    const newPlayY = Math.round(timeRatio * newHeight);
+    // Position of the time pivot in the new layout
+    const newCenterY = Math.round(
+      ((pivotTime - startTime) / duration) * newHeight,
+    );
 
-    // Compute new scroll position to keep the red playhead line visible
-    const newScrollTop = Math.max(0, newPlayY - targetOffsetInView);
+    // Compute new scroll position to keep the middle of the view frame aligned with the pivot time
+    const newScrollTop = Math.max(0, Math.round(newCenterY - clientHeight / 2));
     container.scrollTop = newScrollTop;
     this.containerScrollTop = container.scrollTop;
     this.containerClientHeight = clientHeight;
