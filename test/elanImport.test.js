@@ -251,5 +251,138 @@ describe('ELAN import with annotators and main tier title', () => {
     // Sentence translation mapped to string
     expect(seg.subTexts[String(transSubTier.id)]).toBe('Die schnellen Füchse');
   });
+
+  it('does not change Symbolic_Association tiers to word type based on tier name and does not add unintended morphs@ tier on export', () => {
+    const rawXml = `<?xml version="1.0" encoding="UTF-8"?>
+<ANNOTATION_DOCUMENT AUTHOR="Linguist" DATE="2026-11-07T00:00:00" VERSION="3.0" FORMAT="3.0">
+  <HEADER TIME_UNITS="milliseconds" />
+  <TIME_ORDER>
+    <TIME_SLOT TIME_SLOT_ID="ts1" TIME_VALUE="0" />
+    <TIME_SLOT TIME_SLOT_ID="ts2" TIME_VALUE="2000" />
+  </TIME_ORDER>
+  <TIER TIER_ID="BIS@Speaker1" PARTICIPANT="Speaker1" LINGUISTIC_TYPE_REF="default-lt">
+    <ANNOTATION>
+      <ALIGNABLE_ANNOTATION ANNOTATION_ID="a1" TIME_SLOT_REF1="ts1" TIME_SLOT_REF2="ts2">
+        <ANNOTATION_VALUE>book-s are here</ANNOTATION_VALUE>
+      </ALIGNABLE_ANNOTATION>
+    </ANNOTATION>
+  </TIER>
+  <TIER TIER_ID="Gloss@Speaker1" PARENT_REF="BIS@Speaker1" LINGUISTIC_TYPE_REF="sym-assoc-lt">
+    <ANNOTATION>
+      <REF_ANNOTATION ANNOTATION_ID="a2" ANNOTATION_REF="a1">
+        <ANNOTATION_VALUE>BOOK-PL COP ADV</ANNOTATION_VALUE>
+      </REF_ANNOTATION>
+    </ANNOTATION>
+  </TIER>
+  <TIER TIER_ID="POS@Speaker1" PARENT_REF="BIS@Speaker1" LINGUISTIC_TYPE_REF="sym-assoc-lt">
+    <ANNOTATION>
+      <REF_ANNOTATION ANNOTATION_ID="a3" ANNOTATION_REF="a1">
+        <ANNOTATION_VALUE>N V ADV</ANNOTATION_VALUE>
+      </REF_ANNOTATION>
+    </ANNOTATION>
+  </TIER>
+  <TIER TIER_ID="morph@Speaker1" PARENT_REF="BIS@Speaker1" LINGUISTIC_TYPE_REF="sym-assoc-lt">
+    <ANNOTATION>
+      <REF_ANNOTATION ANNOTATION_ID="a4" ANNOTATION_REF="a1">
+        <ANNOTATION_VALUE>book -s are here</ANNOTATION_VALUE>
+      </REF_ANNOTATION>
+    </ANNOTATION>
+  </TIER>
+  <LINGUISTIC_TYPE LINGUISTIC_TYPE_ID="default-lt" TIME_ALIGNABLE="true" />
+  <LINGUISTIC_TYPE LINGUISTIC_TYPE_ID="sym-assoc-lt" CONSTRAINTS="Symbolic_Association" TIME_ALIGNABLE="false" />
+</ANNOTATION_DOCUMENT>`;
+
+    const parsed = parseEaf(rawXml, 'assoc-names.eaf');
+    const detected = detectTierDefaults(parsed);
+
+    expect(detected.subTiers).toHaveLength(3);
+    for (const st of detected.subTiers) {
+      expect(st.type).toBe('sentence');
+    }
+
+    const compiled = compileElanToProject({
+      eafData: parsed,
+      tierConfigs: detected.tierConfigs,
+      speakers: detected.speakers,
+      subTiers: detected.subTiers,
+    });
+
+    for (const st of compiled.subTiers) {
+      expect(st.type).toBe('sentence');
+    }
+
+    const exportedXml = exportToEaf({
+      segments: compiled.segments,
+      subTiers: compiled.subTiers,
+      speakers: compiled.speakers,
+      mainTierTitle: detected.suggestedMainTierTitle,
+    });
+
+    expect(exportedXml).not.toContain('morphs@');
+    expect(exportedXml).not.toContain('morphemes@');
+    expect(exportedXml).not.toContain('Symbolic_Subdivision" TIME_ALIGNABLE');
+    expect(exportedXml).toContain('TIER_ID="Gloss@Speaker1" PARENT_REF="BIS@Speaker1" LINGUISTIC_TYPE_REF="dependent-lt"');
+    expect(exportedXml).toContain('TIER_ID="POS@Speaker1" PARENT_REF="BIS@Speaker1" LINGUISTIC_TYPE_REF="dependent-lt"');
+    expect(exportedXml).toContain('TIER_ID="morph@Speaker1" PARENT_REF="BIS@Speaker1" LINGUISTIC_TYPE_REF="dependent-lt"');
+  });
+
+  it('roundtrips word sub-tiers cleanly without creating an intermediary morphs@ tier', () => {
+    const initialSegments = [
+      {
+        id: 1,
+        start: 0,
+        end: 4.0,
+        speaker: 'Speaker1',
+        speakerId: 1,
+        text: 'book-s are here',
+        subTexts: {
+          '1': ['N', '', 'V', 'ADV'],
+          '2': 'The books are here',
+        },
+      },
+    ];
+    const initialSubTiers = [
+      { id: 1, name: 'POS', type: 'word' },
+      { id: 2, name: 'Translation', type: 'sentence' },
+    ];
+    const initialSpeakers = [{ id: 1, name: 'Speaker1', initials: 'S1' }];
+
+    const xml = exportToEaf({
+      segments: initialSegments,
+      subTiers: initialSubTiers,
+      speakers: initialSpeakers,
+      mainTierTitle: 'BIS',
+    });
+
+    expect(xml).not.toContain('morphs@');
+    expect(xml).not.toContain('morphemes@');
+
+    const parsed = parseEaf(xml, 'word-roundtrip.eaf');
+    const detected = detectTierDefaults(parsed);
+
+    expect(detected.subTiers).toHaveLength(2);
+    const posTier = detected.subTiers.find((st) => st.name === 'POS');
+    const transTier = detected.subTiers.find((st) => st.name === 'Translation');
+    expect(posTier?.type).toBe('word');
+    expect(transTier?.type).toBe('sentence');
+
+    const compiled = compileElanToProject({
+      eafData: parsed,
+      tierConfigs: detected.tierConfigs,
+      speakers: detected.speakers,
+      subTiers: detected.subTiers,
+    });
+
+    expect(compiled.segments).toHaveLength(1);
+    expect(compiled.segments[0].subTexts[String(posTier.id)]).toEqual([
+      'N',
+      '',
+      'V',
+      'ADV',
+    ]);
+    expect(compiled.segments[0].subTexts[String(transTier.id)]).toBe(
+      'The books are here',
+    );
+  });
 });
 

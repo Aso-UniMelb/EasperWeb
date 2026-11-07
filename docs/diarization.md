@@ -6,13 +6,17 @@ EasperWeb includes a high-precision, client-side speaker diarization engine desi
 
 ## 1. Pipeline Architecture
 
-The diarization pipeline processes raw 16 kHz mono audio through five stages:
+The diarization pipeline processes raw 16 kHz mono audio through a hybrid architecture combining **Silero VAD v5**, **PyAnnote Segmentation 3.0** (optional overlap & turn-taking detection), **3D-Speaker CAM++** embeddings, and **Agglomerative Hierarchical Clustering (AHC)**:
 
 ```
 Raw Audio (16 kHz Mono)
       │
       ▼
 Silero VAD v5 / Pre-existing Segments
+      │
+      ├──► (When Overlap Detection Enabled: diarizationModel = 'pyannote')
+      │    PyAnnote Segmentation 3.0 (SincNet + BiLSTM, 17ms frame resolution)
+      │    • Detects intra-segment turn-taking & cross-talk / overlapping speech
       │
       ▼
 Sliding-Window Sub-Segmentation (default: window = 1.0s, period = 0.5s)
@@ -52,11 +56,17 @@ IndexedDB & Reactive UI State Persistence
 
 ---
 
-## 3. Speaker Embedding Model & ONNX Runtime Requirements
+## 3. Speaker Embedding & Overlap Models (`src/diarizer.js`, `src/pyannote.js`)
 
+### 3D-Speaker CAM++ (Global Speaker Identity)
 - **Model**: Bundled as `public/spkrec_ecapa.onnx` (~29.6 MB).
 - **Architecture**: **3D-Speaker CAM++** (`speech_campplus_sv_en_voxceleb_16k`, producing 512-dimensional output embeddings), *not* SpeechBrain ECAPA-TDNN (192-d). The Kaldi filterbank in `src/utils/fbank.js` is matched to this architecture.
 - **L2 Normalization**: All raw embedding vectors are normalized to unit length before clustering (`l2Normalize`).
+
+### PyAnnote Segmentation 3.0 (Turn-Taking & Overlap Detection)
+- **Module**: [`src/pyannote.js`](../src/pyannote.js)
+- **Model**: `onnx-community/pyannote-segmentation-3.0` (~5.8 MB SincNet + BiLSTM via Transformers.js `AutoModelForAudioFrameClassification`).
+- **Role**: Provides 17 ms frame-level speaker turn-taking detection, intra-segment speaker switch splitting, and overlapping speech (cross-talk) detection, while CAM++ 512-d embeddings maintain consistent global speaker identity across the entire recording.
 
 ### Critical Runtime Fix: ONNX Runtime Web >= 1.30.0
 
@@ -108,7 +118,10 @@ Settings can be adjusted interactively in the Transcriber **Settings** panel (`S
 | **Min Segment Duration** | `0.4 s` | `0.2 – 2.0 s` | `vadMinSegmentS` | Segments shorter than this threshold are filtered out as acoustic flutter or noise. |
 | **Min Silence Gap (Merge)**| `0.5 s` | `0.1 – 2.0 s` | `vadMinSilenceS` | Silence intervals shorter than this threshold between same-speaker turns are merged. |
 | **Max Segment Duration** | `25 s` | `10 – 45 s` | `vadMaxSegmentS` | Upper limit for segment length before splitting, ensuring optimal context size for Whisper. |
+| **Diarization Engine** | `'pyannote'` | `'pyannote'` / `'campplus'` | `diarizationModel` | Enables hybrid PyAnnote + CAM++ overlap/turn detection (`'pyannote'`) or CAM++ sliding-window mode (`'campplus'`). |
 | **Speaker Count ($K$)** | `1` | `1 – 5` | `diarizationSpeakerCount` | Number of distinct speakers. `1` disables diarization; `2–5` activates the clustering pipeline. |
+| **Clustering Threshold** | `0.10` | `0.06 – 0.16` | `diarizationThreshold` | Voice separation cosine distance threshold (UI levels 1–5: Low to Maximum separation). |
+| **PyAnnote Threshold** | `0.50` | `0.20 – 0.80` | `pyannoteThreshold` | Frame-level activation threshold for PyAnnote Segmentation 3.0 turn and overlap detection. |
 | **Diarization Window** | `1.0 s` | `0.5 – 3.0 s` | `diarizationWindowS` | Duration of each sliding window for speaker embedding extraction. |
 | **Diarization Step / Period**| `0.5 s` | `0.1 – 1.5 s` | `diarizationPeriodS` | Hop size between successive sliding windows (default: 50% overlap). |
 

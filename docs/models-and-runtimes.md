@@ -1,6 +1,6 @@
 # Model Management & Compute Runtimes
 
-EasperWeb combines **Transformers.js v3** (`@huggingface/transformers`) and **ONNX Runtime Web** (`onnxruntime-web`) to execute complex speech recognition and audio models directly inside the user's browser with zero cloud latency and complete data privacy.
+EasperWeb combines **Transformers.js v3** (`@huggingface/transformers`), **ONNX Runtime Web** (`onnxruntime-web`), and **Cactus Needle** (`cactus-needle` WebAssembly for Whistle) to execute speech recognition and audio models directly inside the user's browser with zero cloud latency and complete data privacy.
 
 ---
 
@@ -76,24 +76,25 @@ When a user loads a local model from disk:
 
 ## 3. Pre-Configured Hub Models & Presets
 
-Easper provides one-click presets for standard multilingual Whisper models hosted on Hugging Face Hub:
+Easper provides one-click presets in `src/state/modelState.svelte.js` (`AVAILABLE_PRESETS`):
 
-| Model Preset | Hub Model ID | Approximate Size | Recommended Backend | Description |
+| Model Preset | Architecture / ID | Approximate Size | Recommended Backend | Description |
 | :--- | :--- | :--- | :--- | :--- |
-| **Whisper-base** | `onnx-community/whisper-base` | ~274 MB | WebGPU or WASM CPU | Fast transcription with balanced accuracy, suitable for resource-constrained devices. |
-| **Whisper-small** | `onnx-community/whisper-small` | ~799 MB | WebGPU or WASM CPU | Higher accuracy for varied accents, lower-resource languages, and background noise. |
+| **Whistle** | `Cactus-Compute/whistle` (`whistle`) | ~17 MB | CPU WASM (`cactus-needle`) | Ultra-compact 16.9 MB local speech recognition model with word-level timestamps and zero GPU requirement (`src/utils/whistleRunner.js`). |
+| **Whisper-base** | `onnx-community/whisper-base` (`whisper`) | ~274 MB | WebGPU or WASM CPU | Multilingual Whisper model with fast transcription and balanced accuracy (`q8` on CPU WASM, `fp32`+`q4` on WebGPU). |
+| **Whisper-small** | `onnx-community/whisper-small` (`whisper`) | ~799 MB | WebGPU or WASM CPU | Higher accuracy for varied accents, lower-resource languages, and background noise. |
 
-Both presets support **offline caching**: once downloaded, they are permanently stored in the browser's CacheStorage (`transformers-cache`) and require no further internet access.
+All presets support **offline caching**: once downloaded, they are permanently stored in the browser's CacheStorage (`transformers-cache` / `cactus-needle` cache) and require no further internet access.
 
 ---
 
 ## 4. Custom Local Models via File System Access API
 
-Linguists working with fine-tuned Whisper models can load models directly from a folder on their local file system:
+Linguists working with fine-tuned Whisper or Whistle models can load models directly from a folder on their local file system:
 
 1. In the **Model Manager** (`/models`), select **Load Local Model Folder**.
-2. Select the directory containing the exported ONNX model files.
-3. Easper mounts the directory into a virtual in-memory cache (`LocalFolderCache` in `src/worker.js`).
+2. Select the directory containing the exported ONNX (`.onnx`) or Whistle (`.cact`) model files.
+3. Easper mounts the directory into a virtual in-memory cache (`LocalFolderCache` in `src/worker.js`) and persists files in IndexedDB (`asr_model_files`).
 
 ### Expected File Structure
 A typical fine-tuned ONNX Whisper export contains:
@@ -123,10 +124,11 @@ EasperWeb uses browser storage APIs to maintain complete persistence across sess
   - `transformers-cache`: Whisper neural network weights and tokenizers.
   - `silero-vad-cache-v1`: Silero VAD v5 ONNX model (~2.2 MB).
   - `speaker-diarizer-cache-v2`: 3D-Speaker CAM++ model (~29.6 MB).
-- **IndexedDB (`easper_db`)**:
+- **IndexedDB (`easper_db` v3, [`src/services/db.js`](../src/services/db.js))**:
   - `projects`: Project metadata, dialogue segments, sub-tier annotations, and audio references.
   - `audio`: 16 kHz mono WAV audio Blobs.
   - `asr_models`: Metadata records for custom loaded models.
   - `asr_model_files`: Serialized custom model files stored locally in browser storage.
+  - `lexicons`: Structured project lexicons, field definitions, and dictionary entries for spellchecking and auto-tagging.
 - **Telemetry & Quota Monitoring**:
   The global footer continuously queries `navigator.storage.estimate()` to display current storage usage and ensure ample disk space remains for audio projects.

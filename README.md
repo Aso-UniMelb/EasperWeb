@@ -80,10 +80,12 @@ Detailed architecture specifications, tuning parameters, and integration guides 
 
 | Topic | Document | Focus Areas |
 | :--- | :--- | :--- |
-| **Speaker Diarization** | [Diarization Architecture & Parameter Tuning](docs/diarization.md) | 3D-Speaker CAM++ model, Kaldi FBank extraction, ONNX Runtime Web 1.30.0 requirements, AHC clustering, and tuning guide for noisy/rapid speech. |
+| **Source Code Architecture** | [Source Code Architecture & File Reference](docs/source-code-architecture.md) | Complete map of the `src/` folder, what every file does, and how pages, components, reactive `.svelte.js` stores, services, utilities, and Web Workers connect. |
+| **Speaker Diarization** | [Diarization Architecture & Parameter Tuning](docs/diarization.md) | Hybrid PyAnnote 3.0 + 3D-Speaker CAM++ pipeline, Kaldi FBank extraction, ONNX Runtime Web 1.30.0 requirements, AHC clustering, and tuning guide. |
 | **Dataset Builder** | [Dataset Builder & Fine-Tuning Pipeline](docs/dataset-builder.md) | The 7-step wizard, string & token replacement engine, character whitelist extraction, validation checks, and ELAN annotation guidelines. |
-| **Models & Runtimes** | [Model Management & Compute Runtimes](docs/models-and-runtimes.md) | WebGPU vs. WASM SIMD backends, cross-origin isolation, hybrid Q4/INT8 quantization, local folder loading, and offline storage. |
-| **ELAN & Sub-Tiers** | [ELAN Integration, Sub-Tiers & Exports](docs/elan-and-subtiers.md) | Direct `.eaf` project import, multi-speaker tier mapping, dependent sub-tier architecture (Translation, Gloss), and export formats. |
+| **Models & Runtimes** | [Model Management & Compute Runtimes](docs/models-and-runtimes.md) | Whistle WASM (`cactus-needle`) & Whisper (WebGPU vs. WASM SIMD) backends, hybrid Q4/INT8 quantization, local folder loading, and offline storage. |
+| **ELAN & Sub-Tiers** | [ELAN Integration, Sub-Tiers & Exports](docs/elan-and-subtiers.md) | Direct `.eaf` project import, stereotype-driven sub-tier mapping, word/morpheme & sentence sub-tiers, and export formats. |
+| **Lexicons & Spellcheck** | [Lexicon Manager, Hunspell & Auto-Tagging](docs/lexicon-and-spellcheck.md) | Customizable project lexicons, `.tsv` import/export, real-time Hunspell WASM spellchecking, and word sub-tier auto-tagging. |
 
 ---
 
@@ -139,7 +141,6 @@ If you use Easper in your research, please cite our paper accepted at the **Inte
 > Paper: [Interspeech 2026](https://www.isca-archive.org/interspeech_2026/mahmudi26_interspeech.html)
 
 ```bibtex
-@inproceedings{mahmudi26_interspeech,
 @inproceedings{mahmudi26_interspeech,
   title     = {{Easper: An Accessible ASR Pipeline for Language Documentation}},
   author    = {Aso Mahmudi and Ting Dang and Ekaterina Vylomova and Nick Thieberger},

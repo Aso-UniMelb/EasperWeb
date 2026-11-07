@@ -38,24 +38,25 @@ Step 7: Export ──────────────► Sliced 16 kHz mono 
   - **Translation Tiers** (optional): Secondary tiers for multilingual or speech translation objectives.
 
 ### Step 3: Target Characters (Inventory & Whitelist)
-- Gathers all unique characters across the selected tiers and displays frequency tables (token counts and percentages).
-- Allows linguists to review the orthographic inventory, identify errant typography (e.g., unexpected symbols or accidental diacritics), and configure an allowed character whitelist.
+- Gathers all unique characters across the selected tiers (`extractUnicodeInventory` and `classifyUnicodeChar` in [`src/utils/elanParser.js`](../src/utils/elanParser.js)) and displays frequency tables (token counts, Unicode categories, and percentages).
+- Allows linguists to review the orthographic inventory, identify errant typography (e.g., unexpected symbols or accidental diacritics), and configure an allowed character whitelist (`allowedLetters` and `allowedPunctuation`, default `- . , ; : ! ? "`).
 
 ### Step 4: Issues & Validation
-Automated health checks scan all annotations to identify patterns that degrade Whisper fine-tuning:
+Automated health checks ([`src/utils/datasetAnalyzer.js`](../src/utils/datasetAnalyzer.js)) scan all annotations to identify patterns that degrade Whisper fine-tuning:
 - **Empty / Non-Aligned Records**: Annotations lacking start or end timestamps or missing text content.
-- **Excessively Long Records**: Utterances exceeding 20 seconds. Segments over 30 seconds exceed Whisper's receptive field and can cause sequence-to-sequence hallucination during training.
-- **Overlapping Speech Segments**: Annotations that overlap in time on the same or multiple tiers, alerting the user to potential cross-talk.
+- **Excessively Long Records**: Utterances exceeding the configurable `longSegmentThreshold` (default **25 seconds**). Segments over 30 seconds exceed Whisper's receptive field and can cause sequence-to-sequence hallucination during training.
+- **Overlapping Speech Segments**: Annotations that overlap in time by more than `overlapThreshold` (default **400 ms**) on the same or multiple tiers, alerting the user to potential cross-talk.
 
 ### Step 5: Clean & Replace (Strings & Special Tokens)
-A powerful normalization and string cleanup interface:
+A normalization and string cleanup interface persisted in `localStorage` (`src/state/datasetState.svelte.js`):
+- **Lowercase Transcripts Toggle**: Optional toggle (`lowercaseTranscripts`) to normalize all orthographic transcripts to lowercase.
 - **Common Preset Markers**: One-click rules to remove or normalize common linguistic field markers:
   - `<hes>` (Hesitation)
   - `<laughter>` / `[laughter]`
   - `<cough>`, `<sigh>`, `<gasp>`
   - `[inaudible]`, `[music]`, `*pause*`
 - **Custom Replacements**: Add custom literal string or **Regular Expression (regex)** replacement rules.
-- **Rule Management**: Drag-and-drop rule ordering (execution order matters for regex chaining), enable/disable toggles, and TSV rule import.
+- **Rule Management & TSV Import**: Drag-and-drop rule ordering (execution order matters for regex chaining), enable/disable toggles, and external TSV normalization rule import ([`src/utils/normalizationRules.js`](../src/utils/normalizationRules.js)).
 - **Live Preview**: Inspect real-time diff previews showing matches across all loaded annotations before committing changes.
 
 ### Step 6: Dataset Review

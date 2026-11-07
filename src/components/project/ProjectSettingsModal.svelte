@@ -739,7 +739,7 @@
                   </div>
                   <div class="help-elan-note">
                     <i class="fa-solid fa-file-export"></i>
-                    <span>ELAN: creates a <code>Time_Subdivision</code> tier (<code>morphs@Speaker</code>) with dependent annotation tiers.</span>
+                    <span>ELAN: exports as a <code>Symbolic_Subdivision</code> tier directly under the speaker tier.</span>
                   </div>
                 </div>
               </div>

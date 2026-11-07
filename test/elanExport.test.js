@@ -3,7 +3,7 @@ import { exportToEaf } from '../src/elan.js';
 import { parseEaf } from '../src/utils/elanParser.js';
 
 describe('ELAN export with word/morpheme sub-tiers', () => {
-  it('exports split morphemes with equal durations on Time_Subdivision tier and links POS tags', () => {
+  it('exports word sub-tiers with equal durations on Time_Subdivision tier directly under speaker tier', () => {
     // 4 seconds segment with 4 morphemes
     const segments = [
       {
@@ -38,12 +38,11 @@ describe('ELAN export with word/morpheme sub-tiers', () => {
     // Verify XML contains linguistic types
     expect(xml).toContain('LINGUISTIC_TYPE_ID="default-lt" TIME_ALIGNABLE="true"');
     expect(xml).toContain('LINGUISTIC_TYPE_ID="words-lt" CONSTRAINTS="Time_Subdivision" TIME_ALIGNABLE="true"');
-    expect(xml).toContain('LINGUISTIC_TYPE_ID="dependent-lt" CONSTRAINTS="Symbolic_Association" TIME_ALIGNABLE="false"');
 
-    // Verify tier hierarchy
+    // Verify tier hierarchy (no unintended morphs@Speaker1 tier)
+    expect(xml).not.toContain('morphs@');
     expect(xml).toContain('<TIER TIER_ID="Speaker1" PARTICIPANT="Speaker1" LINGUISTIC_TYPE_REF="default-lt">');
-    expect(xml).toContain('<TIER TIER_ID="morphs@Speaker1" PARENT_REF="Speaker1" PARTICIPANT="Speaker1" LINGUISTIC_TYPE_REF="words-lt">');
-    expect(xml).toContain('<TIER TIER_ID="POS@Speaker1" PARENT_REF="morphs@Speaker1" LINGUISTIC_TYPE_REF="dependent-lt">');
+    expect(xml).toContain('<TIER TIER_ID="POS@Speaker1" PARENT_REF="Speaker1" LINGUISTIC_TYPE_REF="words-lt">');
 
     // Parse the generated XML to verify time intervals and references
     const parsed = parseEaf(xml, 'test.eaf');
@@ -52,7 +51,7 @@ describe('ELAN export with word/morpheme sub-tiers', () => {
     const posTier = parsed.tiers.find((t) => t.tierId === 'POS@Speaker1');
 
     expect(speakerTier).toBeDefined();
-    expect(morphTier).toBeDefined();
+    expect(morphTier).toBeUndefined();
     expect(posTier).toBeDefined();
 
     // Speaker utterance duration is 4 seconds (0 to 4000 ms)
@@ -61,30 +60,7 @@ describe('ELAN export with word/morpheme sub-tiers', () => {
     expect(speakerTier.annotations[0].end).toBe(4000);
     expect(speakerTier.annotations[0].text).toBe('book-s are here');
 
-    // 4 morphemes, each with 1 second duration
-    expect(morphTier.annotations).toHaveLength(4);
-    expect(morphTier.annotations[0]).toMatchObject({
-      start: 0,
-      end: 1000,
-      text: 'book',
-    });
-    expect(morphTier.annotations[1]).toMatchObject({
-      start: 1000,
-      end: 2000,
-      text: 's',
-    });
-    expect(morphTier.annotations[2]).toMatchObject({
-      start: 2000,
-      end: 3000,
-      text: 'are',
-    });
-    expect(morphTier.annotations[3]).toMatchObject({
-      start: 3000,
-      end: 4000,
-      text: 'here',
-    });
-
-    // POS annotations correspond 1:1 with morphemes
+    // POS annotations are subdivided into 4 equal 1-second intervals directly on POS@Speaker1
     expect(posTier.annotations).toHaveLength(4);
     expect(posTier.annotations[0]).toMatchObject({
       start: 0,
@@ -108,7 +84,7 @@ describe('ELAN export with word/morpheme sub-tiers', () => {
     });
   });
 
-  it('exports word sub-tiers with Symbolic_Subdivision and chained PREVIOUS_ANNOTATION by default', () => {
+  it('exports word sub-tiers with Symbolic_Subdivision and chained PREVIOUS_ANNOTATION directly under speaker tier by default', () => {
     const segments = [
       {
         id: 'seg-1',
@@ -139,19 +115,14 @@ describe('ELAN export with word/morpheme sub-tiers', () => {
     expect(xml).toContain(
       'LINGUISTIC_TYPE_ID="sym-subdivision-lt" CONSTRAINTS="Symbolic_Subdivision" TIME_ALIGNABLE="false"',
     );
+
+    // Check Tier Types (no morphs@Speaker1 tier created)
+    expect(xml).not.toContain('morphs@');
     expect(xml).toContain(
-      'LINGUISTIC_TYPE_ID="dependent-lt" CONSTRAINTS="Symbolic_Association" TIME_ALIGNABLE="false"',
+      '<TIER TIER_ID="POS@Speaker1" PARENT_REF="Speaker1" LINGUISTIC_TYPE_REF="sym-subdivision-lt">',
     );
 
-    // Check Tier Types
-    expect(xml).toContain(
-      '<TIER TIER_ID="morphs@Speaker1" PARENT_REF="Speaker1" PARTICIPANT="Speaker1" LINGUISTIC_TYPE_REF="sym-subdivision-lt">',
-    );
-    expect(xml).toContain(
-      '<TIER TIER_ID="POS@Speaker1" PARENT_REF="morphs@Speaker1" LINGUISTIC_TYPE_REF="dependent-lt">',
-    );
-
-    // Check PREVIOUS_ANNOTATION chaining on morphs tier
+    // Check PREVIOUS_ANNOTATION chaining directly on POS@Speaker1 tier
     expect(xml).toContain('<REF_ANNOTATION ANNOTATION_ID="a2" ANNOTATION_REF="a1">');
     expect(xml).toContain(
       '<REF_ANNOTATION ANNOTATION_ID="a3" ANNOTATION_REF="a1" PREVIOUS_ANNOTATION="a2">',
@@ -163,23 +134,13 @@ describe('ELAN export with word/morpheme sub-tiers', () => {
       '<REF_ANNOTATION ANNOTATION_ID="a5" ANNOTATION_REF="a1" PREVIOUS_ANNOTATION="a4">',
     );
 
-    // Check POS tags link 1:1 to morpheme annotations
-    expect(xml).toContain('<REF_ANNOTATION ANNOTATION_ID="a6" ANNOTATION_REF="a2">');
-    expect(xml).toContain('<REF_ANNOTATION ANNOTATION_ID="a7" ANNOTATION_REF="a3">');
-    expect(xml).toContain('<REF_ANNOTATION ANNOTATION_ID="a8" ANNOTATION_REF="a4">');
-    expect(xml).toContain('<REF_ANNOTATION ANNOTATION_ID="a9" ANNOTATION_REF="a5">');
-
     // Parse back and verify extracted data
     const parsed = parseEaf(xml, 'sym-test.eaf');
     const morphTier = parsed.tiers.find((t) => t.tierId === 'morphs@Speaker1');
     const posTier = parsed.tiers.find((t) => t.tierId === 'POS@Speaker1');
 
-    expect(morphTier.stereotype).toBe('Symbolic_Subdivision');
-    expect(morphTier.isTimeAlignable).toBe(false);
-    expect(morphTier.annotations).toHaveLength(4);
-    expect(morphTier.annotations.map((a) => a.text)).toEqual(['book', 's', 'are', 'here']);
-
-    expect(posTier.stereotype).toBe('Symbolic_Association');
+    expect(morphTier).toBeUndefined();
+    expect(posTier.stereotype).toBe('Symbolic_Subdivision');
     expect(posTier.isTimeAlignable).toBe(false);
     expect(posTier.annotations).toHaveLength(4);
     expect(posTier.annotations.map((a) => a.text)).toEqual(['N', 'SUF', 'V', 'ADV']);
@@ -255,7 +216,7 @@ describe('ELAN export with word/morpheme sub-tiers', () => {
     const posTier = parsed.tiers.find((t) => t.tierId === 'POS@Alice');
 
     expect(aliceTier).toBeDefined();
-    expect(morphTier).toBeDefined();
+    expect(morphTier).toBeUndefined();
     expect(transTier).toBeDefined();
     expect(posTier).toBeDefined();
 
@@ -267,20 +228,7 @@ describe('ELAN export with word/morpheme sub-tiers', () => {
       text: 'A greeting to the world',
     });
 
-    // Morphs are subdivided: 1000 to 2250, 2250 to 3500
-    expect(morphTier.annotations).toHaveLength(2);
-    expect(morphTier.annotations[0]).toMatchObject({
-      start: 1000,
-      end: 2250,
-      text: 'hello',
-    });
-    expect(morphTier.annotations[1]).toMatchObject({
-      start: 2250,
-      end: 3500,
-      text: 'world',
-    });
-
-    // POS tags hang off the morphemes
+    // POS tags are subdivided directly under Alice: 1000 to 2250, 2250 to 3500
     expect(posTier.annotations).toHaveLength(2);
     expect(posTier.annotations[0]).toMatchObject({
       start: 1000,
@@ -342,16 +290,8 @@ describe('ELAN export with word/morpheme sub-tiers', () => {
     const morphTier = parsed.tiers.find((t) => t.tierId === 'morphs@Speaker1');
     const glossTier = parsed.tiers.find((t) => t.tierId === 'Gloss@Speaker1');
 
-    expect(morphTier).toBeDefined();
+    expect(morphTier).toBeUndefined();
     expect(glossTier).toBeDefined();
-
-    expect(morphTier.annotations).toHaveLength(4);
-    expect(morphTier.annotations.map((a) => a.text)).toEqual([
-      'kitab',
-      'i',
-      'man',
-      'hat',
-    ]);
 
     expect(glossTier.annotations).toHaveLength(4);
     expect(glossTier.annotations.map((a) => a.text)).toEqual([

@@ -616,10 +616,6 @@ export function exportToEaf({
   // arranged the columns, which is the order ELAN then shows them in.
   const cleanSubTiers = normalizeSubTiers(subTiers, { sort: false });
 
-  const hasWordSubTiers = cleanSubTiers.some(
-    (st) => st.type === SUB_TIER_TYPE_WORD,
-  );
-
   const cleanMainTier = (mainTierTitle || '').trim().replace(/@+$/, '');
 
   const getSpeakerRootTierId = (spkName) => {
@@ -633,15 +629,8 @@ export function exportToEaf({
   const dependentTierId = (subTierName, spkName) =>
     `${subTierName}@${spkName}`;
 
-  // If a sub-tier is named 'morphs', use 'morphemes' to prevent tier name collision
-  const morphTierName = cleanSubTiers.some(
-    (st) => (st.name || '').trim().toLowerCase() === 'morphs',
-  )
-    ? 'morphemes'
-    : 'morphs';
-
-  // Pre-create tiers for all configured speakers in the project, plus morpheme tier
-  // and dependent tiers per speaker, so layers arrive in ELAN ready to type into.
+  // Pre-create tiers for all configured speakers in the project, plus dependent
+  // sub-tiers per speaker, so layers arrive in ELAN ready to type into.
   if (Array.isArray(speakers) && speakers.length > 0) {
     for (const spk of speakers) {
       const spkLabel = spk.name ? spk.name.trim() : `Speaker ${spk.id}`;
@@ -651,20 +640,12 @@ export function exportToEaf({
         annotator: mainAnnotator,
       });
 
-      const morphTierId = dependentTierId(morphTierName, spkLabel);
-      if (hasWordSubTiers) {
-        eaf.addTier(morphTierId, spk.name || `Speaker ${spk.id}`, {
-          parentRef: rootTierId,
-          typeRef: morphTypeRef,
-        });
-      }
-
       for (const st of cleanSubTiers) {
         const subTierAnnotator = (st.annotator || '').trim();
         if (st.type === SUB_TIER_TYPE_WORD) {
           eaf.addTier(dependentTierId(st.name, spkLabel), '', {
-            parentRef: morphTierId,
-            typeRef: DEPENDENT_TYPE,
+            parentRef: rootTierId,
+            typeRef: morphTypeRef,
             annotator: subTierAnnotator,
           });
         } else {
@@ -738,69 +719,50 @@ export function exportToEaf({
       );
       if (!parentLocalId) continue;
 
-      const morphTierId = dependentTierId(morphTierName, spkLabel);
-      let morphLocalIds = [];
-
-      if (hasWordSubTiers) {
-        const wordSubTier = cleanSubTiers.find(
-          (st) => st.type === SUB_TIER_TYPE_WORD,
-        );
-        const splitters = wordSubTier?.splitters ?? DEFAULT_SPLITTERS;
-        const words = tokenizeWords(seg.text, splitters);
-        if (words.length > 0) {
-          if (isTimeSubdivision) {
-            const durationMs = endMs - startMs;
-            const morphemeItems = words.map((w, idx) => {
-              const mStart =
-                startMs + Math.round((idx * durationMs) / words.length);
-              const mEnd =
-                idx === words.length - 1
-                  ? endMs
-                  : startMs + Math.round(((idx + 1) * durationMs) / words.length);
-              return {
-                value: w,
-                startMs: mStart,
-                endMs: mEnd,
-              };
-            });
-
-            morphLocalIds = eaf.addSubdividedAnnotations(
-              morphTierId,
-              rootTierId,
-              parentLocalId,
-              morphemeItems,
-            );
-          } else {
-            morphLocalIds = eaf.addSymbolicSubdivisionAnnotations(
-              morphTierId,
-              rootTierId,
-              parentLocalId,
-              words,
-            );
-          }
-        }
-      }
-
       for (const st of cleanSubTiers) {
         const subTierAnnotator = (st.annotator || '').trim();
         if (st.type === SUB_TIER_TYPE_WORD) {
-          if (morphLocalIds.length > 0) {
-            const words = tokenizeWords(
-              seg.text,
-              st.splitters ?? DEFAULT_SPLITTERS,
-            );
+          const words = tokenizeWords(
+            seg.text,
+            st.splitters ?? DEFAULT_SPLITTERS,
+          );
+          if (words.length > 0) {
             const tags = getWordAnnotations(seg, st.id, words.length);
-            for (let i = 0; i < words.length; i++) {
-              const tagVal = tags[i] ? String(tags[i]).trim() : '';
-              if (morphLocalIds[i]) {
-                eaf.addRefAnnotation(
-                  dependentTierId(st.name, spkLabel),
-                  morphTierId,
-                  morphLocalIds[i],
-                  tagVal,
-                  { allowEmpty: true, annotator: subTierAnnotator },
-                );
-              }
+            const cleanTags = tags.map((t) => (t ? String(t).trim() : ''));
+            const subTierId = dependentTierId(st.name, spkLabel);
+
+            if (isTimeSubdivision) {
+              const durationMs = endMs - startMs;
+              const tagItems = cleanTags.map((tagVal, idx) => {
+                const mStart =
+                  startMs + Math.round((idx * durationMs) / words.length);
+                const mEnd =
+                  idx === words.length - 1
+                    ? endMs
+                    : startMs +
+                      Math.round(((idx + 1) * durationMs) / words.length);
+                return {
+                  value: tagVal,
+                  startMs: mStart,
+                  endMs: mEnd,
+                };
+              });
+
+              eaf.addSubdividedAnnotations(
+                subTierId,
+                rootTierId,
+                parentLocalId,
+                tagItems,
+                { annotator: subTierAnnotator },
+              );
+            } else {
+              eaf.addSymbolicSubdivisionAnnotations(
+                subTierId,
+                rootTierId,
+                parentLocalId,
+                cleanTags,
+                { annotator: subTierAnnotator },
+              );
             }
           }
         } else {

@@ -12,7 +12,6 @@
 
 import {
   MAX_SUB_TIERS,
-  SUB_TIER_PRESETS,
   SUB_TIER_TYPE_WORD,
   SUB_TIER_TYPE_SENTENCE,
   normalizeSubTiers,
@@ -155,51 +154,51 @@ export function detectTierDefaults(eafData) {
     return null;
   };
 
-  // Inspect dependent tiers for common patterns
+  const isSubdivisionStereotype = (stereotype) =>
+    stereotype === 'Symbolic_Subdivision' || stereotype === 'Time_Subdivision';
+
+  // Identify intermediary subdivision tiers (subdivision tiers that have child tiers hanging off them)
+  const intermediaryTierIds = new Set();
+  const intermediarySubNames = new Set();
+  for (const t of dependentTiers) {
+    if (
+      isSubdivisionStereotype(t.stereotype) &&
+      dependentTiers.some((other) => other.parentRef === t.tierId)
+    ) {
+      intermediaryTierIds.add(t.tierId);
+      const atMatch = t.tierId.match(/^([^@]+)@/);
+      const subName = (atMatch ? atMatch[1].trim() : t.tierId.trim()).toLowerCase();
+      if (subName) {
+        intermediarySubNames.add(subName);
+      }
+    }
+  }
+
+  // Inspect dependent tiers based strictly on ELAN stereotypes (never tier names)
   for (const t of dependentTiers) {
     const atMatch = t.tierId.match(/^([^@]+)@/);
     const subName = atMatch ? atMatch[1].trim() : t.tierId.trim();
 
-    const parentTier = tierMap.get(t.parentRef);
-    let type = SUB_TIER_TYPE_SENTENCE;
+    // If t is an intermediary subdivision tier with child tiers,
+    // don't register it as a sub-tier
     if (
-      t.stereotype === 'Symbolic_Subdivision' ||
-      parentTier?.stereotype === 'Symbolic_Subdivision' ||
-      /^(pos|morph|morphs|morphemes?|gloss|glosses|tokens?|words?)$/i.test(
-        subName,
-      )
-    ) {
-      type = SUB_TIER_TYPE_WORD;
-    }
-
-    // If t is an intermediary subdivision tier (e.g. morphs@Speaker) with child tiers,
-    // don't register it as a sub-tier if child tiers already exist under it
-    const hasChildren = dependentTiers.some((other) => other.parentRef === t.tierId);
-    if (
-      hasChildren &&
-      /^(morphs?|morphemes?|words?)$/i.test(subName) &&
-      t.stereotype === 'Symbolic_Subdivision'
+      intermediaryTierIds.has(t.tierId) ||
+      (isSubdivisionStereotype(t.stereotype) &&
+        intermediarySubNames.has(subName.toLowerCase()))
     ) {
       continue;
     }
 
-    registerSubTier(subName, t.annotator, type);
-  }
-
-  // If no sub-tiers were detected, check if any root tiers look like sub-tiers
-  // (e.g. named "Translation", "Gloss", "Notes")
-  if (detectedSubTierNames.size === 0) {
-    for (const t of rootTiers) {
-      const isPreset = SUB_TIER_PRESETS.some(
-        (p) => p.toLowerCase() === t.tierId.trim().toLowerCase(),
-      );
-      if (isPreset) {
-        const type = /^(pos|morph|morphs|gloss)$/i.test(t.tierId.trim())
-          ? SUB_TIER_TYPE_WORD
-          : SUB_TIER_TYPE_SENTENCE;
-        registerSubTier(t.tierId.trim(), t.annotator, type);
-      }
+    const parentTier = tierMap.get(t.parentRef);
+    let type = SUB_TIER_TYPE_SENTENCE;
+    if (
+      isSubdivisionStereotype(t.stereotype) ||
+      isSubdivisionStereotype(parentTier?.stereotype)
+    ) {
+      type = SUB_TIER_TYPE_WORD;
     }
+
+    registerSubTier(subName, t.annotator, type);
   }
 
   // Build final subTiers array with annotator and type info preserved
@@ -224,11 +223,10 @@ export function detectTierDefaults(eafData) {
     const subNameCandidate = atMatch ? atMatch[1].trim() : t.tierId.trim();
     const matchedSubId = subTierMap.get(subNameCandidate.toLowerCase()) || null;
 
-    const hasChildTiers = tiers.some((other) => other.parentRef === t.tierId);
     const isIntermediarySubdivision =
-      t.stereotype === 'Symbolic_Subdivision' &&
-      hasChildTiers &&
-      /^(morphs?|morphemes?|words?)$/i.test(subNameCandidate);
+      intermediaryTierIds.has(t.tierId) ||
+      (isSubdivisionStereotype(t.stereotype) &&
+        intermediarySubNames.has(subNameCandidate.toLowerCase()));
 
     let role = 'ignore';
     let speakerId = 1;
@@ -240,14 +238,13 @@ export function detectTierDefaults(eafData) {
       if (rootTierToSpeakerId.has(t.tierId)) {
         role = 'speaker';
         speakerId = rootTierToSpeakerId.get(t.tierId);
-      } else if (matchedSubId) {
-        // Root tier with a preset name like "Translation"
-        role = 'subtier';
-        subTierId = matchedSubId;
       } else {
         role = 'speaker';
         speakerId = 1;
       }
+    } else if (isIntermediarySubdivision) {
+      role = 'ignore';
+      subTierId = null;
     } else {
       // Dependent tier: default to subtier if matched
       if (matchedSubId) {
@@ -327,6 +324,33 @@ export function compileElanToProject({
   const tierDataMap = new Map();
   for (const t of eafData?.tiers || []) {
     tierDataMap.set(t.tierId, t);
+  }
+
+  const isSubdivisionStereotype = (stereotype) =>
+    stereotype === 'Symbolic_Subdivision' || stereotype === 'Time_Subdivision';
+
+  // Ensure each sub-tier's type reflects its mapped ELAN tiers' stereotypes (never tier names)
+  for (const st of cleanSubTiers) {
+    const mappedConfigs = tierConfigs.filter(
+      (cfg) =>
+        cfg.included &&
+        cfg.role === 'subtier' &&
+        String(cfg.subTierId) === String(st.id),
+    );
+    if (mappedConfigs.length > 0) {
+      const hasWordTier = mappedConfigs.some((cfg) => {
+        const tier = tierDataMap.get(cfg.tierId);
+        if (!tier) return false;
+        const parentTier = tier.parentRef
+          ? tierDataMap.get(tier.parentRef)
+          : null;
+        return (
+          isSubdivisionStereotype(tier.stereotype) ||
+          isSubdivisionStereotype(parentTier?.stereotype)
+        );
+      });
+      st.type = hasWordTier ? SUB_TIER_TYPE_WORD : SUB_TIER_TYPE_SENTENCE;
+    }
   }
 
   // Map all annotations across all tiers by ID for hierarchy resolution
@@ -436,12 +460,11 @@ export function compileElanToProject({
     const isWordSubTier = targetSubTier?.type === SUB_TIER_TYPE_WORD;
 
     // Direct Symbolic_Subdivision on a word sub-tier:
-    // Group all annotations by parentAid so we preserve exact token sequence
+    // Group all annotations by parentAid so we preserve exact token sequence (including empty tags)
     if (isWordSubTier && tier.stereotype === 'Symbolic_Subdivision') {
       const byParent = new Map();
       for (const ann of tier.annotations) {
         const textVal = cleanSpeechText(ann.text);
-        if (!textVal) continue;
         const pAid = ann.parentAid;
         if (!pAid) continue;
         if (!byParent.has(pAid)) byParent.set(pAid, []);
@@ -449,7 +472,42 @@ export function compileElanToProject({
       }
       for (const [pAid, tokens] of byParent.entries()) {
         const seg = annIdToSegment.get(pAid);
-        if (seg) {
+        if (seg && tokens.some(Boolean)) {
+          seg.subTexts[subTierIdStr] = tokens;
+        }
+      }
+      continue;
+    }
+
+    // Direct Time_Subdivision on a word sub-tier:
+    // Match time-aligned subdivided annotations to their parent segment in chronological order
+    if (isWordSubTier && tier.stereotype === 'Time_Subdivision') {
+      const bySeg = new Map();
+      for (const ann of tier.annotations) {
+        const textVal = cleanSpeechText(ann.text);
+        const annStart = (ann.start || 0) / 1000;
+        const annEnd = (ann.end || 0) / 1000;
+
+        let bestOverlap = 0;
+        let bestCandidate = null;
+        for (const seg of rawSegments) {
+          if (tier.parentRef && seg._tierId !== tier.parentRef) continue;
+          const overlap = Math.max(
+            0,
+            Math.min(seg.end, annEnd) - Math.max(seg.start, annStart),
+          );
+          if (overlap > bestOverlap) {
+            bestOverlap = overlap;
+            bestCandidate = seg;
+          }
+        }
+        if (bestCandidate) {
+          if (!bySeg.has(bestCandidate)) bySeg.set(bestCandidate, []);
+          bySeg.get(bestCandidate).push(textVal);
+        }
+      }
+      for (const [seg, tokens] of bySeg.entries()) {
+        if (tokens.some(Boolean)) {
           seg.subTexts[subTierIdStr] = tokens;
         }
       }
