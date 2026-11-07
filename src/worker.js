@@ -5,7 +5,13 @@ import {
   disposeWhistle,
   isWhistleModel,
 } from './utils/whistleRunner.js';
-import { getVadSession, getSpeechTimestamps, segmentsCleanup, setupOrtWasmEnvironment } from './vad.js';
+import {
+  getVadSession,
+  getSpeechTimestamps,
+  segmentsCleanup,
+  setupOrtWasmEnvironment,
+  trimSegmentsWithVad,
+} from './vad.js';
 import { getDiarizerSession, extractSpeakerEmbedding } from './diarizer.js';
 import { diarizeSegmentsWithPyannote } from './pyannote.js';
 import {
@@ -2006,6 +2012,103 @@ self.onmessage = async (event) => {
       self.postMessage({
         type: 'error',
         payload: { message: `Speaker diarization failed: ${err?.message || String(err)}` }
+      });
+    }
+  } else if (type === 'vad_trim_segments') {
+    try {
+      const {
+        audioData,
+        segments = [],
+        files,
+        vadOptions = {},
+        rangeStart = null,
+        rangeEnd = null,
+        targetSegmentIds = null,
+      } = payload;
+
+      if (!segments || segments.length === 0) {
+        self.postMessage({
+          type: 'vad_trim_result',
+          payload: {
+            segments: [],
+            trimmedCount: 0,
+            inspectedCount: 0,
+            totalTrimmedSec: 0,
+            timeSec: '0.00',
+            message: 'No segments provided for VAD trimming.',
+          },
+        });
+        return;
+      }
+
+      const float32Audio =
+        audioData instanceof Float32Array
+          ? audioData
+          : new Float32Array(audioData);
+
+      let customVadBuffer = null;
+      if (Array.isArray(files)) {
+        const vadEntry = files.find((f) => {
+          const p = (f.path || '').toLowerCase();
+          return p.includes('silero') || p.includes('vad');
+        });
+        if (vadEntry && vadEntry.file) {
+          customVadBuffer = await vadEntry.file.arrayBuffer();
+        }
+      }
+
+      self.postMessage({
+        type: 'status',
+        payload: {
+          message: 'Loading Silero VAD v5 engine to trim segment boundaries...',
+        },
+      });
+
+      const startTime = performance.now();
+      const vadSession = await getVadSession(customVadBuffer);
+
+      const trimResult = await trimSegmentsWithVad(
+        float32Audio,
+        segments,
+        vadSession,
+        {
+          threshold: Number(vadOptions.threshold) || 0.5,
+          speechPadMs: Number(vadOptions.speechPadMs ?? 60),
+          minSegment: Number(vadOptions.minSegment) || 0.25,
+          rangeStart,
+          rangeEnd,
+          targetSegmentIds,
+          samplingRate: 16000,
+        },
+        (progressRatio) => {
+          const pct = Math.round(progressRatio * 100);
+          self.postMessage({
+            type: 'progress',
+            payload: {
+              file: `Trimming segment silence with Silero VAD (${pct}%)...`,
+              progress: pct,
+              loaded: pct,
+              total: 100,
+            },
+          });
+        },
+      );
+
+      const totalTime = ((performance.now() - startTime) / 1000).toFixed(2);
+      self.postMessage({
+        type: 'vad_trim_result',
+        payload: {
+          ...trimResult,
+          timeSec: totalTime,
+        },
+      });
+    } catch (err) {
+      console.error('[Worker] VAD segment trimming error:', err);
+      self.postMessage({
+        type: 'error',
+        payload: {
+          message: `VAD segment trimming failed: ${err?.message || String(err)}`,
+        },
       });
     }
   }

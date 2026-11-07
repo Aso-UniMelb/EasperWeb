@@ -87,6 +87,9 @@
     diarize_result: (payload) => {
       transcriptState.handleDiarizeResult(payload);
     },
+    vad_trim_result: (payload) => {
+      transcriptState.handleVadTrimResult(payload);
+    },
     result: (payload) => {
       transcriptState.handleWorkerResult(payload);
     },

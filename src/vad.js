@@ -634,3 +634,352 @@ export function segmentsCleanup(initSegments, options = {}) {
   });
 }
 
+
+/**
+ * Pure helper that computes tightened [start, end] bounds for a single segment
+ * from its per-frame Silero VAD speech probabilities.
+ *
+ * Strictly shrinks boundaries inward within [segStart, segEnd], applying edge padding
+ * and enforcing a minimum segment duration. If no speech is detected, returns null
+ * so the caller preserves the original segment untouched.
+ *
+ * @param {ArrayLike<number>} frameProbs Per-frame speech probabilities (0.0 to 1.0)
+ * @param {number} segStart Original segment start in seconds
+ * @param {number} segEnd Original segment end in seconds
+ * @param {Object} [options]
+ * @param {number} [options.threshold=0.5] Speech onset threshold
+ * @param {number} [options.speechPadMs=60] Padding added before first onset and after last offset (ms)
+ * @param {number} [options.minSpeechDurationMs=64] Minimum speech burst duration to ignore single-frame clicks (ms)
+ * @param {number} [options.minSilenceDurationMs=96] Silence duration before closing a speech burst (ms)
+ * @param {number} [options.minSegmentDurationS=0.25] Minimum resulting segment length (s)
+ * @param {number} [options.minTrimS=0.04] Minimum total boundary change required to apply trim (s)
+ * @param {number} [options.frameSize=512] Samples per VAD frame (512 = 32ms at 16kHz)
+ * @param {number} [options.samplingRate=16000] Audio sample rate
+ * @returns {{ start: number, end: number, trimmedSec: number } | null}
+ */
+export function computeTrimmedBoundsFromProbs(
+  frameProbs,
+  segStart,
+  segEnd,
+  options = {},
+) {
+  const {
+    threshold = 0.5,
+    speechPadMs = 60,
+    minSpeechDurationMs = 64,
+    minSilenceDurationMs = 96,
+    minSegmentDurationS = 0.25,
+    minTrimS = 0.04,
+    frameSize = 512,
+    samplingRate = 16000,
+  } = options;
+
+  const totalFrames = frameProbs ? frameProbs.length : 0;
+  if (totalFrames < 2 || segEnd <= segStart) return null;
+
+  const negThreshold = Math.max(0.05, threshold - 0.15);
+  const minSpeechSamples = Math.round((samplingRate * minSpeechDurationMs) / 1000);
+  const minSilenceSamples = Math.round((samplingRate * minSilenceDurationMs) / 1000);
+  const speechPadSamples = Math.round((samplingRate * speechPadMs) / 1000);
+  const totalSamples = totalFrames * frameSize;
+
+  const speeches = [];
+  let currentSpeech = null;
+  let tempEnd = 0;
+
+  for (let frameIdx = 0; frameIdx < totalFrames; frameIdx++) {
+    const prob = frameProbs[frameIdx];
+    const currentSample = frameIdx * frameSize;
+
+    if (prob >= threshold) {
+      if (tempEnd !== 0) {
+        tempEnd = 0;
+      }
+      if (!currentSpeech) {
+        currentSpeech = { startSample: currentSample };
+      }
+    } else if (prob < negThreshold && currentSpeech) {
+      if (tempEnd === 0) {
+        tempEnd = currentSample;
+      }
+      if (currentSample - tempEnd >= minSilenceSamples) {
+        if (tempEnd - currentSpeech.startSample >= minSpeechSamples) {
+          speeches.push({
+            startSample: currentSpeech.startSample,
+            endSample: tempEnd,
+          });
+        }
+        currentSpeech = null;
+        tempEnd = 0;
+      }
+    }
+  }
+
+  if (currentSpeech) {
+    const endSample = tempEnd || totalSamples;
+    if (endSample - currentSpeech.startSample >= minSpeechSamples) {
+      speeches.push({
+        startSample: currentSpeech.startSample,
+        endSample,
+      });
+    }
+  }
+
+  // Fallback: if no burst met minSpeechDurationMs, check if any frame crossed threshold
+  if (speeches.length === 0) {
+    let firstFrame = -1;
+    let lastFrame = -1;
+    for (let i = 0; i < totalFrames; i++) {
+      if (frameProbs[i] >= threshold) {
+        if (firstFrame === -1) firstFrame = i;
+        lastFrame = i;
+      }
+    }
+    if (firstFrame === -1) {
+      return null; // No speech detected inside segment; keep original bounds
+    }
+    speeches.push({
+      startSample: firstFrame * frameSize,
+      endSample: (lastFrame + 1) * frameSize,
+    });
+  }
+
+  const firstSpeechSample = speeches[0].startSample;
+  const lastSpeechSample = speeches[speeches.length - 1].endSample;
+
+  const paddedStartSample = Math.max(0, firstSpeechSample - speechPadSamples);
+  const paddedEndSample = Math.min(totalSamples, lastSpeechSample + speechPadSamples);
+
+  let newStart = Number((segStart + paddedStartSample / samplingRate).toFixed(2));
+  let newEnd = Number((segStart + paddedEndSample / samplingRate).toFixed(2));
+
+  // Clamp strictly within original [segStart, segEnd]
+  newStart = Math.max(segStart, newStart);
+  newEnd = Math.min(segEnd, newEnd);
+
+  // Enforce minimum segment duration symmetrically around midpoint
+  const minDur = Math.min(minSegmentDurationS, segEnd - segStart);
+  if (newEnd - newStart < minDur) {
+    const mid = (newStart + newEnd) / 2;
+    newStart = Math.max(segStart, Number((mid - minDur / 2).toFixed(2)));
+    newEnd = Math.min(segEnd, Number((newStart + minDur).toFixed(2)));
+    if (newEnd - newStart < minDur) {
+      newStart = Math.max(segStart, Number((newEnd - minDur).toFixed(2)));
+    }
+  }
+
+  const trimmedStart = Math.max(0, newStart - segStart);
+  const trimmedEnd = Math.max(0, segEnd - newEnd);
+  const trimmedSec = Number((trimmedStart + trimmedEnd).toFixed(2));
+
+  if (trimmedSec < minTrimS) {
+    return null;
+  }
+
+  return {
+    start: newStart,
+    end: newEnd,
+    trimmedSec,
+  };
+}
+
+/**
+ * Trims leading and trailing non-speech silence from existing segments using Silero VAD.
+ * Preserves segment IDs, text, speaker assignments, and sub-tier annotations 1-to-1.
+ *
+ * @param {Float32Array} audioFloat32 Full 16 kHz mono audio buffer
+ * @param {Array<Object>} segments Existing project segments
+ * @param {ort.InferenceSession} vadSession Initialized Silero VAD ONNX session
+ * @param {Object} [options]
+ * @param {number} [options.threshold=0.5] Speech probability threshold
+ * @param {number} [options.speechPadMs=60] Padding before speech onset and after speech offset (ms)
+ * @param {number} [options.minSegment=0.25] Minimum resulting segment duration (s)
+ * @param {number|null} [options.rangeStart=null] Optional interval start filter (s)
+ * @param {number|null} [options.rangeEnd=null] Optional interval end filter (s)
+ * @param {Array<string|number>|null} [options.targetSegmentIds=null] Optional subset of segment IDs to trim
+ * @param {number} [options.samplingRate=16000] Audio sample rate
+ * @param {Function} [onProgress] Progress callback (0.0 to 1.0)
+ * @returns {Promise<{ segments: Array<Object>, trimmedCount: number, inspectedCount: number, totalTrimmedSec: number }>}
+ */
+export async function trimSegmentsWithVad(
+  audioFloat32,
+  segments = [],
+  vadSession,
+  options = {},
+  onProgress = null,
+) {
+  const {
+    threshold = 0.5,
+    speechPadMs = 60,
+    minSegment = 0.25,
+    rangeStart = null,
+    rangeEnd = null,
+    targetSegmentIds = null,
+    samplingRate = 16000,
+  } = options;
+
+  if (!Array.isArray(segments) || segments.length === 0 || !audioFloat32?.length) {
+    return {
+      segments: Array.isArray(segments) ? [...segments] : [],
+      trimmedCount: 0,
+      inspectedCount: 0,
+      totalTrimmedSec: 0,
+    };
+  }
+
+  const targetIdSet = Array.isArray(targetSegmentIds) && targetSegmentIds.length > 0
+    ? new Set(targetSegmentIds.map((id) => String(id)))
+    : null;
+  const hasRange =
+    rangeStart != null &&
+    rangeEnd != null &&
+    Number(rangeEnd) > Number(rangeStart) + 0.05;
+
+  const isTargetSegment = (seg) => {
+    if (!seg) return false;
+    if (targetIdSet) {
+      return targetIdSet.has(String(seg.id));
+    }
+    if (hasRange) {
+      return (
+        (seg.end ?? 0) > Number(rangeStart) + 0.05 &&
+        (seg.start ?? 0) < Number(rangeEnd) - 0.05
+      );
+    }
+    return true;
+  };
+
+  const targetIndices = [];
+  for (let i = 0; i < segments.length; i++) {
+    if (isTargetSegment(segments[i])) {
+      targetIndices.push(i);
+    }
+  }
+
+  if (targetIndices.length === 0) {
+    return {
+      segments: segments.map((s) => ({ ...s })),
+      trimmedCount: 0,
+      inspectedCount: 0,
+      totalTrimmedSec: 0,
+    };
+  }
+
+  const frameSize = 512; // 32 ms at 16 kHz
+  const contextSize = 64;
+  const inputChunk = new Float32Array(contextSize + frameSize);
+  const srTensor = new ort.Tensor('int64', new BigInt64Array([BigInt(samplingRate)]), []);
+
+  const updatedSegments = segments.map((s) => ({ ...s }));
+  let trimmedCount = 0;
+  let totalTrimmedSec = 0;
+  let cumulativeFrames = 0;
+
+  try {
+    for (let tIdx = 0; tIdx < targetIndices.length; tIdx++) {
+      const segIdx = targetIndices[tIdx];
+      const seg = updatedSegments[segIdx];
+      const segStart = Math.max(0, Number(seg.start) || 0);
+      const segEnd = Math.max(segStart, Number(seg.end) || 0);
+
+      const startSample = Math.max(
+        0,
+        Math.min(audioFloat32.length, Math.floor(segStart * samplingRate)),
+      );
+      const endSample = Math.max(
+        startSample,
+        Math.min(audioFloat32.length, Math.ceil(segEnd * samplingRate)),
+      );
+      const segAudio = audioFloat32.subarray(startSample, endSample);
+      const numFrames = Math.floor(segAudio.length / frameSize);
+
+      if (numFrames >= 2) {
+        const context = new Float32Array(contextSize);
+        let state = new ort.Tensor('float32', new Float32Array(2 * 1 * 128), [2, 1, 128]);
+        const probs = new Float32Array(numFrames);
+
+        try {
+          for (let f = 0; f < numFrames; f++) {
+            const fStart = f * frameSize;
+            const frame = segAudio.subarray(fStart, fStart + frameSize);
+
+            inputChunk.set(context, 0);
+            inputChunk.set(frame, contextSize);
+            context.set(frame.subarray(frameSize - contextSize, frameSize));
+
+            const inputTensor = new ort.Tensor('float32', inputChunk, [
+              1,
+              contextSize + frameSize,
+            ]);
+            const results = await vadSession.run({
+              input: inputTensor,
+              state,
+              sr: srTensor,
+            });
+
+            probs[f] = results.output.data[0];
+
+            const oldState = state;
+            state = results.stateN;
+
+            if (oldState && typeof oldState.dispose === 'function') {
+              try { oldState.dispose(); } catch {}
+            }
+            if (results.output && typeof results.output.dispose === 'function') {
+              try { results.output.dispose(); } catch {}
+            }
+            if (inputTensor && typeof inputTensor.dispose === 'function') {
+              try { inputTensor.dispose(); } catch {}
+            }
+
+            cumulativeFrames++;
+            if (cumulativeFrames % 400 === 0) {
+              await new Promise((resolve) => setTimeout(resolve, 0));
+            }
+          }
+        } finally {
+          if (state && typeof state.dispose === 'function') {
+            try { state.dispose(); } catch {}
+          }
+        }
+
+        const trimRes = computeTrimmedBoundsFromProbs(probs, segStart, segEnd, {
+          threshold,
+          speechPadMs,
+          minSegmentDurationS: Math.max(0.15, Math.min(0.4, Number(minSegment) || 0.25)),
+          frameSize,
+          samplingRate,
+        });
+
+        if (trimRes) {
+          const newDur = Number((trimRes.end - trimRes.start).toFixed(2));
+          updatedSegments[segIdx] = {
+            ...seg,
+            start: trimRes.start,
+            end: trimRes.end,
+            duration: newDur,
+            startSample: Math.round(trimRes.start * samplingRate),
+            endSample: Math.round(trimRes.end * samplingRate),
+          };
+          trimmedCount++;
+          totalTrimmedSec += trimRes.trimmedSec;
+        }
+      }
+
+      if (onProgress) {
+        onProgress((tIdx + 1) / targetIndices.length);
+      }
+    }
+  } finally {
+    if (srTensor && typeof srTensor.dispose === 'function') {
+      try { srTensor.dispose(); } catch {}
+    }
+  }
+
+  return {
+    segments: updatedSegments,
+    trimmedCount,
+    inspectedCount: targetIndices.length,
+    totalTrimmedSec: Number(totalTrimmedSec.toFixed(2)),
+  };
+}

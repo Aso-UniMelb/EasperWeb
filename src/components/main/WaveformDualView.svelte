@@ -60,7 +60,9 @@
     if (item) {
       transcriptState.selectSegment(item.segmentId, true);
       setTimeout(() => {
-        const cardEl = document.getElementById(`segment-item-${item.segmentId}`);
+        const cardEl = document.getElementById(
+          `segment-item-${item.segmentId}`,
+        );
         if (!cardEl) return;
         const textarea = cardEl.querySelector('textarea');
         if (textarea) {
@@ -784,7 +786,9 @@
       <!-- Right Boundary Resizer Handle -->
       <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
       <div
-        class="waveform-sidebar-resizer {isResizingSidebar ? 'is-resizing' : ''}"
+        class="waveform-sidebar-resizer {isResizingSidebar
+          ? 'is-resizing'
+          : ''}"
         onpointerdown={handleResizePointerDown}
         onpointermove={handleResizePointerMove}
         onpointerup={handleResizePointerUp}
@@ -1052,6 +1056,19 @@
           <span>Merge with the next</span>
         </button>
       {/if}
+      <button
+        type="button"
+        class="context-menu-item item-trim-vad"
+        onclick={() => transcriptState.handleTrimFromContextMenu()}
+        role="menuitem"
+        disabled={appState.isProcessing || transcriptState.isTrimmingVad}
+        title="Trim leading and trailing silence in this segment using Silero VAD [{formatTimeSec(
+          transcriptState.contextMenu.targetSegment.start,
+        )} - {formatTimeSec(transcriptState.contextMenu.targetSegment.end)}]"
+      >
+        <i class="fa-solid fa-compress"></i>
+        <span>Trim</span>
+      </button>
 
       <div class="context-menu-divider"></div>
 

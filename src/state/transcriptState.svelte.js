@@ -156,6 +156,7 @@ class TranscriptState {
   diarizationWindowS = $state(VAD_DEFAULTS.diarizationWindowS);
   diarizationPeriodS = $state(VAD_DEFAULTS.diarizationPeriodS);
   isDiarizing = $state(false);
+  isTrimmingVad = $state(false);
 
   get enableDiarization() {
     return Number(this.diarizationSpeakerCount) > 1 || this.diarizationSpeakerCount === 'auto';
@@ -1795,6 +1796,13 @@ class TranscriptState {
     this.mergeSegmentWithNext(id);
   }
 
+  handleTrimFromContextMenu() {
+    if (!this.contextMenu.targetSegment) return;
+    const id = this.contextMenu.targetSegment.id;
+    this.closeContextMenu();
+    this.handleTrimSegmentsWithVad([id]);
+  }
+
   handleDeleteFromContextMenu() {
     if (this.contextMenu.targetSegment) {
       const id = this.contextMenu.targetSegment.id;
@@ -2538,6 +2546,50 @@ class TranscriptState {
 
     requestAnimationFrame(() => this.drawVerticalWaveform());
     this.notifySegmentsChange();
+  }
+
+  handleVadTrimResult(payload) {
+    this.isTrimmingVad = false;
+    appState.isProcessing = false;
+    appState.downloadProgress = null;
+
+    if (Array.isArray(payload?.segments) && payload.segments.length > 0) {
+      const trimmedCount = Number(payload.trimmedCount) || 0;
+      const inspectedCount = Number(payload.inspectedCount) || payload.segments.length;
+      const totalTrimmedSec = Number(payload.totalTrimmedSec) || 0;
+
+      if (trimmedCount > 0) {
+        this.pushUndo('Trim segments');
+        this.segments = payload.segments;
+
+        if (this.metrics) {
+          this.metrics.totalSegments = this.segments.length;
+          const speechSec = this.segments.reduce(
+            (acc, s) => acc + (s.duration || 0),
+            0,
+          );
+          this.metrics.speechDuration = Number(speechSec.toFixed(2));
+          this.metrics.silenceSkipped = Number(
+            Math.max(0, (this.metrics.audioDuration || 0) - speechSec).toFixed(2),
+          );
+        }
+        if (this.fullResult?.segments) {
+          this.fullResult.segments = this.segments;
+        }
+        if (this.fullResult?.output?.segments) {
+          this.fullResult.output.segments = this.segments;
+        }
+
+        const timeStr = payload.timeSec ? ` in ${payload.timeSec}s` : '';
+        appState.statusMessage = `VAD trim complete! Tightened ${trimmedCount} of ${inspectedCount} segment(s) (removed ${totalTrimmedSec.toFixed(1)}s of non-speech silence)${timeStr}.`;
+        requestAnimationFrame(() => this.drawVerticalWaveform());
+        this.notifySegmentsChange();
+      } else {
+        appState.statusMessage = `VAD trim complete: All ${inspectedCount} inspected segment(s) are already tightly aligned to speech boundaries.`;
+      }
+    } else {
+      appState.statusMessage = payload?.message || 'VAD trim complete.';
+    }
   }
 
   handleVadRegions(payload) {
@@ -3302,6 +3354,95 @@ class TranscriptState {
     }
   }
 
+  async handleTrimSegmentsWithVad(targetSegmentIds = null) {
+    if (!this.segments || this.segments.length === 0) {
+      appState.errorMessage =
+        'No segments found to trim. Import an ELAN file or create segments first.';
+      return;
+    }
+    if (appState.isProcessing || this.isTrimmingVad) return;
+
+    let audioTarget = null;
+    if (audioState.audioSource === 'file') {
+      if (!audioState.selectedFile) {
+        appState.errorMessage = 'Please select an audio file first.';
+        return;
+      }
+      audioTarget = audioState.selectedFile;
+    } else {
+      if (!audioState.recordedBlob) {
+        appState.errorMessage = 'Please record audio from the microphone first.';
+        return;
+      }
+      audioTarget = audioState.recordedBlob;
+    }
+
+    this.isTrimmingVad = true;
+    appState.isProcessing = true;
+    appState.activeAction = 'vad_trim';
+    appState.errorMessage = '';
+
+    try {
+      if (
+        !audioState.cachedDecodedAudio ||
+        audioState.cachedDecodedAudio.target !== audioTarget
+      ) {
+        const decoded = await processAudioFile(audioTarget);
+        audioState.cachedDecodedAudio = {
+          target: audioTarget,
+          audioData: decoded.audioData,
+          duration: decoded.duration,
+        };
+      }
+      const audioData = audioState.cachedDecodedAudio.audioData;
+      const duration = audioState.cachedDecodedAudio.duration;
+
+      const isSingleSubset =
+        Array.isArray(targetSegmentIds) && targetSegmentIds.length > 0;
+      const isInterval = !isSingleSubset && audioState.isIntervalSelected;
+      const rangeStart = isInterval ? audioState.audioRangeStart : null;
+      const rangeEnd = isInterval ? audioState.audioRangeEnd : null;
+
+      if (isInterval && this.segmentsInSelectedRange.length === 0) {
+        this.isTrimmingVad = false;
+        appState.isProcessing = false;
+        appState.statusMessage = `No segments found in selected range [${formatTimeSec1(rangeStart)} - ${formatTimeSec1(rangeEnd)}].`;
+        return;
+      }
+
+      const targetCount = isSingleSubset
+        ? targetSegmentIds.length
+        : isInterval
+          ? this.segmentsInSelectedRange.length
+          : this.segments.length;
+
+      appState.statusMessage = `Scanning and trimming non-speech silence in ${targetCount} segment(s) with Silero VAD...`;
+
+      appState.worker.postMessage({
+        type: 'vad_trim_segments',
+        payload: {
+          audioData,
+          segments: $state.snapshot(this.segments),
+          files: modelState.rawLocalFiles,
+          rangeStart,
+          rangeEnd,
+          targetSegmentIds: isSingleSubset ? targetSegmentIds : null,
+          vadOptions: {
+            threshold: Number(this.vadThreshold),
+            speechPadMs: Number(this.vadSpeechPadMs),
+            minSegment: Number(this.vadMinSegmentS),
+          },
+          fullAudioDuration: duration,
+        },
+      });
+    } catch (err) {
+      console.error('[Main UI] VAD segment trimming failed to initiate:', err);
+      this.isTrimmingVad = false;
+      appState.isProcessing = false;
+      appState.errorMessage = `VAD trimming failed: ${err.message || String(err)}`;
+    }
+  }
+
   async handleTranscribeEmptySegments() {
     let audioTarget = null;
     if (audioState.audioSource === 'file') {
@@ -3464,6 +3605,8 @@ class TranscriptState {
 
     appState.isProcessing = false;
     modelState.isModelLoading = false;
+    this.isDiarizing = false;
+    this.isTrimmingVad = false;
     appState.downloadProgress = null;
     modelState.isModelLoaded = false;
     this.currentTranscribingSegment = null;

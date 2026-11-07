@@ -235,7 +235,9 @@
             </div>
             {#if appState.showHelpText}
               <p class="setting-help">
-                Increase sensitivity if speakers sound similar and get merged into one person; decrease sensitivity if one speaker with varied pitch gets split into multiple people.
+                Increase sensitivity if speakers sound similar and get merged
+                into one person; decrease sensitivity if one speaker with varied
+                pitch gets split into multiple people.
               </p>
             {/if}
           </div>
@@ -516,6 +518,39 @@
             </p>
           {/if}
         </div>
+
+        {#if transcriptState.segments.length > 0}
+          <div class="setting-row" style="margin-top: 4px;">
+            <button
+              type="button"
+              class="btn-trim-vad-action"
+              onclick={() => transcriptState.handleTrimSegmentsWithVad()}
+              disabled={appState.isProcessing ||
+                transcriptState.isTrimmingVad ||
+                !hasAudio}
+              title="Tighten existing segment start and end boundaries using Silero VAD without deleting or merging segments"
+            >
+              {#if transcriptState.isTrimmingVad}
+                <i class="fa-solid fa-spinner fa-spin"></i>
+                <span>Trimming silence with VAD...</span>
+              {:else}
+                <i class="fa-solid fa-compress"></i>
+                <span
+                  >{audioState.isIntervalSelected
+                    ? `Trim in Selection (${segmentsInIntervalCount})`
+                    : 'Trim in Segments'}</span
+                >
+              {/if}
+            </button>
+            {#if appState.showHelpText}
+              <p class="setting-help">
+                Tightens start/end boundaries of existing segments to remove
+                leading and trailing silence while preserving all text,
+                speakers, and sub-tiers.
+              </p>
+            {/if}
+          </div>
+        {/if}
       </div>
     </div>
 
@@ -589,7 +624,7 @@
           <span>Reset</span>
         </button>
 
-        {#if appState.isProcessing && appState.activeAction === 'segment'}
+        {#if appState.isProcessing && (appState.activeAction === 'segment' || appState.activeAction === 'vad_trim')}
           <button
             type="button"
             class="btn-stop-action"
@@ -988,6 +1023,39 @@
     background: rgba(124, 58, 237, 0.2);
     border-color: rgba(124, 58, 237, 0.35);
     color: #c084fc;
+  }
+
+  .btn-trim-vad-action {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 5px 8px;
+    font-size: 0.74rem;
+    font-weight: 600;
+    background: #ecfdf5;
+    border: 1px solid #a7f3d0;
+    color: #047857;
+    border-radius: 5px;
+    cursor: pointer;
+    transition: all 0.14s ease;
+    width: 100%;
+  }
+
+  .btn-trim-vad-action:hover:not(:disabled) {
+    background: #d1fae5;
+    color: #065f46;
+  }
+
+  .btn-trim-vad-action:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+  }
+
+  :global([data-theme='dark']) .btn-trim-vad-action {
+    background: rgba(16, 185, 129, 0.18);
+    border-color: rgba(16, 185, 129, 0.35);
+    color: #34d399;
   }
 
   .btn-reset-interval {

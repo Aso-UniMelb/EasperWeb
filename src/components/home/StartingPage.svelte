@@ -39,7 +39,7 @@
           onclick={() => router.navigate('/transcriber')}
         >
           <i class="fa-solid fa-microphone"></i>
-          <span>Open Transcriber</span>
+          <span>Transcriber</span>
           <i class="fa-solid fa-arrow-right cta-arrow"></i>
         </button>
 
@@ -49,7 +49,7 @@
           onclick={() => projectState.goToDataset()}
         >
           <i class="fa-solid fa-database"></i>
-          <span>Open Dataset Builder</span>
+          <span>Dataset Builder</span>
         </button>
 
         <button
