@@ -1015,8 +1015,8 @@
 
   /* Controlled Vocabulary Panel */
   .field-vocab-panel {
-    background: linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%);
-    border-top: 1px solid var(--border-color, #e2e8f0);
+    background: var(--bg-app, #f9f8f7);
+    border-top: 1px solid var(--border-color, #e4e2dd);
     padding: 16px 20px;
     display: flex;
     flex-direction: column;

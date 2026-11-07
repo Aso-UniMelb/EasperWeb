@@ -445,16 +445,16 @@
   /* Nodes */
   .pipeline-node {
     flex: 1;
-    background: var(--bg-hover, #f8fafc);
-    border: 1px solid var(--border-color, #e2e8f0);
-    border-radius: 10px;
+    background: var(--bg-app, #f9f8f7);
+    border: 1px solid var(--border-color, #e4e2dd);
+    border-radius: 8px;
     padding: 10px 12px;
     display: flex;
     align-items: center;
     gap: 10px;
     position: relative;
     text-align: left;
-    transition: all 0.15s ease;
+    transition: border-color 0.15s ease, background-color 0.15s ease;
     outline: none;
     color: inherit;
   }
@@ -469,8 +469,7 @@
   }
 
   .node-clickable:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.06);
+    background: var(--bg-hover, #f2f0ed);
     border-color: #94a3b8;
   }
 
@@ -645,12 +644,12 @@
   .pipeline-loop-footer {
     margin-top: 14px;
     padding-top: 12px;
-    border-top: 1px dashed var(--border-color, #e2e8f0);
+    border-top: 1px dashed var(--border-color, #e4e2dd);
     display: flex;
     align-items: center;
     gap: 10px;
-    background: #f8fafc;
-    border-radius: 8px;
+    background: var(--bg-app, #f9f8f7);
+    border-radius: 6px;
     padding: 10px 14px;
   }
 
@@ -675,9 +674,9 @@
   .pipeline-citation-card {
     margin-top: 10px;
     padding: 10px 14px;
-    background: var(--bg-hover, #f8fafc);
-    border: 1px solid var(--border-color, #e2e8f0);
-    border-radius: 8px;
+    background: var(--bg-app, #f9f8f7);
+    border: 1px solid var(--border-color, #e4e2dd);
+    border-radius: 6px;
     display: flex;
     flex-direction: column;
     gap: 8px;

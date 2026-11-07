@@ -19,8 +19,12 @@
   const hasAudio = $derived(
     Boolean(audioState.selectedFile || audioState.currentAudioUrl),
   );
-  const emptyCount = $derived(transcriptState.emptySegmentsInSelectedRangeCount);
-  const rangeTotalCount = $derived(transcriptState.segmentsInSelectedRange.length);
+  const emptyCount = $derived(
+    transcriptState.emptySegmentsInSelectedRangeCount,
+  );
+  const rangeTotalCount = $derived(
+    transcriptState.segmentsInSelectedRange.length,
+  );
   const totalCount = $derived(transcriptState.segments.length);
 
   const selectedModel = $derived(
@@ -109,7 +113,8 @@
             {/if}
             <span
               class="lang-tag dtype-tag"
-              title="Active Model Precision: {modelState.modelSource === 'folder'
+              title="Active Model Precision: {modelState.modelSource ===
+              'folder'
                 ? modelState.modelDtype?.toUpperCase() || 'FP32'
                 : modelState.activeDevice === 'webgpu'
                   ? 'Q4 (Hardware-accelerated WebGPU WGSL MatMulNBits)'
@@ -140,7 +145,9 @@
 
             <button
               type="button"
-              class="btn-preload-pill {modelState.isModelLoaded ? 'loaded' : ''}"
+              class="btn-preload-pill {modelState.isModelLoaded
+                ? 'loaded'
+                : ''}"
               onclick={() => modelState.preloadModel(appState.worker)}
               disabled={appState.isProcessing ||
                 modelState.isModelLoading ||
@@ -317,7 +324,11 @@
             {:else if audioState.isIntervalSelected && rangeTotalCount === 0}
               <span class="status-chip chip-warning">
                 <i class="fa-solid fa-crop-simple"></i>
-                <span>No segments in selected range ({audioState.audioRangeStart.toFixed(1)}s &ndash; {audioState.audioRangeEnd.toFixed(1)}s)</span>
+                <span
+                  >No segments in selected range ({audioState.audioRangeStart.toFixed(
+                    1,
+                  )}s &ndash; {audioState.audioRangeEnd.toFixed(1)}s)</span
+                >
               </span>
             {:else if emptyCount === 0}
               <span class="status-chip chip-success">
@@ -325,9 +336,7 @@
                 <span
                   >All {rangeTotalCount} segment{rangeTotalCount === 1
                     ? ''
-                    : 's'}{audioState.isIntervalSelected
-                    ? ' in range'
-                    : ''} transcribed{selectedTargetTier
+                    : 's'}{audioState.isIntervalSelected ? ' in range' : ''} transcribed{selectedTargetTier
                     ? ` in ${selectedTargetTier.name}`
                     : ''}</span
                 >
@@ -339,9 +348,7 @@
                   ><strong>{emptyCount}</strong> of {rangeTotalCount} segment{emptyCount ===
                   1
                     ? ''
-                    : 's'}{audioState.isIntervalSelected
-                    ? ' in range'
-                    : ''} empty{selectedTargetTier
+                    : 's'}{audioState.isIntervalSelected ? ' in range' : ''} empty{selectedTargetTier
                     ? ` in ${selectedTargetTier.name}`
                     : ''}</span
                 >
@@ -918,21 +925,21 @@
     height: 34px;
     padding: 0 16px;
     font-size: 0.8125rem;
-    font-weight: 700;
+    font-weight: 600;
     color: #ffffff;
-    background: linear-gradient(135deg, #7c3aed, #6d28d9);
+    background: #7c3aed;
     border: 1px solid #6d28d9;
     border-radius: 6px;
     cursor: pointer;
-    transition: all 0.15s ease;
-    box-shadow: 0 1px 3px rgba(124, 58, 237, 0.3);
+    transition:
+      background-color 0.15s ease,
+      border-color 0.15s ease;
     white-space: nowrap;
   }
 
   .btn-run-action:hover:not(:disabled) {
-    background: linear-gradient(135deg, #6d28d9, #5b21b6);
-    transform: translateY(-1px);
-    box-shadow: 0 2px 6px rgba(124, 58, 237, 0.42);
+    background: #6d28d9;
+    border-color: #5b21b6;
   }
 
   .btn-run-action:disabled {
@@ -949,14 +956,15 @@
     height: 34px;
     padding: 0 16px;
     font-size: 0.8125rem;
-    font-weight: 700;
+    font-weight: 600;
     color: #ffffff;
     background: #ef4444;
     border: 1px solid #dc2626;
     border-radius: 6px;
     cursor: pointer;
-    transition: all 0.14s ease;
-    box-shadow: 0 1px 3px rgba(239, 68, 68, 0.3);
+    transition:
+      background-color 0.14s ease,
+      border-color 0.14s ease;
     white-space: nowrap;
   }
 
@@ -964,8 +972,6 @@
   .btn-run-action.btn-stop-action:hover {
     background: #dc2626;
     border-color: #b91c1c;
-    transform: translateY(-1px);
-    box-shadow: 0 2px 6px rgba(239, 68, 68, 0.42);
   }
 
   .panel-alert {
@@ -1186,4 +1192,3 @@
     }
   }
 </style>
-

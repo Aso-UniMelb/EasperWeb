@@ -1130,8 +1130,6 @@
   .chip-allowed:hover {
     background: #dcfce7;
     border-color: #86efac;
-    transform: translateY(-1px);
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
   }
 
   .chip-disallowed {
@@ -1143,8 +1141,6 @@
   .chip-disallowed:hover {
     background: #fef3c7;
     border-color: #fcd34d;
-    transform: translateY(-1px);
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
   }
 
   .chip-action-text {
@@ -1270,24 +1266,23 @@
   }
 
   .btn-check-primary {
-    background: linear-gradient(135deg, #16a34a, #15803d);
+    background: #16a34a;
     color: white;
-    border: none;
+    border: 1px solid #15803d;
     border-radius: 6px;
     padding: 6px 16px;
     font-size: 0.82rem;
-    font-weight: 700;
+    font-weight: 600;
     cursor: pointer;
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    box-shadow: 0 1px 3px rgba(22, 163, 74, 0.2);
-    transition: all 0.15s ease;
+    transition: background-color 0.15s ease, border-color 0.15s ease;
   }
 
   .btn-check-primary:hover:not(:disabled) {
-    background: linear-gradient(135deg, #15803d, #166534);
-    box-shadow: 0 3px 8px rgba(22, 163, 74, 0.3);
+    background: #15803d;
+    border-color: #166534;
   }
 
   .btn-check-primary:disabled {

@@ -15,12 +15,51 @@
   });
 
   let activeAddTab = $state('presets'); // 'presets' | 'folder' | 'hub'
+  let isAddModelModalOpen = $state(false);
+  let sortField = $state('title'); // 'title' | 'modelSource' | 'language' | 'dtype'
+  let sortDir = $state('asc'); // 'asc' | 'desc'
+
+  function toggleSort(field) {
+    if (sortField === field) {
+      sortDir = sortDir === 'asc' ? 'desc' : 'asc';
+    } else {
+      sortField = field;
+      sortDir = 'asc';
+    }
+  }
+
+  let sortedModels = $derived(
+    [...modelState.models].sort((a, b) => {
+      const dir = sortDir === 'asc' ? 1 : -1;
+      if (sortField === 'title') {
+        return (a.title || '').localeCompare(b.title || '') * dir;
+      }
+      if (sortField === 'modelSource') {
+        return (a.modelSource || '').localeCompare(b.modelSource || '') * dir;
+      }
+      if (sortField === 'language') {
+        return (a.language || 'en').localeCompare(b.language || 'en') * dir;
+      }
+      if (sortField === 'dtype') {
+        const runtimeA =
+          a.architecture === 'whistle' || a.dtype === 'wasm'
+            ? 'WASM CPU'
+            : a.dtype || 'q8';
+        const runtimeB =
+          b.architecture === 'whistle' || b.dtype === 'wasm'
+            ? 'WASM CPU'
+            : b.dtype || 'q8';
+        return runtimeA.localeCompare(runtimeB) * dir;
+      }
+      return 0;
+    }),
+  );
+
   let presetLanguages = $state({
-    'whistle': 'en',
+    whistle: 'en',
     'whisper-base': 'en',
     'whisper-small': 'en',
   });
-  let emptyStateLang = $state('en');
 
   // Local Folder Form State
   let folderInputEl = $state(null);
@@ -43,7 +82,12 @@
 
   function selectHubPreset(repoId, defaultTitle, defaultLang = 'en') {
     hubModelId = repoId;
-    if (!hubTitle.trim() || hubTitle === 'Whistle' || hubTitle === 'Whisper-base' || hubTitle === 'Whisper-small') {
+    if (
+      !hubTitle.trim() ||
+      hubTitle === 'Whistle' ||
+      hubTitle === 'Whisper-base' ||
+      hubTitle === 'Whisper-small'
+    ) {
       hubTitle = defaultTitle;
     }
     hubLanguage = defaultLang;
@@ -105,6 +149,7 @@
       localTitle = '';
       localLanguage = 'en';
       if (folderInputEl) folderInputEl.value = '';
+      isAddModelModalOpen = false;
     } catch (err) {
       folderError = err.message || 'Failed to save local model.';
     } finally {
@@ -144,6 +189,7 @@
       hubModelId = '';
       hubTitle = '';
       hubLanguage = 'en';
+      isAddModelModalOpen = false;
     } catch (err) {
       hubError = err.message || 'Failed to save model.';
     } finally {
@@ -152,338 +198,336 @@
   }
 </script>
 
+<svelte:window
+  onkeydown={(e) => {
+    if (e.key === 'Escape' && isAddModelModalOpen) {
+      isAddModelModalOpen = false;
+    }
+  }}
+/>
+
 <Header />
 
 <div class="models-page-container">
-  <!-- Page Hero Header -->
-  <div class="models-hero">
-    <div class="hero-left">
-      <div class="hero-icon-box">
-        <i class="fa-solid fa-brain"></i>
-      </div>
-      <div>
-        <h2 class="models-hero-title">Speech Recognition Model Management</h2>
-        <p class="models-hero-subtitle">
-          Configure speech-to-text models, download Hugging Face ONNX models, or
-          import your custom fine-tuned weights directly from disk.
-        </p>
-      </div>
-    </div>
-
-    <div class="hero-actions">
-      <button
-        type="button"
-        class="btn btn-primary"
-        onclick={() => projectState.goToWorkspace()}
-        title="Open Transcriber with selected model"
-      >
-        <i class="fa-solid fa-microphone"></i>
-        <span>Go to Transcriber</span>
-      </button>
-    </div>
-  </div>
-
-  <!-- Main 2-Column Grid -->
-  <div class="models-grid">
-    <!-- Left Column: Available Models Library -->
-    <div class="models-column">
-      <div class="card models-panel">
-        <div class="panel-header">
-          <div class="panel-title-wrap">
-            <i class="fa-solid fa-layer-group panel-icon"></i>
-            <div>
-              <h3 class="panel-title">
-                Model Library ({modelState.models.length})
-              </h3>
-              <span class="panel-subtitle"
-                >Select the active model for speech recognition</span
-              >
-            </div>
-          </div>
-
-          <div class="panel-header-right">
-            {#if !modelState.isPresetAdded('whistle') || !modelState.isPresetAdded('whisper-base') || !modelState.isPresetAdded('whisper-small')}
-              <button
-                type="button"
-                class="btn-restore-presets"
-                onclick={() => (activeAddTab = 'presets')}
-                title="Browse official models to add"
-              >
-                <i class="fa-solid fa-wand-magic-sparkles"></i>
-                <span>Add Official Models</span>
-              </button>
-            {/if}
-            {#if modelState.selectedModel}
-              <span class="active-model-pill">
-                Active: <strong>{modelState.selectedModel.title}</strong>
-              </span>
-            {/if}
-          </div>
+  <!-- Model Library Panel -->
+  <div class="card models-panel">
+    <div class="panel-header">
+      <div class="panel-title-wrap">
+        <i class="fa-solid fa-layer-group panel-icon"></i>
+        <div>
+          <h3 class="panel-title">
+            Speech Recognition Model Library ({modelState.models.length})
+          </h3>
         </div>
+      </div>
 
-        <div class="models-list">
-          {#if modelState.models.length === 0}
-            <div class="empty-models-notice">
-              <div class="empty-icon">
-                <i class="fa-solid fa-box-open"></i>
-              </div>
-              <h4>No Models in Library</h4>
-              <p>
-                Speech recognition requires an ASR model. You can quickly add an
-                official model below to download for offline use or
-                import your own fine-tuned weights:
-              </p>
-              <div class="empty-quick-add-group">
-                <div class="empty-lang-picker">
-                  <label for="empty-whisper-lang">
-                    <i class="fa-solid fa-language"></i> Language:
-                  </label>
-                  <select
-                    id="empty-whisper-lang"
-                    class="preset-lang-select"
-                    bind:value={emptyStateLang}
-                  >
-                    {#each WHISPER_LANGUAGES as lang}
-                      <option value={lang.code}
-                        >{lang.name} ({lang.code})</option
-                      >
-                    {/each}
-                  </select>
-                </div>
+      <div class="panel-header-right">
+        {#if modelState.selectedModel}
+          <span class="active-model-pill">
+            Active: <strong>{modelState.selectedModel.title}</strong>
+          </span>
+        {/if}
+      </div>
+    </div>
+
+    {#if modelState.models.length === 0}
+      <div class="empty-models-notice">
+        <div class="empty-icon">
+          <i class="fa-solid fa-box-open"></i>
+        </div>
+        <h4>No Models in Library</h4>
+      </div>
+    {:else}
+      <div class="models-table-wrap">
+        <table class="models-table">
+          <thead>
+            <tr>
+              <th class="col-radio">Active</th>
+              <th class="col-model">
                 <button
                   type="button"
-                  class="btn btn-primary btn-block"
-                  onclick={() =>
-                    modelState.addPresetModel(
-                      'whistle',
-                      ['en', 'de', 'fr', 'es', 'it', 'nl', 'pl'].includes(emptyStateLang) ? emptyStateLang : 'en',
-                      true,
-                    )}
+                  class="th-sort-btn {sortField === 'title' ? 'active' : ''}"
+                  onclick={() => toggleSort('title')}
                 >
-                  <i class="fa-solid fa-cloud-arrow-down"></i>
-                  <span>Add & Download Whistle (~17MB, CPU WASM)</span>
+                  <span>Model</span>
+                  <i
+                    class="fa-solid {sortField === 'title'
+                      ? sortDir === 'asc'
+                        ? 'fa-sort-up'
+                        : 'fa-sort-down'
+                      : 'fa-sort sort-idle'}"
+                  ></i>
                 </button>
+              </th>
+              <th class="col-source">
                 <button
                   type="button"
-                  class="btn btn-subtle-outline btn-block"
-                  onclick={() =>
-                    modelState.addPresetModel(
-                      'whisper-base',
-                      emptyStateLang,
-                      true,
-                    )}
+                  class="th-sort-btn {sortField === 'modelSource'
+                    ? 'active'
+                    : ''}"
+                  onclick={() => toggleSort('modelSource')}
                 >
-                  <i class="fa-solid fa-cloud-arrow-down"></i>
-                  <span>Add & Download Whisper-base (~274MB)</span>
+                  <span>Source</span>
+                  <i
+                    class="fa-solid {sortField === 'modelSource'
+                      ? sortDir === 'asc'
+                        ? 'fa-sort-up'
+                        : 'fa-sort-down'
+                      : 'fa-sort sort-idle'}"
+                  ></i>
                 </button>
+              </th>
+              <th class="col-lang">
                 <button
                   type="button"
-                  class="btn btn-subtle-outline btn-block"
-                  onclick={() =>
-                    modelState.addPresetModel(
-                      'whisper-small',
-                      emptyStateLang,
-                      true,
-                    )}
+                  class="th-sort-btn {sortField === 'language' ? 'active' : ''}"
+                  onclick={() => toggleSort('language')}
                 >
-                  <i class="fa-solid fa-cloud-arrow-down"></i>
-                  <span>Add & Download Whisper-small (~799MB)</span>
+                  <span>Language</span>
+                  <i
+                    class="fa-solid {sortField === 'language'
+                      ? sortDir === 'asc'
+                        ? 'fa-sort-up'
+                        : 'fa-sort-down'
+                      : 'fa-sort sort-idle'}"
+                  ></i>
                 </button>
-              </div>
-            </div>
-          {/if}
-          {#each modelState.models as m (m.id)}
-            <div
-              class="model-card-item {modelState.selectedModelId === m.id
-                ? 'selected'
-                : ''}"
-              onclick={() => modelState.selectModel(m.id)}
-              role="button"
-              tabindex="0"
-              onkeydown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ')
-                  modelState.selectModel(m.id);
-              }}
-            >
-              <div class="model-card-main">
-                <span class="model-card-radio">
+              </th>
+              <th class="col-runtime">
+                <button
+                  type="button"
+                  class="th-sort-btn {sortField === 'dtype' ? 'active' : ''}"
+                  onclick={() => toggleSort('dtype')}
+                >
+                  <span>Runtime</span>
+                  <i
+                    class="fa-solid {sortField === 'dtype'
+                      ? sortDir === 'asc'
+                        ? 'fa-sort-up'
+                        : 'fa-sort-down'
+                      : 'fa-sort sort-idle'}"
+                  ></i>
+                </button>
+              </th>
+              <th class="col-offline">Offline Cache</th>
+              <th class="col-actions">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {#each sortedModels as m (m.id)}
+              <tr
+                class="model-row {modelState.selectedModelId === m.id
+                  ? 'selected'
+                  : ''}"
+                onclick={() => modelState.selectModel(m.id)}
+                role="button"
+                tabindex="0"
+                onkeydown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ')
+                    modelState.selectModel(m.id);
+                }}
+              >
+                <td class="col-radio">
                   <i
                     class="fa-solid {modelState.selectedModelId === m.id
                       ? 'fa-circle-dot text-primary'
                       : 'fa-circle text-muted'}"
                   ></i>
-                </span>
-                <div class="model-card-info">
-                  <div class="model-card-title-row">
-                    <strong class="model-card-title">{m.title}</strong>
-                    {#if m.isPreset}
-                      <span class="badge badge-info">Preset</span>
-                    {/if}
-                    {#if modelState.selectedModelId === m.id}
-                      <span class="badge badge-success">Active</span>
+                </td>
+                <td class="col-model">
+                  <div class="model-title-cell">
+                    {#if m.modelSource === 'hub' && m.modelId}
+                      <a
+                        href="https://huggingface.co/{m.modelId}"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        class="model-title-link"
+                        onclick={(e) => e.stopPropagation()}
+                        title="View {m.modelId} on Hugging Face"
+                      >
+                        <span>{m.title}</span>
+                        <i
+                          class="fa-solid fa-arrow-up-right-from-square link-ext-icon"
+                        ></i>
+                      </a>
+                    {:else}
+                      <strong class="model-title-plain">{m.title}</strong>
                     {/if}
                   </div>
-
-                  {#if m.description}
-                    <p class="model-desc-text">{m.description}</p>
-                  {/if}
-
-                  <div class="model-card-meta">
-                    <span class="meta-chip">
-                      <i
-                        class="fa-solid {m.modelSource === 'folder'
-                          ? 'fa-folder'
-                          : 'fa-cloud'}"
-                      ></i>
-                      {m.modelSource === 'folder'
-                        ? 'Local Folder'
-                        : 'Hugging Face'}
-                    </span>
-                    <span class="meta-chip">
-                      <i class="fa-solid fa-language"></i>
-                      {m.language || 'en'}
-                    </span>
-                    <span class="meta-chip">
-                      <i class="fa-solid fa-microchip"></i>
-                      {m.architecture === 'whistle' || m.dtype === 'wasm' ? 'WASM CPU' : (m.dtype || 'q8')}
-                    </span>
-                    {#if m.architecture === 'whistle'}
-                      <span class="meta-chip text-muted">
-                        Whistle
-                      </span>
-                    {/if}
+                </td>
+                <td class="col-source">
+                  <span class="meta-chip">
+                    <i
+                      class="fa-solid {m.modelSource === 'folder'
+                        ? 'fa-folder'
+                        : 'fa-cloud'}"
+                    ></i>
+                    {m.modelSource === 'folder'
+                      ? 'Local Folder'
+                      : 'Hugging Face'}
                     {#if m.modelSource === 'folder' && m.fileCount}
-                      <span class="meta-chip text-muted">
-                        {m.fileCount} files
-                      </span>
+                      <span class="text-muted">({m.fileCount})</span>
                     {/if}
-
-                    <!-- Offline Status Button or Tag -->
-                    {#if m.modelSource === 'hub'}
-                      {#if modelState.isModelCached(m.modelId || m.id)}
-                        <span
-                          class="tag-offline-ready"
-                          title="Model is cached in browser storage. Ready for offline use."
-                        >
-                          <i class="fa-solid fa-circle-check"></i>
-                          <span>Available offline</span>
-                          <button
-                            type="button"
-                            class="btn-purge-pill"
-                            title="Purge cached model weights from browser storage to free disk space"
-                            onclick={async (e) => {
-                              e.stopPropagation();
-                              if (
-                                confirm(
-                                  `Purge cached weights for "${m.title}" from local storage?`,
-                                )
-                              ) {
-                                const count = await modelState.clearModelCache(
-                                  m.modelId,
-                                  m.id,
-                                );
-                                await modelState.checkAllModelsCached();
-                                appState.statusMessage = `Purged ${count} cached file(s) for "${m.title}" from browser storage.`;
-                              }
-                            }}
-                          >
-                            <i class="fa-solid fa-broom"></i>
-                          </button>
-                        </span>
-                      {:else if modelState.downloadProgress[m.modelId || m.id] !== undefined}
-                        {@const pct =
-                          modelState.downloadProgress[m.modelId || m.id] || 0}
-                        <div
-                          class="table-download-progress-box"
-                          title="Loading: {pct}%"
-                        >
-                          <div class="table-progress-bar-track">
-                            <div
-                              class="table-progress-bar-fill"
-                              style="width: {Math.max(2, pct)}%"
-                            ></div>
-                          </div>
-                          <span class="table-progress-text">{pct}%</span>
-                        </div>
-                      {:else}
-                        <button
-                          type="button"
-                          class="btn-offline-action"
-                          onclick={(e) => {
-                            e.stopPropagation();
-                            modelState.downloadModelForOffline(m);
-                          }}
-                          title="Download and cache model files in browser storage for offline use"
-                        >
-                          <i class="fa-solid fa-cloud-arrow-down"></i>
-                          <span>Make available offline</span>
-                        </button>
-                      {/if}
-                    {:else if m.modelSource === 'folder'}
+                  </span>
+                </td>
+                <td class="col-lang">
+                  <span class="meta-chip">
+                    <i class="fa-solid fa-language"></i>
+                    {m.language || 'en'}
+                  </span>
+                </td>
+                <td class="col-runtime">
+                  <span class="meta-chip">
+                    <i class="fa-solid fa-microchip"></i>
+                    {m.architecture === 'whistle' || m.dtype === 'wasm'
+                      ? 'WASM CPU'
+                      : m.dtype || 'q8'}
+                  </span>
+                </td>
+                <td class="col-offline">
+                  {#if m.modelSource === 'hub'}
+                    {#if modelState.isModelCached(m.modelId || m.id)}
                       <span
-                        class="tag-offline-ready tag-local-ready"
-                        title="Stored in browser IndexedDB. Available offline."
+                        class="tag-offline-ready"
+                        title="Model is cached in browser storage. Ready for offline use."
                       >
                         <i class="fa-solid fa-circle-check"></i>
-                        <span>Available offline (Local)</span>
+                        <span>Available offline</span>
+                        <button
+                          type="button"
+                          class="btn-purge-pill"
+                          title="Purge cached model weights from browser storage to free disk space"
+                          onclick={async (e) => {
+                            e.stopPropagation();
+                            if (
+                              confirm(
+                                `Purge cached weights for "${m.title}" from local storage?`,
+                              )
+                            ) {
+                              const count = await modelState.clearModelCache(
+                                m.modelId,
+                                m.id,
+                              );
+                              await modelState.checkAllModelsCached();
+                              appState.statusMessage = `Purged ${count} cached file(s) for "${m.title}" from browser storage.`;
+                            }
+                          }}
+                        >
+                          <i class="fa-solid fa-broom"></i>
+                        </button>
                       </span>
+                    {:else if modelState.downloadProgress[m.modelId || m.id] !== undefined}
+                      {@const pct =
+                        modelState.downloadProgress[m.modelId || m.id] || 0}
+                      <div
+                        class="table-download-progress-box"
+                        title="Loading: {pct}%"
+                      >
+                        <div class="table-progress-bar-track">
+                          <div
+                            class="table-progress-bar-fill"
+                            style="width: {Math.max(2, pct)}%"
+                          ></div>
+                        </div>
+                        <span class="table-progress-text">{pct}%</span>
+                      </div>
+                    {:else}
+                      <button
+                        type="button"
+                        class="btn-offline-action"
+                        onclick={(e) => {
+                          e.stopPropagation();
+                          modelState.downloadModelForOffline(m);
+                        }}
+                        title="Download and cache model files in browser storage for offline use"
+                      >
+                        <i class="fa-solid fa-cloud-arrow-down"></i>
+                        <span>Make available offline</span>
+                      </button>
                     {/if}
-                  </div>
-                </div>
-              </div>
-
-              <button
-                type="button"
-                class="btn-subtle text-danger"
-                onclick={(e) => {
-                  e.stopPropagation();
-                  const note = m.isPreset
-                    ? ' (You can restore default presets anytime)'
-                    : '';
-                  if (
-                    confirm(
-                      `Delete model "${m.title}" from your library?${note}`,
-                    )
-                  ) {
-                    modelState.deleteCustomModel(m.id);
-                  }
-                }}
-                title={m.isPreset
-                  ? 'Delete preset model'
-                  : 'Delete custom model'}
-              >
-                <i class="fa-solid fa-trash-can"></i>
-              </button>
-            </div>
-          {/each}
-        </div>
-
-        <div class="model-privacy-note">
-          <i class="fa-solid fa-shield-halved"></i>
-          <span>
-            All speech recognition models execute 100% locally in your browser
-            via Transformers.js and ONNX Runtime Web. No audio or text data ever
-            leaves your computer.
-          </span>
-        </div>
+                  {:else if m.modelSource === 'folder'}
+                    <span
+                      class="tag-offline-ready tag-local-ready"
+                      title="Stored in browser IndexedDB. Available offline."
+                    >
+                      <i class="fa-solid fa-circle-check"></i>
+                      <span>Available offline (Local)</span>
+                    </span>
+                  {/if}
+                </td>
+                <td class="col-actions">
+                  <button
+                    type="button"
+                    class="btn-subtle text-danger"
+                    onclick={(e) => {
+                      e.stopPropagation();
+                      const note = m.isPreset
+                        ? ' (You can restore default presets anytime)'
+                        : '';
+                      if (
+                        confirm(
+                          `Delete model "${m.title}" from your library?${note}`,
+                        )
+                      ) {
+                        modelState.deleteCustomModel(m.id);
+                      }
+                    }}
+                    title={m.isPreset
+                      ? 'Delete preset model'
+                      : 'Delete custom model'}
+                  >
+                    <i class="fa-solid fa-trash-can"></i>
+                  </button>
+                </td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
       </div>
+    {/if}
+
+    <div class="model-library-footer">
+      <button
+        type="button"
+        class="btn btn-primary"
+        onclick={() => (isAddModelModalOpen = true)}
+      >
+        <i class="fa-solid fa-plus"></i>
+        <span>Add New Model</span>
+      </button>
     </div>
+  </div>
+</div>
 
-    <!-- Right Column: Add New Model -->
-    <div class="models-column">
-      <div class="card models-panel">
-        <div class="panel-header">
-          <div class="panel-title-wrap">
-            <i class="fa-solid fa-circle-plus panel-icon"></i>
-            <div>
-              <h3 class="panel-title">Add New Model</h3>
-              <span class="panel-subtitle"
-                >Import fine-tuned weights or connect to Hugging Face</span
-              >
-            </div>
-          </div>
+<!-- Add New Model Dialog Box -->
+{#if isAddModelModalOpen}
+  <!-- svelte-ignore a11y_click_events_have_key_events -->
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <div class="modal-backdrop" onclick={() => (isAddModelModalOpen = false)}>
+    <div
+      class="modal-dialog add-model-modal"
+      onclick={(e) => e.stopPropagation()}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="add-model-modal-title"
+      tabindex="-1"
+    >
+      <div class="modal-header">
+        <div class="panel-title-wrap">
+          <i class="fa-solid fa-circle-plus panel-icon"></i>
+          <h3 id="add-model-modal-title" class="panel-title">Add New Model</h3>
         </div>
+        <button
+          type="button"
+          class="modal-close-btn"
+          onclick={() => (isAddModelModalOpen = false)}
+          aria-label="Close dialog"
+        >
+          <i class="fa-solid fa-xmark"></i>
+        </button>
+      </div>
 
+      <div class="modal-body">
         <div class="segmented-control" style="margin-bottom: 16px;">
           <button
             type="button"
@@ -513,14 +557,6 @@
 
         {#if activeAddTab === 'presets'}
           <div class="presets-section">
-            <p
-              class="text-sm text-muted"
-              style="margin-top: 0; margin-bottom: 14px;"
-            >
-              Add standard speech recognition models optimized for in-browser execution (Whisper &amp; Whistle).
-              Download them once to enable 100% offline speech recognition.
-            </p>
-
             <div class="preset-cards-grid">
               {#each modelState.availablePresets as preset (preset.id)}
                 {@const presetKey = preset.baseId || preset.id}
@@ -547,8 +583,24 @@
                 <div class="preset-card {isAdded ? 'is-added' : ''}">
                   <div class="preset-card-header">
                     <div>
-                      <h4 class="preset-card-title">{preset.title}</h4>
-                      <span class="preset-card-desc">{preset.description}</span>
+                      <h4 class="preset-card-title">
+                        {#if preset.modelId}
+                          <a
+                            href="https://huggingface.co/{preset.modelId}"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            class="model-title-link"
+                            title="View {preset.modelId} on Hugging Face"
+                          >
+                            <span>{preset.title}</span>
+                            <i
+                              class="fa-solid fa-arrow-up-right-from-square link-ext-icon"
+                            ></i>
+                          </a>
+                        {:else}
+                          {preset.title}
+                        {/if}
+                      </h4>
                     </div>
                   </div>
 
@@ -557,27 +609,23 @@
                       <i class="fa-solid fa-hard-drive"></i>
                       {preset.sizeApprox}
                     </span>
-                    <span class="meta-chip">
-                      <i class="fa-solid fa-bolt"></i>
-                      {preset.speed}
-                    </span>
                     {#if preset.architecture === 'whistle'}
                       <span class="meta-chip">
                         <i class="fa-solid fa-language"></i>
-                        7 Languages (en, de, fr, es, it, nl, pl)
+                        7 Languages
                       </span>
                       <span class="meta-chip">
                         <i class="fa-solid fa-microchip"></i>
-                        💻 CPU WebAssembly Only
+                        CPU WASM
                       </span>
                     {:else}
                       <span class="meta-chip">
                         <i class="fa-solid fa-language"></i>
-                        Multilingual (99+ languages)
+                        99+ Languages
                       </span>
                       <span class="meta-chip">
                         <i class="fa-solid fa-microchip"></i>
-                        WASM Q8 &amp; WebGPU Q4
+                        WASM Q8 / WebGPU Q4
                       </span>
                     {/if}
                   </div>
@@ -689,13 +737,6 @@
         {:else if activeAddTab === 'folder'}
           <!-- Local Folder Form -->
           <div class="form-section">
-            <p
-              class="text-sm text-muted"
-              style="margin-top: 0; margin-bottom: 14px;"
-            >
-              Select a local folder containing your fine-tuned model or a <code>.cact</code> file (e.g. <code>whistle.cact</code>, or <code>config.json</code> with ONNX weights).
-            </p>
-
             <div class="drop-zone-area" style="margin-bottom: 14px;">
               <input
                 type="file"
@@ -739,10 +780,12 @@
                       <div>
                         Model file: <code>{localAnalysis.cactFiles[0]}</code>
                         &bull; Architecture: <strong>Whistle</strong>
-                        &bull; Execution: <strong>CPU WebAssembly (WASM)</strong>
+                        &bull; Execution:
+                        <strong>CPU WebAssembly (WASM)</strong>
                       </div>
                       <div>
-                        Format: <strong>Cactus Container (~17 MB)</strong> &bull; Zero GPU requirement
+                        Format: <strong>Cactus Container (~17 MB)</strong> &bull;
+                        Zero GPU requirement
                       </div>
                     </div>
                   {:else}
@@ -775,9 +818,10 @@
                     <span>Incomplete Model Folder</span>
                   </div>
                   <div class="analysis-details text-xs text-muted">
-                    Missing required components. Please ensure the folder contains a <code
-                      >.cact</code
-                    > file (e.g. <code>whistle.cact</code>) or <code>config.json</code> with valid <code>.onnx</code> weights files.
+                    Missing required components. Please ensure the folder
+                    contains a <code>.cact</code> file (e.g.
+                    <code>whistle.cact</code>) or <code>config.json</code> with
+                    valid <code>.onnx</code> weights files.
                   </div>
                 {/if}
               </div>
@@ -851,29 +895,32 @@
         {:else}
           <!-- Hugging Face Hub Form -->
           <div class="form-section">
-            <p
-              class="text-sm text-muted"
-              style="margin-top: 0; margin-bottom: 14px;"
+            <div
+              class="hub-presets-bar"
+              style="margin-bottom: 14px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center;"
             >
-              Specify an ONNX-converted Whisper model or Cactus Whistle model hosted on
-              Hugging Face Hub. Models are downloaded and cached directly in your browser.
-            </p>
-
-            <div class="hub-presets-bar" style="margin-bottom: 14px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center;">
-              <span class="text-xs text-muted" style="font-weight: 500;">Quick Suggestions:</span>
+              <span class="text-xs text-muted" style="font-weight: 500;"
+                >Quick Fill:</span
+              >
               <button
                 type="button"
                 class="badge badge-info"
                 style="cursor: pointer; padding: 5px 9px; font-size: 11px; border: none;"
-                onclick={() => selectHubPreset('Cactus-Compute/whistle', 'Whistle', 'en')}
+                onclick={() =>
+                  selectHubPreset('Cactus-Compute/whistle', 'Whistle', 'en')}
               >
-                <i class="fa-solid fa-bolt"></i> Cactus-Compute/whistle (16.9 MB, WASM)
+                Cactus-Compute/whistle
               </button>
               <button
                 type="button"
                 class="badge badge-secondary"
                 style="cursor: pointer; padding: 5px 9px; font-size: 11px; border: none;"
-                onclick={() => selectHubPreset('onnx-community/whisper-base', 'Whisper-base', 'en')}
+                onclick={() =>
+                  selectHubPreset(
+                    'onnx-community/whisper-base',
+                    'Whisper-base',
+                    'en',
+                  )}
               >
                 onnx-community/whisper-base
               </button>
@@ -881,7 +928,12 @@
                 type="button"
                 class="badge badge-secondary"
                 style="cursor: pointer; padding: 5px 9px; font-size: 11px; border: none;"
-                onclick={() => selectHubPreset('onnx-community/whisper-small', 'Whisper-small', 'en')}
+                onclick={() =>
+                  selectHubPreset(
+                    'onnx-community/whisper-small',
+                    'Whisper-small',
+                    'en',
+                  )}
               >
                 onnx-community/whisper-small
               </button>
@@ -896,15 +948,6 @@
                 placeholder="e.g. Cactus-Compute/whistle or onnx-community/whisper-tiny"
                 bind:value={hubModelId}
               />
-              <span
-                class="form-hint text-xs text-muted"
-                style="display: block; margin-top: 4px;"
-              >
-                Supports Cactus Whistle (<code>Cactus-Compute/whistle</code>) or ONNX Whisper models (e.g. <code
-                  >onnx-community/whisper-base</code
-                >
-                or <code>onnx-community/whisper-large-v3-turbo</code>)
-              </span>
             </div>
 
             <div class="form-group" style="margin-bottom: 12px;">
@@ -955,85 +998,13 @@
       </div>
     </div>
   </div>
-</div>
+{/if}
 
 <style>
   .models-page-container {
     max-width: 1140px;
     margin: 0 auto;
     padding: 20px 16px 60px 16px;
-  }
-
-  .models-hero {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 16px;
-    padding: 20px 24px;
-    background: var(--bg-card, #ffffff);
-    border: 1px solid var(--border-color, #cbd5e1);
-    border-radius: 12px;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.04);
-    margin-bottom: 22px;
-  }
-
-  :global([data-theme='dark']) .models-hero {
-    background: rgba(30, 41, 59, 0.7);
-    border-color: #334155;
-  }
-
-  .hero-left {
-    display: flex;
-    align-items: center;
-    gap: 16px;
-    flex: 1;
-    min-width: 280px;
-  }
-
-  .hero-icon-box {
-    width: 48px;
-    height: 48px;
-    border-radius: 10px;
-    background: var(--primary-light, #e0f2fe);
-    color: var(--primary-color, #0284c7);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 1.5rem;
-    flex-shrink: 0;
-  }
-
-  :global([data-theme='dark']) .hero-icon-box {
-    background: rgba(2, 132, 199, 0.2);
-    color: #38bdf8;
-  }
-
-  .models-hero-title {
-    margin: 0 0 4px 0;
-    font-size: 1.35rem;
-    font-weight: 700;
-    color: var(--text-heading, #0f172a);
-  }
-
-  .models-hero-subtitle {
-    margin: 0;
-    font-size: 0.88rem;
-    color: var(--text-muted, #64748b);
-    line-height: 1.5;
-  }
-
-  .models-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 20px;
-    align-items: start;
-  }
-
-  @media (max-width: 860px) {
-    .models-grid {
-      grid-template-columns: 1fr;
-    }
   }
 
   .models-panel {
@@ -1052,10 +1023,10 @@
   .panel-header {
     display: flex;
     justify-content: space-between;
-    align-items: flex-start;
+    align-items: center;
     flex-wrap: wrap;
     gap: 12px;
-    margin-bottom: 18px;
+    margin-bottom: 16px;
     padding-bottom: 12px;
     border-bottom: 1px solid var(--border-color, #e2e8f0);
   }
@@ -1082,13 +1053,6 @@
     color: var(--text-heading, #0f172a);
   }
 
-  .panel-subtitle {
-    font-size: 0.8rem;
-    color: var(--text-muted, #64748b);
-    display: block;
-    margin-top: 2px;
-  }
-
   .panel-header-right {
     display: flex;
     align-items: center;
@@ -1096,32 +1060,215 @@
     flex-wrap: wrap;
   }
 
-  .btn-restore-presets {
+  /* Model Library Table */
+  .models-table-wrap {
+    width: 100%;
+    overflow-x: auto;
+    border: 1px solid var(--border-color, #e2e8f0);
+    border-radius: 8px;
+  }
+
+  :global([data-theme='dark']) .models-table-wrap {
+    border-color: #334155;
+  }
+
+  .models-table {
+    width: 100%;
+    border-collapse: collapse;
+    text-align: left;
+    font-size: 0.88rem;
+  }
+
+  .models-table thead {
+    background: var(--bg-hover, #f8fafc);
+    border-bottom: 1px solid var(--border-color, #e2e8f0);
+  }
+
+  :global([data-theme='dark']) .models-table thead {
+    background: rgba(15, 23, 42, 0.5);
+    border-bottom-color: #334155;
+  }
+
+  .models-table th {
+    padding: 10px 14px;
+    font-size: 0.78rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    color: var(--text-muted, #64748b);
+    white-space: nowrap;
+    user-select: none;
+  }
+
+  .th-sort-btn {
+    background: transparent;
+    border: none;
+    padding: 0;
+    font: inherit;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    color: var(--text-muted, #64748b);
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    padding: 4px 10px;
-    font-size: 0.78rem;
-    font-weight: 500;
-    color: var(--primary-color, #0284c7);
-    background: transparent;
-    border: 1px dashed var(--primary-color, #0284c7);
-    border-radius: 6px;
     cursor: pointer;
-    transition: all 0.15s ease;
+    transition: color 0.12s ease;
   }
 
-  .btn-restore-presets:hover {
-    background: var(--primary-light, #e0f2fe);
+  .th-sort-btn:hover,
+  .th-sort-btn.active {
+    color: var(--text-heading, #0f172a);
   }
 
-  :global([data-theme='dark']) .btn-restore-presets {
-    border-color: #38bdf8;
-    color: #38bdf8;
+  :global([data-theme='dark']) .th-sort-btn:hover,
+  :global([data-theme='dark']) .th-sort-btn.active {
+    color: #f8fafc;
   }
 
-  :global([data-theme='dark']) .btn-restore-presets:hover {
-    background: rgba(56, 189, 248, 0.15);
+  .th-sort-btn .sort-idle {
+    opacity: 0.35;
+  }
+
+  .models-table tbody tr.model-row {
+    border-bottom: 1px solid var(--border-color, #e2e8f0);
+    cursor: pointer;
+    transition: background-color 0.12s ease;
+  }
+
+  .models-table tbody tr.model-row:last-child {
+    border-bottom: none;
+  }
+
+  :global([data-theme='dark']) .models-table tbody tr.model-row {
+    border-bottom-color: #334155;
+  }
+
+  .models-table tbody tr.model-row:hover {
+    background: var(--bg-hover, #f8fafc);
+  }
+
+  :global([data-theme='dark']) .models-table tbody tr.model-row:hover {
+    background: rgba(255, 255, 255, 0.03);
+  }
+
+  .models-table tbody tr.model-row.selected {
+    background: rgba(2, 132, 199, 0.06);
+  }
+
+  :global([data-theme='dark']) .models-table tbody tr.model-row.selected {
+    background: rgba(56, 189, 248, 0.1);
+  }
+
+  .models-table td {
+    padding: 12px 14px;
+    vertical-align: middle;
+    color: var(--text-base, #334155);
+  }
+
+  .col-radio {
+    width: 64px;
+    text-align: center;
+  }
+
+  .col-actions {
+    width: 60px;
+    text-align: right;
+  }
+
+  .models-table th.col-actions {
+    text-align: right;
+  }
+
+  .model-title-cell {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  .model-title-plain {
+    font-weight: 700;
+    color: var(--text-heading, #0f172a);
+  }
+
+  .model-library-footer {
+    margin-top: 16px;
+    display: flex;
+    justify-content: flex-start;
+  }
+
+  /* Add New Model Dialog Box */
+  .modal-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(15, 23, 42, 0.45);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1200;
+    padding: 16px;
+  }
+
+  .modal-dialog.add-model-modal {
+    background: var(--bg-card, #ffffff);
+    border: 1px solid var(--border-color, #cbd5e1);
+    border-radius: 12px;
+    width: 100%;
+    max-width: 580px;
+    max-height: 88vh;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.16);
+    overflow: hidden;
+  }
+
+  :global([data-theme='dark']) .modal-dialog.add-model-modal {
+    background: #1e293b;
+    border-color: #334155;
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  }
+
+  .modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border-color, #e2e8f0);
+  }
+
+  :global([data-theme='dark']) .modal-header {
+    border-bottom-color: #334155;
+  }
+
+  .modal-close-btn {
+    background: transparent;
+    border: 1px solid transparent;
+    color: var(--text-muted, #64748b);
+    width: 32px;
+    height: 32px;
+    border-radius: 6px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.05rem;
+    cursor: pointer;
+    transition: all 0.12s ease;
+  }
+
+  .modal-close-btn:hover {
+    background: var(--bg-hover, #f1f5f9);
+    color: var(--text-heading, #0f172a);
+  }
+
+  :global([data-theme='dark']) .modal-close-btn:hover {
+    background: rgba(255, 255, 255, 0.08);
+    color: #f8fafc;
+  }
+
+  .modal-body {
+    padding: 20px;
+    overflow-y: auto;
   }
 
   .empty-models-notice {
@@ -1144,63 +1291,15 @@
   }
 
   .empty-models-notice h4 {
-    margin: 0 0 6px 0;
+    margin: 0;
     font-size: 1rem;
     font-weight: 600;
     color: var(--text-heading, #0f172a);
   }
 
-  .empty-models-notice p {
-    margin: 0 0 16px 0;
-    font-size: 0.82rem;
-    color: var(--text-muted, #64748b);
-    max-width: 380px;
-  }
-
   :global([data-theme='dark']) .empty-models-notice {
     background: rgba(255, 255, 255, 0.02);
     border-color: #334155;
-  }
-
-  .empty-quick-add-group {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    width: 100%;
-    max-width: 360px;
-  }
-
-  .btn-subtle-outline {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: 8px;
-    padding: 8px 16px;
-    font-size: 0.85rem;
-    font-weight: 600;
-    border-radius: 6px;
-    cursor: pointer;
-    background: transparent;
-    color: var(--text-base, #334155);
-    border: 1px solid var(--border-color, #cbd5e1);
-    transition: all 0.15s ease;
-  }
-
-  .btn-subtle-outline:hover {
-    background: var(--bg-hover, #f1f5f9);
-    border-color: var(--primary-color, #0284c7);
-    color: var(--primary-color, #0284c7);
-  }
-
-  :global([data-theme='dark']) .btn-subtle-outline {
-    color: #e2e8f0;
-    border-color: #475569;
-  }
-
-  :global([data-theme='dark']) .btn-subtle-outline:hover {
-    background: rgba(255, 255, 255, 0.05);
-    border-color: #38bdf8;
-    color: #38bdf8;
   }
 
   /* Preset Cards in Add Tab */
@@ -1233,18 +1332,34 @@
   }
 
   .preset-card-title {
-    margin: 0 0 4px 0;
+    margin: 0 0 8px 0;
     font-size: 0.95rem;
     font-weight: 700;
     color: var(--text-heading, #0f172a);
   }
 
-  .preset-card-desc {
-    display: block;
-    font-size: 0.78rem;
-    color: var(--text-muted, #64748b);
-    line-height: 1.4;
-    margin-bottom: 10px;
+  .model-title-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    color: var(--text-heading, #0f172a);
+    text-decoration: none;
+    font-weight: 700;
+    transition: color 0.12s ease;
+  }
+
+  .model-title-link:hover {
+    color: var(--primary-color, #0284c7);
+    text-decoration: underline;
+  }
+
+  .link-ext-icon {
+    font-size: 0.7rem;
+    opacity: 0.65;
+  }
+
+  .model-title-link:hover .link-ext-icon {
+    opacity: 1;
   }
 
   .preset-card-meta {
@@ -1306,29 +1421,6 @@
     box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.2);
   }
 
-  .empty-lang-picker {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin-bottom: 4px;
-    width: 100%;
-  }
-
-  .empty-lang-picker label {
-    font-size: 0.8rem;
-    font-weight: 600;
-    color: var(--text-base, #334155);
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    white-space: nowrap;
-    margin: 0;
-  }
-
-  :global([data-theme='dark']) .empty-lang-picker label {
-    color: #cbd5e1;
-  }
-
   .preset-installed-row {
     display: flex;
     align-items: center;
@@ -1349,48 +1441,6 @@
   :global([data-theme='dark']) .active-model-pill {
     background: rgba(56, 189, 248, 0.18);
     color: #38bdf8;
-  }
-
-  .models-list {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-    max-height: 480px;
-    overflow-y: auto;
-    margin-bottom: 18px;
-    padding-right: 4px;
-  }
-
-  .model-desc-text {
-    margin: 2px 0 4px 0;
-    font-size: 0.78rem;
-    color: var(--text-muted, #64748b);
-    line-height: 1.4;
-  }
-
-  .model-privacy-note {
-    display: flex;
-    align-items: flex-start;
-    gap: 10px;
-    padding: 12px 14px;
-    background: var(--bg-hover, #f8fafc);
-    border: 1px solid var(--border-color, #e2e8f0);
-    border-radius: 8px;
-    font-size: 0.78rem;
-    color: var(--text-muted, #64748b);
-    line-height: 1.5;
-  }
-
-  :global([data-theme='dark']) .model-privacy-note {
-    background: rgba(255, 255, 255, 0.02);
-    border-color: #334155;
-  }
-
-  .model-privacy-note i {
-    color: #10b981;
-    font-size: 1rem;
-    margin-top: 2px;
-    flex-shrink: 0;
   }
 
   .btn {
@@ -1721,7 +1771,7 @@
 
   .table-progress-bar-fill {
     height: 100%;
-    background: linear-gradient(90deg, #0284c7, #38bdf8);
+    background: #0284c7;
     border-radius: 3px;
     transition: width 0.2s ease;
   }
@@ -1788,7 +1838,7 @@
 
   .preset-progress-fill {
     height: 100%;
-    background: linear-gradient(90deg, #0284c7, #38bdf8);
+    background: #0284c7;
     border-radius: 4px;
     transition: width 0.2s ease;
   }

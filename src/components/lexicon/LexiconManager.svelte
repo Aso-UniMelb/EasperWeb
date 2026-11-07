@@ -23,8 +23,19 @@
       : null,
   );
 
-  // Search filter for the Lexicon Manager overview
+  // Search & sort state for the Lexicon Manager overview
   let managerSearchQuery = $state('');
+  let sortField = $state('updatedAt'); // 'title' | 'languageVariety' | 'entries' | 'fields' | 'updatedAt'
+  let sortDir = $state('desc'); // 'asc' | 'desc'
+
+  function toggleSort(field) {
+    if (sortField === field) {
+      sortDir = sortDir === 'asc' ? 'desc' : 'asc';
+    } else {
+      sortField = field;
+      sortDir = field === 'title' || field === 'languageVariety' ? 'asc' : 'desc';
+    }
+  }
 
   // Edit lexicon metadata (title, language variety, description)
   let isEditingDetails = $state(false);
@@ -53,15 +64,43 @@
   });
 
   let filteredLexicons = $derived.by(() => {
-    const list = lexiconState.lexicons || [];
+    const raw = lexiconState.lexicons || [];
     const q = managerSearchQuery.trim().toLowerCase();
-    if (!q) return list;
-    return list.filter(
-      (l) =>
-        (l.title && l.title.toLowerCase().includes(q)) ||
-        (l.languageVariety && l.languageVariety.toLowerCase().includes(q)) ||
-        (l.description && l.description.toLowerCase().includes(q)),
-    );
+    const list = q
+      ? raw.filter(
+          (l) =>
+            (l.title && l.title.toLowerCase().includes(q)) ||
+            (l.languageVariety && l.languageVariety.toLowerCase().includes(q)) ||
+            (l.description && l.description.toLowerCase().includes(q)),
+        )
+      : [...raw];
+
+    list.sort((a, b) => {
+      let cmp = 0;
+      if (sortField === 'title') {
+        cmp = (a.title || '').localeCompare(b.title || '', undefined, {
+          numeric: true,
+          sensitivity: 'base',
+        });
+      } else if (sortField === 'languageVariety') {
+        cmp = (a.languageVariety || '').localeCompare(
+          b.languageVariety || '',
+          undefined,
+          { numeric: true, sensitivity: 'base' },
+        );
+      } else if (sortField === 'entries') {
+        cmp = (a.entries?.length || 0) - (b.entries?.length || 0);
+      } else if (sortField === 'fields') {
+        cmp = (a.fields?.length || 0) - (b.fields?.length || 0);
+      } else if (sortField === 'updatedAt') {
+        const timeA = new Date(a.updatedAt || a.createdAt || 0).getTime();
+        const timeB = new Date(b.updatedAt || b.createdAt || 0).getTime();
+        cmp = timeA - timeB;
+      }
+      return sortDir === 'asc' ? cmp : -cmp;
+    });
+
+    return list;
   });
 
   function startEditingDetails() {
@@ -140,214 +179,241 @@
     <!-- ======================================================== -->
     <!-- ROUTE: /lexicon (LEXICON MANAGER OVERVIEW)                 -->
     <!-- ======================================================== -->
-    {#if lexiconState.lexicons.length === 0}
-      <!-- Zero State Hero Card -->
-      <div class="zero-state-hero">
-        <div class="hero-icon-badge">
-          <i class="fa-solid fa-book-bookmark"></i>
+    <section class="starting-projects-section">
+      <div class="projects-section-header">
+        <div class="section-title-wrap">
+          <i class="fa-solid fa-book-bookmark section-icon"></i>
+          <div>
+            <h2 class="section-title">
+              Saved Lexicons ({filteredLexicons.length})
+            </h2>
+          </div>
         </div>
-        <h2 class="hero-title">Lexicon Management</h2>
-        <p class="hero-desc">
-          Create and organize linguistic dictionaries. Define custom grammatical
-          &amp; semantic fields with controlled value sets and import/export via
-          TSV.
-        </p>
 
-        <div class="hero-actions">
+        <div class="projects-section-actions">
+          <div class="search-box">
+            <i class="fa-solid fa-magnifying-glass search-icon"></i>
+            <input
+              type="text"
+              class="search-input"
+              placeholder="Search lexicons..."
+              bind:value={managerSearchQuery}
+            />
+            {#if managerSearchQuery}
+              <button
+                type="button"
+                class="btn-clear-search"
+                aria-label="Clear search"
+                onclick={() => (managerSearchQuery = '')}
+              >
+                <i class="fa-solid fa-circle-xmark"></i>
+              </button>
+            {/if}
+          </div>
+
           <button
             type="button"
-            class="btn-hero-primary"
+            class="btn-new-project-hero"
             onclick={() => (lexiconState.isNewLexiconModalOpen = true)}
           >
             <i class="fa-solid fa-plus"></i>
-            <span>Create New Lexicon</span>
+            <span>New Lexicon</span>
           </button>
         </div>
-
-        <div class="hero-feature-pills">
-          <div class="feature-pill">
-            <i class="fa-solid fa-table-columns"></i>
-            <span>Custom Fields &amp; Controlled Values</span>
-          </div>
-          <div class="feature-pill">
-            <i class="fa-solid fa-file-import"></i>
-            <span>TSV Import &amp; Export</span>
-          </div>
-          <div class="feature-pill">
-            <i class="fa-solid fa-database"></i>
-            <span>IndexedDB Local Storage</span>
-          </div>
-        </div>
       </div>
-    {:else}
-      <!-- Manager View Header -->
-      <div class="manager-view-header">
-        <div class="manager-header-left">
-          <div class="manager-icon-badge">
+
+      {#if filteredLexicons.length === 0}
+        <div class="starting-empty-state">
+          <div class="empty-icon-wrap">
             <i class="fa-solid fa-book-bookmark"></i>
           </div>
-          <div>
-            <h2 class="manager-title">Lexicon Manager</h2>
-            <p class="manager-subtitle">
-              Manage linguistic dictionaries, wordlists, and controlled
-              vocabularies.
-            </p>
-          </div>
-        </div>
-
-        <button
-          type="button"
-          class="btn-hero-primary"
-          onclick={() => (lexiconState.isNewLexiconModalOpen = true)}
-          title="Create a new lexicon"
-        >
-          <i class="fa-solid fa-plus"></i>
-          <span>New Lexicon</span>
-        </button>
-      </div>
-
-      <!-- Manager Toolbar: Search & Counters -->
-      <div class="manager-toolbar">
-        <div class="manager-search-wrap">
-          <i class="fa-solid fa-magnifying-glass search-icon"></i>
-          <input
-            type="text"
-            class="manager-search-input"
-            placeholder="Search lexicons by title, language variety, or description..."
-            bind:value={managerSearchQuery}
-          />
           {#if managerSearchQuery}
+            <h3>No matching lexicons</h3>
+            <p>No lexicon found matching "{managerSearchQuery}".</p>
             <button
               type="button"
-              class="btn-clear-search"
+              class="btn-modal-cancel"
               onclick={() => (managerSearchQuery = '')}
-              aria-label="Clear filter"
-              title="Clear filter"
+              style="margin-top: 8px;"
             >
-              <i class="fa-solid fa-xmark"></i>
+              Clear Search
+            </button>
+          {:else}
+            <h3>No lexicons yet</h3>
+            <p>Create your first lexicon to get started.</p>
+            <button
+              type="button"
+              class="btn-new-project-hero"
+              onclick={() => (lexiconState.isNewLexiconModalOpen = true)}
+              style="margin-top: 10px;"
+            >
+              <i class="fa-solid fa-plus"></i>
+              <span>Create Lexicon</span>
             </button>
           {/if}
         </div>
-
-        <div class="manager-count-badge">
-          {#if managerSearchQuery}
-            Showing <strong>{filteredLexicons.length}</strong> of {lexiconState
-              .lexicons.length} lexicons
-          {:else}
-            Total: <strong>{lexiconState.lexicons.length}</strong>
-            lexicon{lexiconState.lexicons.length === 1 ? '' : 's'}
-          {/if}
-        </div>
-      </div>
-
-      <!-- Lexicons Grid / Cards -->
-      {#if filteredLexicons.length === 0}
-        <div class="no-matches-card">
-          <i class="fa-solid fa-filter-circle-xmark empty-icon"></i>
-          <h4>No matching lexicons found</h4>
-          <p>No lexicons match "{managerSearchQuery}".</p>
-          <button
-            type="button"
-            class="btn-secondary"
-            onclick={() => (managerSearchQuery = '')}
-          >
-            Clear Search Filter
-          </button>
-        </div>
       {:else}
-        <div class="lexicons-grid">
-          {#each filteredLexicons as lex (lex.id)}
-            {@const entryCount = lex.entries?.length || 0}
-            {@const fieldCount = lex.fields?.length || 0}
-            {@const updateTime = lex.updatedAt || lex.createdAt}
-
-            <div
-              class="lexicon-card"
-              role="button"
-              tabindex="0"
-              onclick={() => router.navigate(`/lexicon/${lex.id}`)}
-              onkeydown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') {
-                  router.navigate(`/lexicon/${lex.id}`);
-                }
-              }}
-              title="Open lexicon {lex.title}"
-            >
-              <div class="card-top-row">
-                <div class="card-title-group">
-                  <h3 class="card-lex-title">{lex.title}</h3>
-                  {#if lex.languageVariety}
-                    <span class="card-lang-tag">
-                      <i class="fa-solid fa-language"></i>
-                      {lex.languageVariety}
+        <div class="projects-table-wrap">
+          <table class="projects-table">
+            <thead>
+              <tr>
+                <th
+                  class="col-title sortable"
+                  onclick={() => toggleSort('title')}
+                >
+                  <div class="th-inner">
+                    <span>Lexicon Title</span>
+                    {#if sortField === 'title'}
+                      <i
+                        class="fa-solid {sortDir === 'asc'
+                          ? 'fa-arrow-up-short-wide'
+                          : 'fa-arrow-down-wide-short'} sort-icon active"
+                      ></i>
+                    {:else}
+                      <i class="fa-solid fa-sort sort-icon dim"></i>
+                    {/if}
+                  </div>
+                </th>
+                <th
+                  class="col-lang sortable"
+                  onclick={() => toggleSort('languageVariety')}
+                >
+                  <div class="th-inner">
+                    <span>Language Variety</span>
+                    {#if sortField === 'languageVariety'}
+                      <i
+                        class="fa-solid {sortDir === 'asc'
+                          ? 'fa-arrow-up-short-wide'
+                          : 'fa-arrow-down-wide-short'} sort-icon active"
+                      ></i>
+                    {:else}
+                      <i class="fa-solid fa-sort sort-icon dim"></i>
+                    {/if}
+                  </div>
+                </th>
+                <th
+                  class="col-entries sortable"
+                  onclick={() => toggleSort('entries')}
+                >
+                  <div class="th-inner">
+                    <span>Entries</span>
+                    {#if sortField === 'entries'}
+                      <i
+                        class="fa-solid {sortDir === 'asc'
+                          ? 'fa-arrow-up-short-wide'
+                          : 'fa-arrow-down-wide-short'} sort-icon active"
+                      ></i>
+                    {:else}
+                      <i class="fa-solid fa-sort sort-icon dim"></i>
+                    {/if}
+                  </div>
+                </th>
+                <th
+                  class="col-fields sortable"
+                  onclick={() => toggleSort('fields')}
+                >
+                  <div class="th-inner">
+                    <span>Fields</span>
+                    {#if sortField === 'fields'}
+                      <i
+                        class="fa-solid {sortDir === 'asc'
+                          ? 'fa-arrow-up-short-wide'
+                          : 'fa-arrow-down-wide-short'} sort-icon active"
+                      ></i>
+                    {:else}
+                      <i class="fa-solid fa-sort sort-icon dim"></i>
+                    {/if}
+                  </div>
+                </th>
+                <th
+                  class="col-updated sortable"
+                  onclick={() => toggleSort('updatedAt')}
+                >
+                  <div class="th-inner">
+                    <span>Updated</span>
+                    {#if sortField === 'updatedAt'}
+                      <i
+                        class="fa-solid {sortDir === 'asc'
+                          ? 'fa-arrow-up-short-wide'
+                          : 'fa-arrow-down-wide-short'} sort-icon active"
+                      ></i>
+                    {:else}
+                      <i class="fa-solid fa-sort sort-icon dim"></i>
+                    {/if}
+                  </div>
+                </th>
+                <th class="col-actions">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {#each filteredLexicons as lex (lex.id)}
+                {@const entryCount = lex.entries?.length || 0}
+                {@const fieldCount = lex.fields?.length || 0}
+                {@const updateTime = lex.updatedAt || lex.createdAt}
+                <tr
+                  class="project-row"
+                  onclick={() => router.navigate(`/lexicon/${lex.id}`)}
+                >
+                  <td class="col-title">
+                    <div class="row-title-wrap">
+                      <span class="row-project-title" title={lex.title}>
+                        {lex.title}
+                      </span>
+                    </div>
+                  </td>
+                  <td class="col-lang">
+                    {#if lex.languageVariety}
+                      <span class="card-lang-tag">
+                        <i class="fa-solid fa-language"></i>
+                        {lex.languageVariety}
+                      </span>
+                    {:else}
+                      <span class="row-date-val">&mdash;</span>
+                    {/if}
+                  </td>
+                  <td class="col-entries">
+                    <span class="row-tabular-val">{entryCount}</span>
+                  </td>
+                  <td class="col-fields">
+                    <span class="row-tabular-val">{fieldCount}</span>
+                  </td>
+                  <td class="col-updated">
+                    <span class="row-date-val">
+                      {updateTime
+                        ? new Date(updateTime).toLocaleDateString()
+                        : '—'}
                     </span>
-                  {/if}
-                </div>
-
-                <div class="card-top-actions">
-                  <button
-                    type="button"
-                    class="btn-card-icon"
-                    onclick={(e) => handleExportTsv(e, lex)}
-                    title="Export {lex.title} to TSV"
+                  </td>
+                  <td
+                    class="col-actions"
+                    onclick={(e) => e.stopPropagation()}
                   >
-                    <i class="fa-solid fa-file-arrow-down"></i>
-                  </button>
-
-                  <button
-                    type="button"
-                    class="btn-card-icon text-danger"
-                    onclick={(e) => handleDeleteLexicon(e, lex)}
-                    title="Delete lexicon {lex.title}"
-                  >
-                    <i class="fa-solid fa-trash-can"></i>
-                  </button>
-                </div>
-              </div>
-
-              {#if lex.description}
-                <p class="card-description">{lex.description}</p>
-              {:else}
-                <p class="card-description text-placeholder">
-                  No description provided.
-                </p>
-              {/if}
-
-              <div class="card-metrics-row">
-                <span class="metric-pill">
-                  <i class="fa-solid fa-spell-check"></i>
-                  <strong>{entryCount}</strong>
-                  {entryCount === 1 ? 'entry' : 'entries'}
-                </span>
-
-                <span class="metric-pill">
-                  <i class="fa-solid fa-table-columns"></i>
-                  <strong>{fieldCount}</strong>
-                  {fieldCount === 1 ? 'field' : 'fields'}
-                </span>
-
-                {#if updateTime}
-                  <span
-                    class="metric-pill update-time-pill"
-                    title={formatFullDateTime(updateTime)}
-                  >
-                    <i class="fa-regular fa-clock"></i>
-                    {formatEntryDateTime(updateTime)}
-                  </span>
-                {/if}
-              </div>
-
-              <div class="card-footer-action">
-                <span class="btn-open-link">
-                  <span>Open Lexicon</span>
-                  <i class="fa-solid fa-arrow-right"></i>
-                </span>
-              </div>
-            </div>
-          {/each}
+                    <div class="row-actions-wrap">
+                      <button
+                        type="button"
+                        class="btn-card-action"
+                        onclick={(e) => handleExportTsv(e, lex)}
+                        title="Export {lex.title} to TSV"
+                      >
+                        <i class="fa-solid fa-download"></i>
+                      </button>
+                      <button
+                        type="button"
+                        class="btn-card-action btn-card-danger"
+                        onclick={(e) => handleDeleteLexicon(e, lex)}
+                        title="Delete lexicon {lex.title}"
+                      >
+                        <i class="fa-solid fa-trash-can"></i>
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
         </div>
       {/if}
-    {/if}
+    </section>
   {:else}
     <!-- ======================================================== -->
     <!-- ROUTE: /lexicon/{id} (INDIVIDUAL LEXICON EDITOR)          -->
@@ -672,168 +738,255 @@
   /* ======================================================== */
   /* MANAGER OVERVIEW VIEW STYLES                              */
   /* ======================================================== */
-  .manager-view-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 16px;
-    flex-wrap: wrap;
+  .starting-projects-section {
     background: var(--bg-card, #ffffff);
     border: 1px solid var(--border-color, #e2e8f0);
     border-radius: 12px;
-    padding: 20px 24px;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
-  }
-
-  .manager-header-left {
+    padding: 14px 18px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
     display: flex;
-    align-items: center;
-    gap: 14px;
+    flex-direction: column;
+    gap: 12px;
   }
 
-  .manager-icon-badge {
-    width: 48px;
-    height: 48px;
-    border-radius: 12px;
-    background: linear-gradient(135deg, #0284c7 0%, #0369a1 100%);
-    color: #ffffff;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 1.35rem;
-    box-shadow: 0 4px 10px rgba(2, 132, 199, 0.25);
-    flex-shrink: 0;
+  :global([data-theme='dark']) .starting-projects-section {
+    background: rgba(30, 41, 59, 0.5);
+    border-color: #334155;
   }
 
-  .manager-title {
-    margin: 0 0 4px;
-    font-size: 1.35rem;
-    font-weight: 800;
-    color: var(--text-heading, #0f172a);
-    letter-spacing: -0.01em;
-  }
-
-  .manager-subtitle {
-    margin: 0;
-    font-size: 0.85rem;
-    color: var(--text-muted, #64748b);
-  }
-
-  /* Manager Toolbar */
-  .manager-toolbar {
+  .projects-section-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 12px;
     flex-wrap: wrap;
+    gap: 10px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--border-color, #f1f5f9);
   }
 
-  .manager-search-wrap {
+  :global([data-theme='dark']) .projects-section-header {
+    border-bottom-color: rgba(255, 255, 255, 0.08);
+  }
+
+  .section-title-wrap {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .section-icon {
+    font-size: 1.15rem;
+    color: var(--primary-color, #0284c7);
+  }
+
+  .section-title {
+    font-size: 1.12rem;
+    font-weight: 800;
+    color: var(--text-heading, #0f172a);
+    margin: 0;
+  }
+
+  .projects-section-actions {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .search-box {
     position: relative;
-    flex: 1;
-    min-width: 260px;
-    max-width: 520px;
+    display: flex;
+    align-items: center;
   }
 
   .search-icon {
     position: absolute;
-    left: 12px;
-    top: 50%;
-    transform: translateY(-50%);
-    font-size: 0.85rem;
+    left: 10px;
+    font-size: 0.78rem;
     color: var(--text-muted, #94a3b8);
     pointer-events: none;
   }
 
-  .manager-search-input {
-    width: 100%;
-    padding: 9px 34px 9px 36px;
+  .search-input {
+    padding: 6px 28px 6px 28px;
     border: 1px solid var(--border-color, #cbd5e1);
-    border-radius: 8px;
-    font-size: 0.85rem;
-    background: var(--bg-input, #ffffff);
-    color: var(--text-base, #334155);
-    outline: none;
-    box-sizing: border-box;
+    border-radius: 6px;
+    font-size: 0.82rem;
+    width: 170px;
+    background: var(--bg-hover, #f8fafc);
+    color: var(--text-heading, #0f172a);
     transition: all 0.15s ease;
   }
 
-  .manager-search-input:focus {
+  .search-input:focus {
+    width: 210px;
+    outline: none;
     border-color: var(--primary-color, #0284c7);
-    box-shadow: 0 0 0 3px rgba(2, 132, 199, 0.15);
+    background: var(--bg-card, #ffffff);
+    box-shadow: 0 0 0 2px rgba(2, 132, 199, 0.15);
   }
 
   .btn-clear-search {
     position: absolute;
-    right: 10px;
-    top: 50%;
-    transform: translateY(-50%);
+    right: 8px;
     background: transparent;
     border: none;
     color: var(--text-muted, #94a3b8);
     cursor: pointer;
-    padding: 4px;
-    border-radius: 4px;
+    padding: 2px;
+    font-size: 0.78rem;
   }
 
-  .btn-clear-search:hover {
-    color: var(--text-heading, #0f172a);
-  }
-
-  .manager-count-badge {
-    font-size: 0.825rem;
-    color: var(--text-muted, #64748b);
-  }
-
-  /* Lexicons Grid & Cards */
-  .lexicons-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-    gap: 18px;
-  }
-
-  .lexicon-card {
-    background: var(--bg-card, #ffffff);
-    border: 1px solid var(--border-color, #e2e8f0);
-    border-radius: 12px;
-    padding: 18px 20px;
-    display: flex;
-    flex-direction: column;
-    justify-content: space-between;
+  .btn-new-project-hero {
+    background: #0284c7;
+    color: #ffffff;
+    border: 1px solid #0369a1;
+    padding: 6px 12px;
+    border-radius: 6px;
+    font-size: 0.8rem;
+    font-weight: 600;
     cursor: pointer;
-    transition: all 0.18s ease;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.03);
-    position: relative;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    transition:
+      background-color 0.15s ease,
+      border-color 0.15s ease;
+  }
+
+  .btn-new-project-hero:hover {
+    background: #0369a1;
+    border-color: #075985;
+  }
+
+  /* Lexicons Table */
+  .projects-table-wrap {
+    overflow-x: auto;
+    border: 1px solid var(--border-color, #e4e2dd);
+    border-radius: 6px;
+    background: var(--bg-card, #ffffff);
+  }
+
+  .projects-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.84rem;
+    text-align: left;
+  }
+
+  .projects-table th {
+    background: var(--bg-table-header, #f2f0ed);
+    padding: 9px 12px;
+    font-weight: 600;
+    font-size: 0.78rem;
+    color: var(--text-heading, #0f172a);
+    border-bottom: 1px solid var(--border-color, #e4e2dd);
+    white-space: nowrap;
     user-select: none;
   }
 
-  .lexicon-card:hover {
-    border-color: var(--primary-color, #0284c7);
-    box-shadow: 0 8px 22px rgba(2, 132, 199, 0.12);
-    transform: translateY(-2px);
+  .projects-table th.sortable {
+    cursor: pointer;
+    transition: background-color 0.12s ease;
   }
 
-  .card-top-row {
+  .projects-table th.sortable:hover {
+    background: var(--border-color, #e4e2dd);
+  }
+
+  :global([data-theme='dark']) .projects-table th.sortable:hover {
+    background: #334155;
+  }
+
+  .th-inner {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .sort-icon {
+    font-size: 0.72rem;
+  }
+
+  .sort-icon.dim {
+    opacity: 0.35;
+  }
+
+  .sort-icon.active {
+    color: var(--primary-color, #0284c7);
+  }
+
+  .project-row {
+    border-bottom: 1px solid var(--border-color, #e4e2dd);
+    cursor: pointer;
+    transition: background-color 0.12s ease;
+  }
+
+  .project-row:last-child {
+    border-bottom: none;
+  }
+
+  .project-row:hover {
+    background: var(--bg-hover, #f2f0ed);
+  }
+
+  .projects-table td {
+    padding: 9px 12px;
+    vertical-align: middle;
+  }
+
+  .col-title {
+    min-width: 240px;
+  }
+
+  .col-lang {
+    width: 180px;
+    white-space: nowrap;
+  }
+
+  .col-entries,
+  .col-fields,
+  .col-updated {
+    width: 120px;
+    white-space: nowrap;
+  }
+
+  .col-actions {
+    width: 100px;
+    text-align: right;
+    white-space: nowrap;
+  }
+
+  .projects-table th.col-actions {
+    text-align: right;
+  }
+
+  .row-title-wrap {
     display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: 12px;
-    margin-bottom: 8px;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
   }
 
-  .card-title-group {
-    display: flex;
-    flex-direction: column;
-    gap: 5px;
-    min-width: 0;
-  }
-
-  .card-lex-title {
-    margin: 0;
-    font-size: 1.15rem;
-    font-weight: 700;
+  .row-project-title {
+    font-weight: 600;
     color: var(--text-heading, #0f172a);
-    word-break: break-word;
+  }
+
+  .project-row:hover .row-project-title {
+    color: var(--primary-color, #0284c7);
+  }
+
+  .row-tabular-val {
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+    color: var(--text-base, #334155);
+  }
+
+  .row-date-val {
+    font-variant-numeric: tabular-nums;
+    font-size: 0.8rem;
+    color: var(--text-muted, #64748b);
   }
 
   .card-lang-tag {
@@ -850,129 +1003,82 @@
     border: 1px solid #bae6fd;
   }
 
-  .card-top-actions {
-    display: flex;
+  .row-actions-wrap {
+    display: inline-flex;
     align-items: center;
+    justify-content: flex-end;
     gap: 4px;
-    flex-shrink: 0;
   }
 
-  .btn-card-icon {
+  .btn-card-action {
     background: transparent;
     border: none;
-    color: var(--text-muted, #94a3b8);
-    padding: 6px 8px;
-    border-radius: 6px;
     cursor: pointer;
-    font-size: 0.85rem;
+    color: var(--text-muted, #94a3b8);
+    padding: 4px 6px;
+    border-radius: 4px;
+    font-size: 0.8rem;
     transition: all 0.12s ease;
   }
 
-  .btn-card-icon:hover {
-    background: var(--bg-hover, #f1f5f9);
+  .btn-card-action:hover {
     color: var(--text-heading, #0f172a);
+    background: rgba(0, 0, 0, 0.05);
   }
 
-  .btn-card-icon.text-danger:hover {
-    color: #ef4444;
-    background: rgba(239, 68, 68, 0.1);
+  :global([data-theme='dark']) .btn-card-action:hover {
+    color: #ffffff;
+    background: rgba(255, 255, 255, 0.1);
   }
 
-  .card-description {
-    font-size: 0.825rem;
-    color: var(--text-muted, #64748b);
-    line-height: 1.45;
-    margin: 0 0 14px;
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    -webkit-box-orient: vertical;
-    overflow: hidden;
+  .btn-card-danger:hover {
+    color: #ef4444 !important;
+    background: rgba(239, 68, 68, 0.1) !important;
   }
 
-  .card-description.text-placeholder {
-    font-style: italic;
-    opacity: 0.65;
-  }
-
-  .card-metrics-row {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    flex-wrap: wrap;
-    font-size: 0.75rem;
-    margin-bottom: 12px;
-  }
-
-  .metric-pill {
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    background: var(--bg-hover, #f8fafc);
-    border: 1px solid var(--border-color, #e2e8f0);
-    padding: 3px 8px;
-    border-radius: 6px;
-    color: var(--text-muted, #64748b);
-  }
-
-  .metric-pill strong {
-    color: var(--text-heading, #0f172a);
-  }
-
-  .update-time-pill {
-    font-variant-numeric: tabular-nums;
-  }
-
-  .card-footer-action {
-    display: flex;
-    justify-content: flex-end;
-    border-top: 1px solid var(--border-color, #f1f5f9);
-    padding-top: 10px;
-    margin-top: 2px;
-  }
-
-  .btn-open-link {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 0.8rem;
-    font-weight: 600;
-    color: var(--primary-color, #0284c7);
-  }
-
-  .lexicon-card:hover .btn-open-link {
-    color: #0369a1;
-  }
-
-  .lexicon-card:hover .btn-open-link i {
-    transform: translateX(4px);
-    transition: transform 0.15s ease;
-  }
-
-  .no-matches-card {
-    padding: 48px 24px;
+  /* Empty State */
+  .starting-empty-state {
     text-align: center;
-    background: var(--bg-card, #ffffff);
-    border: 1px dashed var(--border-color, #cbd5e1);
-    border-radius: 12px;
-    color: var(--text-muted, #64748b);
+    padding: 32px 16px;
+    background: var(--bg-hover, #f8fafc);
+    border: 2px dashed var(--border-color, #cbd5e1);
+    border-radius: 8px;
+    margin: 4px 0;
   }
 
-  .empty-icon {
+  :global([data-theme='dark']) .starting-empty-state {
+    background: rgba(255, 255, 255, 0.02);
+    border-color: #334155;
+  }
+
+  .empty-icon-wrap {
     font-size: 2rem;
-    margin-bottom: 8px;
-    opacity: 0.4;
+    color: var(--text-muted, #94a3b8);
+    margin-bottom: 6px;
   }
 
-  .no-matches-card h4 {
-    margin: 0 0 6px;
-    font-size: 1.05rem;
-    font-weight: 600;
+  .starting-empty-state h3 {
+    margin: 0 0 4px 0;
+    font-size: 0.98rem;
+    font-weight: 700;
     color: var(--text-heading, #0f172a);
   }
 
-  .no-matches-card p {
-    margin: 0 0 16px;
-    font-size: 0.85rem;
+  .starting-empty-state p {
+    margin: 0;
+    font-size: 0.8rem;
+    color: var(--text-muted, #64748b);
+  }
+
+  .btn-modal-cancel {
+    background: var(--bg-hover, #f1f5f9);
+    border: 1px solid var(--border-color, #cbd5e1);
+    color: var(--text-base, #334155);
+    padding: 4px 10px;
+    border-radius: 4px;
+    font-size: 0.76rem;
+    font-weight: 600;
+    cursor: pointer;
   }
 
   /* ======================================================== */
@@ -1393,68 +1499,6 @@
     color: #ef4444;
   }
 
-  /* Hero Styles */
-  .zero-state-hero {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    text-align: center;
-    padding: 60px 24px;
-    background: var(--bg-card, #ffffff);
-    border: 1px solid var(--border-color, #e2e8f0);
-    border-radius: 16px;
-    max-width: 800px;
-    margin: 20px auto;
-    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.04);
-  }
-
-  .hero-icon-badge {
-    width: 72px;
-    height: 72px;
-    border-radius: 20px;
-    background: linear-gradient(135deg, #0284c7 0%, #0369a1 100%);
-    color: #ffffff;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 2rem;
-    margin-bottom: 20px;
-    box-shadow: 0 8px 16px rgba(2, 132, 199, 0.25);
-  }
-
-  .hero-title {
-    font-size: 1.85rem;
-    font-weight: 800;
-    margin: 0 0 12px;
-    color: var(--text-heading, #0f172a);
-    letter-spacing: -0.02em;
-  }
-
-  .hero-desc {
-    font-size: 1rem;
-    line-height: 1.6;
-    color: var(--text-muted, #64748b);
-    max-width: 620px;
-    margin: 0 0 28px;
-  }
-
-  .not-found-desc code {
-    background: #f1f5f9;
-    padding: 2px 6px;
-    border-radius: 4px;
-    font-size: 0.9em;
-    color: #0f172a;
-  }
-
-  .hero-actions {
-    display: flex;
-    align-items: center;
-    gap: 14px;
-    flex-wrap: wrap;
-    justify-content: center;
-    margin-bottom: 36px;
-  }
-
   .btn-hero-primary {
     display: inline-flex;
     align-items: center;
@@ -1462,53 +1506,23 @@
     padding: 10px 20px;
     background: var(--primary-color, #0284c7);
     color: #ffffff;
-    border: none;
-    border-radius: 8px;
+    border: 1px solid #0369a1;
+    border-radius: 6px;
     font-size: 0.9rem;
     font-weight: 600;
     cursor: pointer;
-    box-shadow: 0 4px 12px rgba(2, 132, 199, 0.25);
-    transition: all 0.15s ease;
+    transition: background-color 0.15s ease, border-color 0.15s ease;
   }
 
   .btn-hero-primary:hover {
     background: #0369a1;
-    transform: translateY(-1px);
-    box-shadow: 0 6px 16px rgba(2, 132, 199, 0.35);
-  }
-
-  .hero-feature-pills {
-    display: flex;
-    gap: 12px;
-    flex-wrap: wrap;
-    justify-content: center;
-  }
-
-  .feature-pill {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 0.825rem;
-    font-weight: 500;
-    color: var(--text-muted, #64748b);
-    background: var(--bg-hover, #f8fafc);
-    border: 1px solid var(--border-color, #e2e8f0);
-    padding: 6px 12px;
-    border-radius: 20px;
-  }
-
-  .feature-pill i {
-    color: var(--primary-color, #0284c7);
+    border-color: #075985;
   }
 
   /* Dark mode overrides */
-  :global([data-theme='dark']) .manager-view-header,
-  :global([data-theme='dark']) .lexicon-card,
   :global([data-theme='dark']) .lexicon-header-card,
   :global([data-theme='dark']) .btn-back-to-manager,
-  :global([data-theme='dark']) .zero-state-hero,
-  :global([data-theme='dark']) .lexicon-not-found-card,
-  :global([data-theme='dark']) .no-matches-card {
+  :global([data-theme='dark']) .lexicon-not-found-card {
     background: var(--bg-card, #1e293b);
     border-color: var(--border-color, #334155);
   }
@@ -1518,11 +1532,6 @@
     background: rgba(2, 132, 199, 0.15);
     color: #38bdf8;
     border-color: rgba(56, 189, 248, 0.25);
-  }
-
-  :global([data-theme='dark']) .metric-pill {
-    background: rgba(255, 255, 255, 0.04);
-    border-color: rgba(255, 255, 255, 0.08);
   }
 
   :global([data-theme='dark']) .not-found-desc code {

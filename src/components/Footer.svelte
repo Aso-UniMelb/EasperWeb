@@ -153,11 +153,11 @@
     position: sticky;
     bottom: 0;
     z-index: 40;
-    background-color: var(--bg-app, #f8fafc);
+    background-color: var(--bg-app, #f9f8f7);
     margin-top: auto;
     padding-top: 10px;
     padding-bottom: 4px;
-    border-top: 1px solid var(--border-color, #e2e8f0);
+    border-top: 1px solid var(--border-color, #e4e2dd);
     display: flex;
     justify-content: space-between;
     align-items: center;
@@ -290,9 +290,7 @@
   }
 
   .chip-clickable:hover {
-    transform: translateY(-1px);
     filter: brightness(0.96);
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.08);
   }
 
   :global([data-theme='dark']) .chip-clickable:hover {
@@ -304,21 +302,20 @@
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    background: var(--bg-hover, #f1f5f9);
-    border: 1px solid var(--border-color, #cbd5e1);
+    background: var(--bg-hover, #f2f0ed);
+    border: 1px solid var(--border-color, #e4e2dd);
     color: var(--text-base, #334155);
     padding: 3px 10px;
-    border-radius: 12px;
+    border-radius: 6px;
     font-size: 0.72rem;
     font-weight: 600;
     cursor: pointer;
-    transition: all 0.15s ease;
+    transition: background-color 0.15s ease, border-color 0.15s ease;
   }
 
   .footer-theme-btn:hover {
-    background: var(--border-color, #e2e8f0);
+    background: var(--border-color, #e4e2dd);
     color: var(--text-heading, #0f172a);
-    transform: translateY(-1px);
   }
 
   .text-amber {

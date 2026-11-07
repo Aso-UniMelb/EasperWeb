@@ -15,9 +15,8 @@
 
   // Projects Dashboard state (used when on /transcriber without project ID)
   let searchQuery = $state('');
-  let editingProjectId = $state(null);
-  let editTitle = $state('');
-  let editTranscriber = $state('');
+  let sortField = $state('updatedAt'); // 'title' | 'duration' | 'segments' | 'updatedAt'
+  let sortDir = $state('desc'); // 'asc' | 'desc'
   let openFileInputEl = $state(null);
 
   function handleOpenProjectFile(e) {
@@ -28,8 +27,17 @@
     e.target.value = '';
   }
 
-  let filteredProjects = $derived(
-    projectState.projects.filter((p) => {
+  function toggleSort(field) {
+    if (sortField === field) {
+      sortDir = sortDir === 'asc' ? 'desc' : 'asc';
+    } else {
+      sortField = field;
+      sortDir = field === 'title' ? 'asc' : 'desc';
+    }
+  }
+
+  let filteredProjects = $derived.by(() => {
+    const list = projectState.projects.filter((p) => {
       if (!searchQuery.trim()) return true;
       const q = searchQuery.toLowerCase();
       return (
@@ -37,31 +45,29 @@
         (p.transcriber || '').toLowerCase().includes(q) ||
         (p.audioFileName || '').toLowerCase().includes(q)
       );
-    }),
-  );
+    });
 
-  function startEdit(proj, e) {
-    if (e) e.stopPropagation();
-    editingProjectId = proj.id;
-    editTitle = proj.title || '';
-    editTranscriber = proj.transcriber || '';
-  }
+    list.sort((a, b) => {
+      let cmp = 0;
+      if (sortField === 'title') {
+        cmp = (a.title || '').localeCompare(b.title || '', undefined, {
+          numeric: true,
+          sensitivity: 'base',
+        });
+      } else if (sortField === 'duration') {
+        cmp = (a.audioDuration || 0) - (b.audioDuration || 0);
+      } else if (sortField === 'segments') {
+        cmp = (a.segments?.length || 0) - (b.segments?.length || 0);
+      } else if (sortField === 'updatedAt') {
+        const timeA = new Date(a.updatedAt || a.createdAt || 0).getTime();
+        const timeB = new Date(b.updatedAt || b.createdAt || 0).getTime();
+        cmp = timeA - timeB;
+      }
+      return sortDir === 'asc' ? cmp : -cmp;
+    });
 
-  async function saveEdit(projId, e) {
-    if (e) e.stopPropagation();
-    if (editingProjectId === projId) {
-      await projectState.updateProjectInfo(projId, {
-        title: editTitle,
-        transcriber: editTranscriber,
-      });
-      editingProjectId = null;
-    }
-  }
-
-  function cancelEdit(e) {
-    if (e) e.stopPropagation();
-    editingProjectId = null;
-  }
+    return list;
+  });
 
   async function handleOpenProject(projId) {
     const proj = projectState.findProjectById(projId);
@@ -179,17 +185,6 @@
             {/if}
           </div>
 
-          <!-- Button to Models Page -->
-          <button
-            type="button"
-            class="btn-hero-models"
-            onclick={() => router.navigate('/models')}
-            title="Speech Recognition Model Management"
-          >
-            <i class="fa-solid fa-brain"></i>
-            <span>Models</span>
-          </button>
-
           <!-- Import Project Button -->
           <button
             type="button"
@@ -231,22 +226,6 @@
             <i class="fa-solid fa-plus"></i>
             <span>New Project</span>
           </button>
-
-          <!-- Resume active project if exists -->
-          {#if projectState.activeProject}
-            <button
-              type="button"
-              class="btn-resume-active"
-              onclick={() =>
-                router.navigate(
-                  `/transcriber/${projectState.activeProject.numericId || projectState.activeProject.id}`,
-                )}
-              title="Return to currently loaded workspace"
-            >
-              <i class="fa-solid fa-play"></i>
-              <span>Resume #{projectState.activeProject.numericId || ''}</span>
-            </button>
-          {/if}
         </div>
       </div>
 
@@ -282,162 +261,148 @@
           {/if}
         </div>
       {:else}
-        <div class="starting-projects-grid">
-          {#each filteredProjects as proj (proj.id)}
-            <div
-              class="home-project-card {projectState.activeProjectId === proj.id
-                ? 'active-card'
-                : ''}"
-              onclick={() => handleOpenProject(proj.id)}
-              role="button"
-              tabindex="0"
-              onkeydown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') {
-                  handleOpenProject(proj.id);
-                }
-              }}
-            >
-              {#if editingProjectId === proj.id}
-                <!-- Inline Editing Form -->
-                <!-- svelte-ignore a11y_click_events_have_key_events -->
-                <div
-                  class="card-edit-overlay"
-                  onclick={(e) => e.stopPropagation()}
-                  role="presentation"
+        <div class="projects-table-wrap">
+          <table class="projects-table">
+            <thead>
+              <tr>
+                <th
+                  class="col-title sortable"
+                  onclick={() => toggleSort('title')}
                 >
-                  <div class="form-group">
-                    <label for="edit-home-title-{proj.id}">Project Title</label>
-                    <input
-                      id="edit-home-title-{proj.id}"
-                      type="text"
-                      class="form-control form-control-sm"
-                      bind:value={editTitle}
-                    />
-                  </div>
-                  <div class="form-group">
-                    <label for="edit-home-transcriber-{proj.id}"
-                      >Transcriber Name</label
-                    >
-                    <input
-                      id="edit-home-transcriber-{proj.id}"
-                      type="text"
-                      class="form-control form-control-sm"
-                      bind:value={editTranscriber}
-                    />
-                  </div>
-                  <div class="edit-btn-row">
-                    <button
-                      type="button"
-                      class="btn-sm btn-primary"
-                      onclick={(e) => saveEdit(proj.id, e)}
-                    >
-                      <i class="fa-solid fa-check"></i> Save
-                    </button>
-                    <button
-                      type="button"
-                      class="btn-sm btn-secondary"
-                      onclick={cancelEdit}
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                </div>
-              {:else}
-                <!-- Card Header -->
-                <div class="card-top-row">
-                  <div class="card-title-wrap">
-                    <h3 class="card-project-title" title={proj.title}>
-                      {proj.title}
-                    </h3>
-                    {#if projectState.activeProjectId === proj.id}
-                      <span class="badge-last-active">
-                        <i class="fa-solid fa-clock-rotate-left"></i> Last Opened
-                      </span>
+                  <div class="th-inner">
+                    <span>Project Title</span>
+                    {#if sortField === 'title'}
+                      <i
+                        class="fa-solid {sortDir === 'asc'
+                          ? 'fa-arrow-up-short-wide'
+                          : 'fa-arrow-down-wide-short'} sort-icon active"
+                      ></i>
+                    {:else}
+                      <i class="fa-solid fa-sort sort-icon dim"></i>
                     {/if}
                   </div>
-
-                  <div class="card-actions-row">
-                    <button
-                      type="button"
-                      class="btn-card-action"
-                      onclick={(e) => startEdit(proj, e)}
-                      title="Edit project title and transcriber"
-                    >
-                      <i class="fa-solid fa-pen-to-square"></i>
-                    </button>
-                    <button
-                      type="button"
-                      class="btn-card-action"
-                      onclick={(e) => {
-                        e.stopPropagation();
-                        projectState.saveProjectPackage(proj);
-                      }}
-                      title="Archive project package (.easper)"
-                    >
-                      <i class="fa-solid fa-box-archive"></i>
-                    </button>
-                    <button
-                      type="button"
-                      class="btn-card-action btn-card-danger"
-                      onclick={(e) => handleDeleteProject(proj, e)}
-                      title="Delete project from storage"
-                    >
-                      <i class="fa-solid fa-trash-can"></i>
-                    </button>
+                </th>
+                <th
+                  class="col-duration sortable"
+                  onclick={() => toggleSort('duration')}
+                >
+                  <div class="th-inner">
+                    <span>Duration</span>
+                    {#if sortField === 'duration'}
+                      <i
+                        class="fa-solid {sortDir === 'asc'
+                          ? 'fa-arrow-up-short-wide'
+                          : 'fa-arrow-down-wide-short'} sort-icon active"
+                      ></i>
+                    {:else}
+                      <i class="fa-solid fa-sort sort-icon dim"></i>
+                    {/if}
                   </div>
-                </div>
-
-                <!-- Card Metadata -->
-                <div class="card-meta-grid">
-                  <div class="meta-item">
-                    <i class="fa-solid fa-user-pen"></i>
-                    <strong class="meta-value"
-                      >{proj.transcriber || 'Unknown'}</strong
-                    >
+                </th>
+                <th
+                  class="col-segments sortable"
+                  onclick={() => toggleSort('segments')}
+                >
+                  <div class="th-inner">
+                    <span>Utterances</span>
+                    {#if sortField === 'segments'}
+                      <i
+                        class="fa-solid {sortDir === 'asc'
+                          ? 'fa-arrow-up-short-wide'
+                          : 'fa-arrow-down-wide-short'} sort-icon active"
+                      ></i>
+                    {:else}
+                      <i class="fa-solid fa-sort sort-icon dim"></i>
+                    {/if}
                   </div>
-                  <div class="meta-item">
-                    <i class="fa-solid fa-clock"></i>
-                    <strong class="meta-value"
-                      >{formatTimeSec(proj.audioDuration || 0)}</strong
-                    >
+                </th>
+                <th
+                  class="col-updated sortable"
+                  onclick={() => toggleSort('updatedAt')}
+                >
+                  <div class="th-inner">
+                    <span>Updated</span>
+                    {#if sortField === 'updatedAt'}
+                      <i
+                        class="fa-solid {sortDir === 'asc'
+                          ? 'fa-arrow-up-short-wide'
+                          : 'fa-arrow-down-wide-short'} sort-icon active"
+                      ></i>
+                    {:else}
+                      <i class="fa-solid fa-sort sort-icon dim"></i>
+                    {/if}
                   </div>
-                  <div class="meta-item">
-                    <i class="fa-solid fa-comments"></i>
-                    <strong class="meta-value"
-                      >{proj.segments?.length || 0} Utterances</strong
-                    >
-                  </div>
-                  <div class="meta-item">
-                    <i class="fa-solid fa-music"></i>
-                    <span class="meta-value-file" title={proj.audioFileName}>
-                      {proj.audioFileName || '16kHz WAV'}
+                </th>
+                <th class="col-actions">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {#each filteredProjects as proj (proj.id)}
+                <tr
+                  class="project-row {projectState.activeProjectId === proj.id
+                    ? 'active-row'
+                    : ''}"
+                  onclick={() => handleOpenProject(proj.id)}
+                >
+                  <td class="col-title">
+                    <div class="row-title-wrap">
+                      <span class="row-project-title" title={proj.title}>
+                        {proj.title}
+                      </span>
+                      {#if projectState.activeProjectId === proj.id}
+                        <span class="badge-last-active">
+                          <i class="fa-solid fa-clock-rotate-left"></i> Last Opened
+                        </span>
+                      {/if}
+                    </div>
+                  </td>
+                  <td class="col-duration">
+                    <span class="row-tabular-val">
+                      {formatTimeSec(proj.audioDuration || 0)}
                     </span>
-                  </div>
-                </div>
-
-                <!-- Card Footer with Open Button -->
-                <div class="card-footer-row">
-                  <span class="card-date-label">
-                    Updated {new Date(
-                      proj.updatedAt || proj.createdAt,
-                    ).toLocaleDateString()}
-                  </span>
-
-                  <button
-                    type="button"
-                    class="btn-enter-project"
-                    onclick={(e) => {
-                      e.stopPropagation();
-                      handleOpenProject(proj.id);
-                    }}
+                  </td>
+                  <td class="col-segments">
+                    <span class="row-tabular-val">
+                      {proj.segments?.length || 0}
+                    </span>
+                  </td>
+                  <td class="col-updated">
+                    <span class="row-date-val">
+                      {new Date(
+                        proj.updatedAt || proj.createdAt,
+                      ).toLocaleDateString()}
+                    </span>
+                  </td>
+                  <td
+                    class="col-actions"
+                    onclick={(e) => e.stopPropagation()}
                   >
-                    <span>Open Studio</span>
-                    <i class="fa-solid fa-arrow-right"></i>
-                  </button>
-                </div>
-              {/if}
-            </div>
-          {/each}
+                    <div class="row-actions-wrap">
+                      <button
+                        type="button"
+                        class="btn-card-action"
+                        onclick={(e) => {
+                          e.stopPropagation();
+                          projectState.saveProjectPackage(proj);
+                        }}
+                        title="Archive project package (.easper)"
+                      >
+                        <i class="fa-solid fa-download"></i>
+                      </button>
+                      <button
+                        type="button"
+                        class="btn-card-action btn-card-danger"
+                        onclick={(e) => handleDeleteProject(proj, e)}
+                        title="Delete project from storage"
+                      >
+                        <i class="fa-solid fa-trash-can"></i>
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
         </div>
       {/if}
     </section>
@@ -596,33 +561,6 @@
     font-size: 0.78rem;
   }
 
-  .btn-hero-models {
-    background: #ede9fe;
-    border: 1px solid #ddd6fe;
-    color: #7c3aed;
-    padding: 6px 12px;
-    border-radius: 6px;
-    font-size: 0.8rem;
-    font-weight: 700;
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    cursor: pointer;
-    transition: all 0.15s ease;
-  }
-
-  .btn-hero-models:hover {
-    background: #ddd6fe;
-    color: #6d28d9;
-    transform: translateY(-1px);
-  }
-
-  :global([data-theme='dark']) .btn-hero-models {
-    background: rgba(124, 58, 237, 0.18);
-    border-color: rgba(124, 58, 237, 0.3);
-    color: #c084fc;
-  }
-
   .btn-open-project-hero {
     background: #f0f9ff;
     border: 1px solid #bae6fd;
@@ -630,12 +568,14 @@
     padding: 6px 12px;
     border-radius: 6px;
     font-size: 0.8rem;
-    font-weight: 700;
+    font-weight: 600;
     display: inline-flex;
     align-items: center;
     gap: 6px;
     cursor: pointer;
-    transition: all 0.15s ease;
+    transition:
+      background-color 0.15s ease,
+      border-color 0.15s ease;
     white-space: nowrap;
   }
 
@@ -643,8 +583,6 @@
     background: #e0f2fe;
     color: #0369a1;
     border-color: #7dd3fc;
-    transform: translateY(-1px);
-    box-shadow: 0 2px 5px rgba(2, 132, 199, 0.18);
   }
 
   :global([data-theme='dark']) .btn-open-project-hero {
@@ -657,8 +595,6 @@
     background: rgba(2, 132, 199, 0.28);
     border-color: rgba(56, 189, 248, 0.55);
     color: #7dd3fc;
-    transform: translateY(-1px);
-    box-shadow: 0 2px 6px rgba(56, 189, 248, 0.25);
   }
 
   .btn-open-elan-hero {
@@ -668,12 +604,14 @@
     padding: 6px 12px;
     border-radius: 6px;
     font-size: 0.8rem;
-    font-weight: 700;
+    font-weight: 600;
     display: inline-flex;
     align-items: center;
     gap: 6px;
     cursor: pointer;
-    transition: all 0.15s ease;
+    transition:
+      background-color 0.15s ease,
+      border-color 0.15s ease;
     white-space: nowrap;
   }
 
@@ -681,8 +619,6 @@
     background: #d1fae5;
     color: #047857;
     border-color: #6ee7b7;
-    transform: translateY(-1px);
-    box-shadow: 0 2px 5px rgba(5, 150, 105, 0.18);
   }
 
   :global([data-theme='dark']) .btn-open-elan-hero {
@@ -695,129 +631,161 @@
     background: rgba(5, 150, 105, 0.28);
     border-color: rgba(52, 211, 153, 0.55);
     color: #6ee7b7;
-    transform: translateY(-1px);
-    box-shadow: 0 2px 6px rgba(52, 211, 153, 0.25);
   }
 
   .btn-new-project-hero {
     background: #0284c7;
     color: #ffffff;
-    border: none;
+    border: 1px solid #0369a1;
     padding: 6px 12px;
     border-radius: 6px;
     font-size: 0.8rem;
-    font-weight: 700;
+    font-weight: 600;
     cursor: pointer;
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    transition: all 0.15s ease;
+    transition:
+      background-color 0.15s ease,
+      border-color 0.15s ease;
   }
 
   .btn-new-project-hero:hover {
     background: #0369a1;
-    transform: translateY(-1px);
+    border-color: #075985;
   }
 
-  .btn-resume-active {
-    background: #dcfce7;
-    border: 1px solid #bbf7d0;
-    color: #15803d;
-    padding: 6px 12px;
+  /* Projects Table */
+  .projects-table-wrap {
+    overflow-x: auto;
+    border: 1px solid var(--border-color, #e4e2dd);
     border-radius: 6px;
-    font-size: 0.8rem;
-    font-weight: 700;
+    background: var(--bg-card, #ffffff);
+  }
+
+  .projects-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.84rem;
+    text-align: left;
+  }
+
+  .projects-table th {
+    background: var(--bg-table-header, #f2f0ed);
+    padding: 9px 12px;
+    font-weight: 600;
+    font-size: 0.78rem;
+    color: var(--text-heading, #0f172a);
+    border-bottom: 1px solid var(--border-color, #e4e2dd);
+    white-space: nowrap;
+    user-select: none;
+  }
+
+  .projects-table th.sortable {
+    cursor: pointer;
+    transition: background-color 0.12s ease;
+  }
+
+  .projects-table th.sortable:hover {
+    background: var(--border-color, #e4e2dd);
+  }
+
+  :global([data-theme='dark']) .projects-table th.sortable:hover {
+    background: #334155;
+  }
+
+  .th-inner {
     display: inline-flex;
     align-items: center;
     gap: 6px;
+  }
+
+  .sort-icon {
+    font-size: 0.72rem;
+  }
+
+  .sort-icon.dim {
+    opacity: 0.35;
+  }
+
+  .sort-icon.active {
+    color: var(--primary-color, #0284c7);
+  }
+
+  .project-row {
+    border-bottom: 1px solid var(--border-color, #e4e2dd);
     cursor: pointer;
-    transition: all 0.15s ease;
+    transition: background-color 0.12s ease;
   }
 
-  .btn-resume-active:hover {
-    background: #bbf7d0;
-    color: #166534;
+  .project-row:last-child {
+    border-bottom: none;
   }
 
-  :global([data-theme='dark']) .btn-resume-active {
-    background: rgba(34, 197, 94, 0.18);
-    border-color: rgba(34, 197, 94, 0.3);
-    color: #4ade80;
+  .project-row:hover {
+    background: var(--bg-hover, #f2f0ed);
   }
 
-  /* Projects Grid */
-  .starting-projects-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-    gap: 10px;
+  .project-row.active-row {
+    background: #f0f9ff;
   }
 
-  .home-project-card {
-    background: var(--bg-hover, #f8fafc);
-    border: 1px solid var(--border-color, #e2e8f0);
-    border-radius: 8px;
-    padding: 10px 12px;
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    cursor: pointer;
-    transition: all 0.15s ease;
-    position: relative;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.02);
-  }
-
-  .home-project-card:hover {
-    background: var(--bg-card, #ffffff);
-    border-color: var(--primary-color, #0284c7);
-    transform: translateY(-1px);
-    box-shadow: 0 3px 10px rgba(0, 0, 0, 0.05);
-  }
-
-  .home-project-card.active-card {
-    border-color: #0284c7;
-    background: var(--primary-light, #f0f9ff);
-  }
-
-  :global([data-theme='dark']) .home-project-card {
-    background: rgba(255, 255, 255, 0.02);
-    border-color: #334155;
-  }
-
-  :global([data-theme='dark']) .home-project-card:hover {
-    background: rgba(255, 255, 255, 0.04);
-    border-color: #38bdf8;
-  }
-
-  :global([data-theme='dark']) .home-project-card.active-card {
+  :global([data-theme='dark']) .project-row.active-row {
     background: rgba(2, 132, 199, 0.12);
-    border-color: #38bdf8;
   }
 
-  .card-top-row {
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-    gap: 8px;
+  .projects-table td {
+    padding: 9px 12px;
+    vertical-align: middle;
   }
 
-  .card-title-wrap {
+  .col-title {
+    min-width: 240px;
+  }
+
+  .col-duration,
+  .col-segments,
+  .col-updated {
+    width: 130px;
+    white-space: nowrap;
+  }
+
+  .col-actions {
+    width: 100px;
+    text-align: right;
+    white-space: nowrap;
+  }
+
+  .projects-table th.col-actions {
+    text-align: right;
+  }
+
+  .row-title-wrap {
     display: flex;
     align-items: center;
     flex-wrap: wrap;
-    gap: 6px;
-    flex: 1;
-    min-width: 0;
+    gap: 8px;
   }
 
-  .card-project-title {
-    margin: 0;
-    font-size: 0.88rem;
-    font-weight: 700;
+  .row-project-title {
+    font-weight: 600;
     color: var(--text-heading, #0f172a);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    line-height: 1.3;
+  }
+
+  .project-row:hover .row-project-title {
+    color: var(--primary-color, #0284c7);
+  }
+
+  .row-tabular-val {
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+    color: var(--text-base, #334155);
+  }
+
+  .row-date-val {
+    font-variant-numeric: tabular-nums;
+    font-size: 0.8rem;
+    color: var(--text-muted, #64748b);
   }
 
   .badge-last-active {
@@ -825,11 +793,11 @@
     font-weight: 700;
     color: #0284c7;
     background: #e0f2fe;
-    padding: 1px 5px;
+    padding: 1px 6px;
     border-radius: 4px;
     display: inline-flex;
     align-items: center;
-    gap: 3px;
+    gap: 4px;
     white-space: nowrap;
   }
 
@@ -838,11 +806,11 @@
     color: #38bdf8;
   }
 
-  .card-actions-row {
-    display: flex;
+  .row-actions-wrap {
+    display: inline-flex;
     align-items: center;
-    gap: 2px;
-    flex-shrink: 0;
+    justify-content: flex-end;
+    gap: 4px;
   }
 
   .btn-card-action {
@@ -850,9 +818,9 @@
     border: none;
     cursor: pointer;
     color: var(--text-muted, #94a3b8);
-    padding: 3px 5px;
+    padding: 4px 6px;
     border-radius: 4px;
-    font-size: 0.76rem;
+    font-size: 0.8rem;
     transition: all 0.12s ease;
   }
 
@@ -869,126 +837,6 @@
   .btn-card-danger:hover {
     color: #ef4444 !important;
     background: rgba(239, 68, 68, 0.1) !important;
-  }
-
-  /* Card Meta Grid */
-  .card-meta-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 4px 10px;
-    font-size: 0.74rem;
-    padding: 4px 0;
-    border-top: 1px solid var(--border-color, #e2e8f0);
-    border-bottom: 1px solid var(--border-color, #e2e8f0);
-  }
-
-  :global([data-theme='dark']) .card-meta-grid {
-    border-color: rgba(255, 255, 255, 0.06);
-  }
-
-  .meta-item {
-    display: flex;
-    align-items: center;
-    gap: 5px;
-    color: var(--text-muted, #64748b);
-    overflow: hidden;
-    white-space: nowrap;
-  }
-
-  .meta-item i {
-    font-size: 0.72rem;
-    width: 12px;
-    text-align: center;
-    flex-shrink: 0;
-  }
-
-  .meta-value {
-    color: var(--text-heading, #0f172a);
-    font-weight: 600;
-  }
-
-  .meta-value-file {
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
-  /* Card Footer */
-  .card-footer-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 8px;
-    margin-top: 2px;
-  }
-
-  .card-date-label {
-    font-size: 0.68rem;
-    color: var(--text-muted, #94a3b8);
-  }
-
-  .btn-enter-project {
-    background: #0284c7;
-    color: #ffffff;
-    border: none;
-    padding: 3px 8px;
-    border-radius: 4px;
-    font-size: 0.74rem;
-    font-weight: 700;
-    cursor: pointer;
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    transition: all 0.12s ease;
-  }
-
-  .btn-enter-project:hover {
-    background: #0369a1;
-    transform: translateX(1px);
-  }
-
-  /* Edit Overlay */
-  .card-edit-overlay {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    padding: 4px 0;
-  }
-
-  .form-group {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-  }
-
-  .form-group label {
-    font-size: 0.7rem;
-    font-weight: 700;
-    color: var(--text-heading, #0f172a);
-  }
-
-  .form-control-sm {
-    padding: 4px 6px;
-    font-size: 0.78rem;
-    border: 1px solid var(--border-color, #cbd5e1);
-    border-radius: 4px;
-    background: var(--bg-card, #ffffff);
-    color: var(--text-heading, #0f172a);
-  }
-
-  .edit-btn-row {
-    display: flex;
-    justify-content: flex-end;
-    gap: 6px;
-    margin-top: 4px;
-  }
-
-  .btn-sm {
-    padding: 3px 8px;
-    font-size: 0.72rem;
-    font-weight: 700;
-    border-radius: 4px;
-    cursor: pointer;
-    border: 1px solid transparent;
   }
 
   .btn-primary {

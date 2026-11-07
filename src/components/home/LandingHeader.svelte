@@ -201,7 +201,6 @@
     z-index: 50;
     background: var(--bg-card);
     border-bottom: 1px solid var(--border-color);
-    backdrop-filter: blur(12px);
     transition:
       background-color 0.2s ease,
       border-color 0.2s ease;
@@ -366,17 +365,15 @@
     font-size: 0.86rem;
     font-weight: 600;
     color: #ffffff;
-    background: linear-gradient(135deg, #0284c7, #0369a1);
-    border: none;
+    background: #0284c7;
+    border: 1px solid #0369a1;
     cursor: pointer;
-    box-shadow: 0 1px 3px rgba(2, 132, 199, 0.3);
-    transition: all 0.15s ease;
+    transition: background-color 0.15s ease, border-color 0.15s ease;
   }
 
   .btn-launch-primary:hover {
-    background: linear-gradient(135deg, #0369a1, #075985);
-    box-shadow: 0 2px 6px rgba(2, 132, 199, 0.4);
-    transform: translateY(-1px);
+    background: #0369a1;
+    border-color: #075985;
   }
 
   /* Mobile menu button */

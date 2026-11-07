@@ -322,11 +322,11 @@
   }
 
   .ip-band {
-    background: linear-gradient(90deg, #0284c7, #0ea5e9);
+    background: #0284c7;
   }
 
   :global([data-theme='dark']) .ip-band {
-    background: linear-gradient(90deg, #0369a1, #38bdf8);
+    background: #38bdf8;
   }
 
   .ip-playhead {

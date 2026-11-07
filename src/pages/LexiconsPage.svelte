@@ -13,13 +13,14 @@
   .page-lexicons {
     max-width: 1400px;
     margin: 0 auto;
-    /* padding: 24px 20px 48px; */
+    padding: 12px 16px 40px 16px;
     width: 100%;
+    box-sizing: border-box;
   }
 
   @media (max-width: 768px) {
     .page-lexicons {
-      padding: 16px 12px 32px;
+      padding: 12px 12px 32px;
     }
   }
 </style>

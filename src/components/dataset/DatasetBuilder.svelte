@@ -286,26 +286,27 @@
   }
 
   .dataset-hero-card {
-    background: linear-gradient(135deg, #0284c7 0%, #0369a1 100%);
-    border-radius: 10px;
-    padding: 10px 16px;
-    color: white;
+    background: var(--bg-card, #ffffff);
+    border: 1px solid var(--border-color, #e4e2dd);
+    border-radius: 8px;
+    padding: 12px 16px;
+    color: var(--text-heading, #0f172a);
     display: flex;
     align-items: center;
     gap: 12px;
     margin-bottom: 10px;
-    box-shadow: 0 2px 8px rgba(2, 132, 199, 0.2);
   }
 
   .hero-icon-wrap {
     width: 38px;
     height: 38px;
-    border-radius: 8px;
-    background: rgba(255, 255, 255, 0.2);
+    border-radius: 6px;
+    background: rgba(2, 132, 199, 0.12);
+    color: var(--primary-color, #0284c7);
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 1.25rem;
+    font-size: 1.2rem;
     flex-shrink: 0;
   }
 
@@ -314,12 +315,13 @@
     font-size: 1.15rem;
     font-weight: 800;
     letter-spacing: -0.3px;
+    color: var(--text-heading, #0f172a);
   }
 
   .hero-desc {
     margin: 0;
     font-size: 0.8rem;
-    opacity: 0.92;
+    color: var(--text-muted, #64748b);
     line-height: 1.35;
   }
 

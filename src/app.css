@@ -40,18 +40,18 @@
 }
 
 :root {
-  --bg-app: #f8fafc;
+  --bg-app: #f9f8f7;
   --bg-card: #ffffff;
-  --bg-hover: #f1f5f9;
-  --bg-dropzone: #f8fafc;
-  --bg-summary-box: #f8fafc;
-  --bg-table-header: #f1f5f9;
+  --bg-hover: #f2f0ed;
+  --bg-dropzone: #f9f8f7;
+  --bg-summary-box: #f9f8f7;
+  --bg-table-header: #f2f0ed;
   --bg-input: #ffffff;
   --text-heading: #0f172a;
   --text-base: #334155;
   --text-muted: #64748b;
-  --border-color: #e2e8f0;
-  --border-dashed: #cbd5e1;
+  --border-color: #e4e2dd;
+  --border-dashed: #cfc9c0;
   --primary-color: #0284c7;
 }
 
@@ -119,21 +119,20 @@
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  background: linear-gradient(135deg, #0284c7, #0369a1);
+  background: #0284c7;
   color: #ffffff;
-  border: none;
-  border-radius: 8px;
+  border: 1px solid #0369a1;
+  border-radius: 6px;
   padding: 8px 16px;
   font-size: 0.85rem;
-  font-weight: 700;
+  font-weight: 600;
   cursor: pointer;
-  box-shadow: 0 2px 6px rgba(2, 132, 199, 0.25);
-  transition: all 0.15s ease;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
 }
 
 .btn-hero-dataset:hover {
-  background: linear-gradient(135deg, #0369a1, #075985);
-  box-shadow: 0 3px 8px rgba(2, 132, 199, 0.35);
+  background: #0369a1;
+  border-color: #075985;
 }
 
 body {
@@ -1444,22 +1443,19 @@ progress {
   gap: 6px;
   padding: 5px 12px;
   font-size: 0.8125rem;
-  font-weight: 700;
+  font-weight: 600;
   border-radius: 6px;
   border: 1px solid #047857;
-  background: linear-gradient(135deg, #059669, #047857);
+  background: #059669;
   color: #ffffff !important;
   cursor: pointer;
-  transition: all 0.15s ease;
-  box-shadow: 0 1px 3px rgba(5, 150, 105, 0.3);
+  transition: background-color 0.15s ease, border-color 0.15s ease;
 }
 
 .btn-export-menu-trigger:hover:not(:disabled),
 .btn-export-menu-trigger.active {
-  background: linear-gradient(135deg, #047857, #065f46);
+  background: #047857;
   border-color: #065f46;
-  box-shadow: 0 2px 6px rgba(5, 150, 105, 0.45);
-  transform: translateY(-1px);
 }
 
 .btn-export-menu-trigger .caret-icon {
@@ -1488,10 +1484,9 @@ progress {
 }
 
 .btn-import-json:hover:not(:disabled) {
-  background: #f8fafc;
+  background: var(--bg-hover, #f2f0ed);
   color: #0f172a;
   border-color: #94a3b8;
-  transform: translateY(-1px);
 }
 
 .btn-export-menu-trigger:disabled,
@@ -1805,20 +1800,17 @@ progress {
 
 /* Primary EAF button styling for field linguists */
 .btn-export-eaf-primary {
-  background: linear-gradient(135deg, #059669, #047857);
+  background: #059669;
   color: #ffffff !important;
   border: 1px solid #047857;
-  box-shadow: 0 1px 3px rgba(5, 150, 105, 0.3);
-  font-weight: 700;
+  font-weight: 600;
   padding: 5px 11px;
 }
 
 .btn-export-eaf-primary:hover:not(:disabled) {
-  background: linear-gradient(135deg, #047857, #065f46);
+  background: #047857;
   color: #ffffff !important;
   border-color: #065f46;
-  box-shadow: 0 2px 6px rgba(5, 150, 105, 0.45);
-  transform: translateY(-1px);
 }
 
 .btn-export-audio {
@@ -2684,8 +2676,6 @@ progress {
   background-color: #0284c7;
   color: #ffffff;
   border-color: #0284c7;
-  transform: translateY(-1px);
-  box-shadow: 0 2px 5px rgba(2, 132, 199, 0.2);
 }
 
 /* Waveform Floating Context Menu */
@@ -2897,8 +2887,8 @@ progress {
   align-items: center;
   text-align: center;
   padding: 32px 20px;
-  background: #f8fafc;
-  border: 1px dashed #cbd5e1;
+  background: var(--bg-app, #f9f8f7);
+  border: 1px dashed var(--border-dashed, #cfc9c0);
   border-radius: 8px;
   color: #475569;
   margin-top: 8px;
@@ -3623,9 +3613,8 @@ progress {
 }
 
 .chunk-pill:hover {
-  background-color: #e2e8f0;
+  background-color: var(--bg-hover, #f2f0ed);
   border-color: #94a3b8;
-  transform: translateY(-1px);
 }
 
 .chunk-time {
@@ -3661,8 +3650,8 @@ progress {
 
 /* Statistics & Logs Tab Content */
 .stats-tab-content {
-  background: #f8fafc;
-  border: 1px solid #e2e8f0;
+  background: var(--bg-app, #f9f8f7);
+  border: 1px solid var(--border-color, #e4e2dd);
   border-radius: 8px;
   padding: 16px;
   flex: 1;
@@ -3853,8 +3842,8 @@ code {
 }
 
 .btn-project-library {
-  background: #f8fafc;
-  border: 1px solid #cbd5e1;
+  background: var(--bg-app, #f9f8f7);
+  border: 1px solid var(--border-color, #e4e2dd);
   color: #334155;
 }
 
@@ -3873,8 +3862,6 @@ code {
 .btn-project-new:hover {
   background: #0369a1;
   border-color: #0369a1;
-  transform: translateY(-1px);
-  box-shadow: 0 2px 5px rgba(2, 132, 199, 0.25);
 }
 
 /* Modals Layout & Components */
@@ -4692,14 +4679,12 @@ code {
 .btn-hero-install:hover {
   background: #0369a1;
   border-color: #0369a1;
-  transform: translateY(-1px);
-  box-shadow: 0 4px 10px rgba(2, 132, 199, 0.35);
 }
 
 .hero-description-card {
-  background: #f8fafc;
-  border: 1px solid #e2e8f0;
-  border-radius: 10px;
+  background: var(--bg-app, #f9f8f7);
+  border: 1px solid var(--border-color, #e4e2dd);
+  border-radius: 8px;
   padding: 16px 20px;
   display: flex;
   flex-direction: column;
@@ -4855,8 +4840,6 @@ code {
   background: #e0f2fe;
   color: #0369a1;
   border-color: #7dd3fc;
-  transform: translateY(-1px);
-  box-shadow: 0 2px 5px rgba(2, 132, 199, 0.18);
 }
 
 .btn-new-project-hero {
@@ -4865,42 +4848,38 @@ code {
   gap: 6px;
   padding: 5px 12px;
   font-size: 0.78rem;
-  font-weight: 700;
+  font-weight: 600;
   color: #ffffff;
   background: #0284c7;
   border: 1px solid #0284c7;
   border-radius: 6px;
   cursor: pointer;
-  transition: all 0.15s ease;
-  box-shadow: 0 2px 5px rgba(2, 132, 199, 0.2);
+  transition: background-color 0.15s ease, border-color 0.15s ease;
   white-space: nowrap;
 }
 
 .btn-new-project-hero:hover {
   background: #0369a1;
   border-color: #0369a1;
-  transform: translateY(-1px);
-  box-shadow: 0 4px 8px rgba(2, 132, 199, 0.3);
 }
 
 /* Projects Grid - Compact */
 .starting-projects-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
   gap: 8px;
 }
 
 .home-project-card {
   background: var(--bg-card, #ffffff);
-  border: 1px solid var(--border-color, #e2e8f0);
-  border-radius: 7px;
+  border: 1px solid var(--border-color, #e4e2dd);
+  border-radius: 6px;
   padding: 7px 9px;
   display: flex;
   flex-direction: column;
   gap: 5px;
   cursor: pointer;
-  transition: all 0.15s ease;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+  transition: border-color 0.15s ease, background-color 0.15s ease;
   position: relative;
   outline: none;
   color: var(--text-base, #334155);
@@ -4908,12 +4887,11 @@ code {
 
 .home-project-card:hover {
   border-color: var(--primary-color, #0284c7);
-  box-shadow: 0 4px 12px -2px rgba(2, 132, 199, 0.15);
-  transform: translateY(-1px);
+  background: var(--bg-hover, #f2f0ed);
 }
 
 [data-theme='dark'] .home-project-card:hover {
-  box-shadow: 0 4px 12px -2px rgba(0, 0, 0, 0.4);
+  background: rgba(255, 255, 255, 0.04);
 }
 
 .home-project-card:focus-visible {
@@ -4956,7 +4934,7 @@ code {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  max-width: 180px;
+  max-width: 250px;
   line-height: 1.25;
 }
 
@@ -5366,8 +5344,6 @@ code {
   background: #dbeafe;
   border-color: #60a5fa;
   color: #1e40af;
-  transform: translateY(-1px);
-  box-shadow: 0 2px 4px rgba(37, 99, 235, 0.12);
 }
 
 .btn-proceed-step:disabled {
@@ -5394,7 +5370,7 @@ code {
 }
 
 .btn-back-step:hover:not(:disabled) {
-  background: #f8fafc;
+  background: var(--bg-hover, #f2f0ed);
   border-color: #94a3b8;
   color: #1e293b;
 }
@@ -5406,8 +5382,8 @@ code {
 
 /* Step 2 Segments Summary Card */
 .transcribe-summary-card {
-  background: #f8fafc;
-  border: 1px solid #e2e8f0;
+  background: var(--bg-app, #f9f8f7);
+  border: 1px solid var(--border-color, #e4e2dd);
   border-radius: 8px;
   padding: 10px;
   margin-bottom: 8px;
@@ -5671,7 +5647,7 @@ code {
 }
 
 .bg-light {
-  background: #f8fafc;
+  background: var(--bg-app, #f9f8f7);
 }
 
 .bg-white {
@@ -6549,8 +6525,6 @@ code {
   background: rgba(2, 132, 199, 0.28);
   border-color: rgba(56, 189, 248, 0.55);
   color: #7dd3fc;
-  transform: translateY(-1px);
-  box-shadow: 0 2px 6px rgba(56, 189, 248, 0.25);
 }
 
 [data-theme='dark'] .btn-import-json {
