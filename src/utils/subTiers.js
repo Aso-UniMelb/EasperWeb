@@ -4,7 +4,7 @@
  * A sub-tier mirrors ELAN's notion of a tier whose annotations hang off a parent
  * tier's annotations — the usual home for a free translation, a morphological
  * breakdown, or any other layer of analysis that lines up one-to-one with an
- * utterance. In Easper each project may define up to three of them; every segment
+ * utterance. In Easper each project may define up to five of them; every segment
  * then carries one text value per sub-tier, keyed by the sub-tier's stable id.
  *
  * Easper supports two types of sub-tiers:
@@ -14,7 +14,7 @@
  *    there is an annotation space with lexicon auto-complete (e.g. POS tags, glossing, etymology).
  */
 
-export const MAX_SUB_TIERS = 3;
+export const MAX_SUB_TIERS = 5;
 
 export const SUB_TIER_TYPE_SENTENCE = 'sentence';
 export const SUB_TIER_TYPE_WORD = 'word';
@@ -220,7 +220,18 @@ export function isLexiconValueValid(value, lexicon) {
 export const DEFAULT_SPLITTERS = '- =';
 
 /**
- * Builds a regex that splits text by whitespace and user-specified delimiter characters.
+ * Escapes special regular expression characters in a string.
+ *
+ * @param {string} str
+ * @returns {string}
+ */
+function escapeRegExp(str) {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Builds a regex that splits text by whitespace and user-specified space-separated delimiter tokens
+ * (which may be single characters or multi-character strings like `((E` or `))`).
  * Whitespace is always matched as a splitter.
  *
  * @param {string} [splitters=DEFAULT_SPLITTERS]
@@ -229,20 +240,17 @@ export const DEFAULT_SPLITTERS = '- =';
 export function buildSplitterRegex(splitters = DEFAULT_SPLITTERS) {
   if (splitters == null) splitters = DEFAULT_SPLITTERS;
   const str = String(splitters);
-  // Extract all unique non-whitespace characters
-  const chars = Array.from(
-    new Set(Array.from(str).filter((c) => !/\s/.test(c))),
+  // Extract unique space-separated splitter tokens, sorted longest-first
+  // so longer multi-character splitters match before shorter prefix tokens.
+  const tokens = Array.from(new Set(str.split(/\s+/u).filter(Boolean))).sort(
+    (a, b) => b.length - a.length,
   );
-  if (chars.length === 0) {
+  if (tokens.length === 0) {
     return /\s+/u;
   }
-  const escaped = chars
-    .map((c) =>
-      c === '\\' || c === ']' || c === '-' || c === '^' ? `\\${c}` : c,
-    )
-    .join('');
+  const escaped = tokens.map(escapeRegExp);
   try {
-    return new RegExp(`[\\s${escaped}]+`, 'u');
+    return new RegExp(`(?:${escaped.join('|')}|\\s)+`, 'u');
   } catch {
     return /\s+/u;
   }

@@ -542,6 +542,7 @@ class ProjectState {
       transcriber,
       mainTierTitle,
       speakers,
+      speakerIdRemap,
       subTiers,
       lexiconId,
       validationRules,
@@ -577,6 +578,9 @@ class ProjectState {
           if (m) spkId = Number(m[1]);
         }
         if (!spkId) spkId = 1;
+        if (speakerIdRemap && speakerIdRemap[spkId] != null) {
+          spkId = Number(speakerIdRemap[spkId]);
+        }
         const matched = spkMap.get(spkId) || defaultSpk;
         return {
           ...seg,
@@ -645,6 +649,7 @@ class ProjectState {
       if (this.activeProjectId === projectId) {
         this.activeProject = { ...this.activeProject, ...updated };
         await this.syncProjectLexiconToHunspell(cleanLexId);
+        requestAnimationFrame(() => transcriptState.drawVerticalWaveform());
       }
       await this.loadProjects();
       appState.statusMessage = 'Project settings saved successfully.';

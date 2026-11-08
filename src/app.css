@@ -1441,21 +1441,25 @@ progress {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 5px 12px;
-  font-size: 0.8125rem;
-  font-weight: 600;
+  height: 30px;
+  padding: 0 11px;
+  font-size: 0.77rem;
+  font-weight: 700;
   border-radius: 6px;
-  border: 1px solid #047857;
-  background: #059669;
-  color: #ffffff !important;
+  border: 1px solid var(--border-color, #cbd5e1);
+  background-color: var(--bg-card, #ffffff);
+  color: var(--text-heading, #0f172a);
   cursor: pointer;
-  transition: background-color 0.15s ease, border-color 0.15s ease;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .btn-export-menu-trigger:hover:not(:disabled),
 .btn-export-menu-trigger.active {
-  background: #047857;
-  border-color: #065f46;
+  background-color: var(--bg-hover, #f8fafc);
+  border-color: var(--primary-color, #0284c7);
+  color: var(--primary-color, #0284c7);
 }
 
 .btn-export-menu-trigger .caret-icon {
@@ -6537,6 +6541,19 @@ code {
   background: #334155;
   color: #f1f5f9;
   border-color: #475569;
+}
+
+[data-theme='dark'] .btn-export-menu-trigger {
+  background-color: rgba(30, 41, 59, 0.8);
+  border-color: #475569;
+  color: #f1f5f9;
+}
+
+[data-theme='dark'] .btn-export-menu-trigger:hover:not(:disabled),
+[data-theme='dark'] .btn-export-menu-trigger.active {
+  background-color: #334155;
+  border-color: #38bdf8;
+  color: #38bdf8;
 }
 
 [data-theme='dark'] .export-dropdown-menu {

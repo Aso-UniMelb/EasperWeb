@@ -430,10 +430,10 @@
     flex-direction: column;
     height: 100%;
     min-height: 0;
-    background: var(--bg-card, #ffffff);
-    border: 1px solid var(--border-color, #e2e8f0);
-    border-radius: 10px;
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.06);
+    background: var(--bg-hover, #f8fafc);
+    border: 1px solid var(--border-color, #cbd5e1);
+    border-radius: 8px;
+    box-shadow: 0 2px 8px rgba(15, 23, 42, 0.04);
     overflow: hidden;
     font-size: 0.88rem;
   }
@@ -442,9 +442,12 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 10px 14px;
-    background: var(--bg-hover, #f8fafc);
-    border-bottom: 1px solid var(--border-color, #e2e8f0);
+    gap: 8px;
+    padding: 10px 12px;
+    min-height: 44px;
+    box-sizing: border-box;
+    background: var(--bg-card, #ffffff);
+    border-bottom: 1px solid var(--border-color, #cbd5e1);
     flex-shrink: 0;
   }
 
@@ -454,11 +457,15 @@
     gap: 8px;
     font-weight: 700;
     color: var(--text-heading, #0f172a);
-    font-size: 0.95rem;
+    font-size: 0.86rem;
   }
 
   .side-panel-title i {
-    color: #f59e0b;
+    color: #ef4444;
+  }
+
+  :global([data-theme='dark']) .side-panel-title i {
+    color: #f87171;
   }
 
   .badge-count-pill {
@@ -489,12 +496,13 @@
     background: transparent;
     color: var(--text-muted, #64748b);
     cursor: pointer;
-    transition: all 0.15s ease;
+    font-size: 0.85rem;
+    transition: all 0.14s ease;
   }
 
   .btn-panel-header-action:hover,
   .panel-close-btn:hover {
-    background: var(--border-color, #e2e8f0);
+    background: var(--bg-hover, #f1f5f9);
     color: var(--text-heading, #0f172a);
   }
 
@@ -581,9 +589,9 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    background: var(--bg-hover, #f8fafc);
+    background: var(--bg-card, #ffffff);
     border: 1px solid var(--border-color, #e2e8f0);
-    border-radius: 8px;
+    border-radius: 6px;
     padding: 8px 12px;
     flex-shrink: 0;
   }
@@ -712,8 +720,8 @@
     border-radius: 6px;
     font-size: 0.74rem;
     font-weight: 600;
-    border: 1px solid transparent;
-    background: var(--bg-hover, #f1f5f9);
+    border: 1px solid var(--border-color, #e2e8f0);
+    background: var(--bg-card, #ffffff);
     color: var(--text-muted, #64748b);
     cursor: pointer;
     white-space: nowrap;
@@ -722,6 +730,7 @@
 
   .cat-tab.active {
     background: var(--primary, #3b82f6);
+    border-color: var(--primary, #3b82f6);
     color: #ffffff;
   }
 
@@ -923,12 +932,13 @@
 
   /* Dark Theme */
   :global([data-theme='dark']) .validation-issues-panel {
-    background: #1e293b;
+    background: #0f172a;
     border-color: #334155;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.28);
   }
 
   :global([data-theme='dark']) .side-panel-header {
-    background: #0f172a;
+    background: #1e293b;
     border-color: #334155;
   }
 
@@ -942,6 +952,11 @@
     color: #f87171;
   }
 
+  :global([data-theme='dark']) .btn-panel-header-action,
+  :global([data-theme='dark']) .panel-close-btn {
+    color: #94a3b8;
+  }
+
   :global([data-theme='dark']) .btn-panel-header-action:hover,
   :global([data-theme='dark']) .panel-close-btn:hover {
     background: #334155;
@@ -949,7 +964,7 @@
   }
 
   :global([data-theme='dark']) .validation-summary-banner {
-    background: #0f172a;
+    background: #1e293b;
     border-color: #334155;
   }
 
@@ -962,7 +977,7 @@
   }
 
   :global([data-theme='dark']) .btn-stepper {
-    background: #1e293b;
+    background: #0f172a;
     border-color: #475569;
     color: #f1f5f9;
   }
@@ -977,22 +992,24 @@
   }
 
   :global([data-theme='dark']) .cat-tab {
-    background: #0f172a;
+    background: #1e293b;
+    border-color: #334155;
     color: #94a3b8;
   }
 
   :global([data-theme='dark']) .cat-tab.active {
     background: #3b82f6;
+    border-color: #3b82f6;
     color: #ffffff;
   }
 
   :global([data-theme='dark']) .issue-card {
-    background: #0f172a;
+    background: #1e293b;
     border-color: #334155;
   }
 
   :global([data-theme='dark']) .issue-card:hover {
-    background: #1e293b;
+    background: #263349;
     border-color: #475569;
   }
 

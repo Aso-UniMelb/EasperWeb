@@ -337,14 +337,13 @@
                 closeProjectMenu();
                 router.navigate('/transcriber');
               }}
-              title="Return to Project Manager"
+              title="View and manage all saved projects"
             >
               <div class="item-icon-box icon-projects">
                 <i class="fa-solid fa-folder-tree"></i>
               </div>
               <div class="item-text-box">
                 <div class="item-title">Back to Project Manager</div>
-                <div class="item-desc">View and manage all saved projects</div>
               </div>
             </button>
 
@@ -356,16 +355,13 @@
                 closeProjectMenu();
                 projectState.isProjectSettingsOpen = true;
               }}
-              title="Project settings, speakers & sub-tiers"
+              title="Rename project, configure speakers & sub-tiers"
             >
               <div class="item-icon-box icon-settings">
                 <i class="fa-solid fa-gear"></i>
               </div>
               <div class="item-text-box">
                 <div class="item-title">Project Settings</div>
-                <div class="item-desc">
-                  Rename project, configure speakers &amp; sub-tiers
-                </div>
               </div>
             </button>
 
@@ -378,8 +374,8 @@
                 handleOpenActiveLexiconInNewTab();
               }}
               title={projectLexicon
-                ? `Open active lexicon (${projectLexicon.title || projectLexicon.name}) in a new tab`
-                : 'Open Lexicon Manager in a new tab'}
+                ? `${projectLexicon.title || projectLexicon.name} (opens in new tab)`
+                : 'Open Lexicon Manager in new tab'}
             >
               <div class="item-icon-box icon-lexicon">
                 <i class="fa-solid fa-book"></i>
@@ -390,11 +386,6 @@
                   <i
                     class="fa-solid fa-arrow-up-right-from-square external-link-icon"
                   ></i>
-                </div>
-                <div class="item-desc">
-                  {projectLexicon
-                    ? `${projectLexicon.title || projectLexicon.name} (opens in new tab)`
-                    : 'Open Lexicon Manager in new tab'}
                 </div>
               </div>
             </button>
@@ -437,16 +428,10 @@
                 closeExportMenu();
               }}
               disabled={!canExportText}
-              title="Export ELAN annotation document (.eaf) with speaker tiers"
+              title="Multi-tier annotation for field linguistics"
             >
-              <div class="item-icon-box icon-eaf">
-                <i class="fa-solid fa-file-code"></i>
-              </div>
               <div class="item-text-box">
-                <div class="item-title">ELAN Annotation (.eaf)</div>
-                <div class="item-desc">
-                  Multi-tier annotation for field linguistics
-                </div>
+                <div class="item-title">Export ELAN Annotation (.eaf)</div>
               </div>
             </button>
 
@@ -459,16 +444,10 @@
                 closeExportMenu();
               }}
               disabled={!canExportText}
-              title="Export SubRip subtitle format (.srt)"
+              title="Timed subtitle captions with timestamps"
             >
-              <div class="item-icon-box icon-srt">
-                <i class="fa-solid fa-closed-captioning"></i>
-              </div>
               <div class="item-text-box">
-                <div class="item-title">SubRip Subtitles (.srt)</div>
-                <div class="item-desc">
-                  Timed subtitle captions with timestamps
-                </div>
+                <div class="item-title">Export SubRip Subtitles (.srt)</div>
               </div>
             </button>
 
@@ -481,36 +460,10 @@
                 closeExportMenu();
               }}
               disabled={!canExportText}
-              title="Export plain text transcript (.txt)"
+              title="Continuous plain text transcript"
             >
-              <div class="item-icon-box icon-txt">
-                <i class="fa-solid fa-file-lines"></i>
-              </div>
               <div class="item-text-box">
-                <div class="item-title">Plain Text (.txt)</div>
-                <div class="item-desc">Continuous plain text transcript</div>
-              </div>
-            </button>
-
-            <button
-              type="button"
-              class="export-menu-item"
-              role="menuitem"
-              onclick={() => {
-                transcriptState.exportJson();
-                closeExportMenu();
-              }}
-              disabled={!canExportJson}
-              title="Export full project metadata and transcription JSON (.json)"
-            >
-              <div class="item-icon-box icon-json">
-                <i class="fa-solid fa-code"></i>
-              </div>
-              <div class="item-text-box">
-                <div class="item-title">Transcript Data (.json)</div>
-                <div class="item-desc">
-                  Dialogue segments, speaker tiers &amp; metadata
-                </div>
+                <div class="item-title">Export Plain Text (.txt)</div>
               </div>
             </button>
 
@@ -525,18 +478,30 @@
               class="export-menu-item"
               role="menuitem"
               onclick={() => {
+                transcriptState.exportJson();
+                closeExportMenu();
+              }}
+              disabled={!canExportJson}
+              title="Dialogue segments, speaker tiers & metadata"
+            >
+              <div class="item-text-box">
+                <div class="item-title">Export Transcript Data (.json)</div>
+              </div>
+            </button>
+
+            <button
+              type="button"
+              class="export-menu-item"
+              role="menuitem"
+              onclick={() => {
                 transcriptState.exportAudio();
                 closeExportMenu();
               }}
               disabled={!canExportAudio}
-              title="Export converted 16kHz mono WAV audio file (.wav)"
+              title="Converted 16kHz mono PCM WAV audio"
             >
-              <div class="item-icon-box icon-audio">
-                <i class="fa-solid fa-music"></i>
-              </div>
               <div class="item-text-box">
-                <div class="item-title">Audio File (.wav)</div>
-                <div class="item-desc">Converted 16kHz mono PCM WAV audio</div>
+                <div class="item-title">Export Audio File (.wav)</div>
               </div>
             </button>
 
@@ -549,16 +514,10 @@
                 closeExportMenu();
               }}
               disabled={!canExportArchive}
-              title="Archive complete project package (.easper) with audio, segments, and speakers"
+              title="Complete bundle with audio & annotations"
             >
-              <div class="item-icon-box icon-archive">
-                <i class="fa-solid fa-box-archive"></i>
-              </div>
               <div class="item-text-box">
-                <div class="item-title">Project Archive (.easper)</div>
-                <div class="item-desc">
-                  Complete bundle with audio &amp; annotations
-                </div>
+                <div class="item-title">Export Project Archive (.easper)</div>
               </div>
             </button>
 
@@ -577,16 +536,10 @@
                 projectState.requestImportElanToActiveProject();
               }}
               disabled={!projectState.activeProject || appState.isProcessing}
-              title="Replace current segments and import speakers, sub-tiers, and utterances from an ELAN (.eaf) file"
+              title="Replace segments & configure tiers from ELAN"
             >
-              <div class="item-icon-box icon-import-eaf">
-                <i class="fa-solid fa-file-waveform"></i>
-              </div>
               <div class="item-text-box">
                 <div class="item-title">Import ELAN (.eaf)</div>
-                <div class="item-desc">
-                  Replace segments &amp; configure tiers from ELAN
-                </div>
               </div>
             </button>
 
@@ -599,16 +552,10 @@
                 jsonFileInputEl?.click();
               }}
               disabled={!projectState.activeProject || appState.isProcessing}
-              title="Import dialogue segments and metadata from a .json file into this project"
+              title="Import segments and annotations from a .json file"
             >
-              <div class="item-icon-box icon-import-json">
-                <i class="fa-solid fa-file-import"></i>
-              </div>
               <div class="item-text-box">
                 <div class="item-title">Import JSON</div>
-                <div class="item-desc">
-                  Import segments and annotations from a .json file
-                </div>
               </div>
             </button>
           </div>
@@ -662,7 +609,7 @@
                 : ''}"
               role="menuitem"
               onclick={() => selectAutomationTool('segmentation')}
-              title="Automatic speech segmentation (Silero VAD or uniform intervals)"
+              title="Detect speech boundaries with Silero VAD or uniform intervals"
             >
               <div class="item-icon-box icon-segmentation">
                 <i class="fa-solid fa-scissors"></i>
@@ -673,9 +620,6 @@
                   {#if transcriptState.activeDrawer === 'segmentation'}
                     <span class="item-status-pill">Active</span>
                   {/if}
-                </div>
-                <div class="item-desc">
-                  Detect speech boundaries with Silero VAD or uniform intervals
                 </div>
               </div>
             </button>
@@ -689,7 +633,7 @@
                 : ''}"
               role="menuitem"
               onclick={() => selectAutomationTool('recognition')}
-              title="Speech recognition model settings and execution"
+              title="Transcribe speech to text using Whisper ONNX models"
             >
               <div class="item-icon-box icon-recognition">
                 <i class="fa-solid fa-brain"></i>
@@ -709,9 +653,6 @@
                     <span class="item-status-pill">Active</span>
                   {/if}
                 </div>
-                <div class="item-desc">
-                  Transcribe speech to text using Whisper ONNX models
-                </div>
               </div>
             </button>
 
@@ -724,7 +665,7 @@
                 : ''}"
               role="menuitem"
               onclick={() => selectAutomationTool('tagging')}
-              title="Automatically tag word-level sub-tiers from active lexicon"
+              title="Automatically annotate word tokens from project lexicons"
             >
               <div class="item-icon-box icon-tagging">
                 <i class="fa-solid fa-tags"></i>
@@ -735,9 +676,6 @@
                   {#if transcriptState.activeDrawer === 'tagging'}
                     <span class="item-status-pill">Active</span>
                   {/if}
-                </div>
-                <div class="item-desc">
-                  Automatically annotate word tokens from project lexicons
                 </div>
               </div>
             </button>
@@ -751,7 +689,7 @@
                 : ''}"
               role="menuitem"
               onclick={() => selectAutomationTool('find-replace')}
-              title="Find and replace text across transcription tiers and sub-tiers"
+              title="Search and replace text in main transcription and sub-tiers"
             >
               <div class="item-icon-box icon-find-replace">
                 <i class="fa-solid fa-arrow-right-arrow-left"></i>
@@ -762,9 +700,6 @@
                   {#if transcriptState.activeDrawer === 'find-replace'}
                     <span class="item-status-pill">Active</span>
                   {/if}
-                </div>
-                <div class="item-desc">
-                  Search and replace text in main transcription and sub-tiers
                 </div>
               </div>
             </button>
@@ -778,7 +713,7 @@
                 : ''}"
               role="menuitem"
               onclick={() => selectAutomationTool('validation')}
-              title="Inspect and fix transcription formatting, paralinguistic tags, and acronym validation issues"
+              title="Review and auto-fix formatting errors, tags, and custom rules"
             >
               <div class="item-icon-box icon-validation">
                 <i class="fa-solid fa-triangle-exclamation"></i>
@@ -796,9 +731,6 @@
                   {#if transcriptState.activeDrawer === 'validation'}
                     <span class="item-status-pill">Active</span>
                   {/if}
-                </div>
-                <div class="item-desc">
-                  Review and auto-fix formatting errors, tags, and custom rules
                 </div>
               </div>
             </button>
@@ -1301,16 +1233,6 @@
   .item-icon-box.icon-lexicon {
     background: rgba(139, 92, 246, 0.12);
     color: #7c3aed;
-  }
-
-  .item-icon-box.icon-import-eaf {
-    background: rgba(5, 150, 105, 0.12);
-    color: #059669;
-  }
-
-  .item-icon-box.icon-import-json {
-    background: rgba(217, 119, 6, 0.12);
-    color: #d97706;
   }
 
   .external-link-icon {

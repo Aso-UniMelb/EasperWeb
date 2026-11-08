@@ -80,6 +80,35 @@
         ).length
       : 0,
   );
+
+  let openHelpKeys = $state({});
+
+  function toggleItemHelp(key) {
+    openHelpKeys[key] = !openHelpKeys[key];
+  }
+
+  function confirmAndDiarize() {
+    const count = transcriptState.segments.length;
+    const confirmed = window.confirm(
+      `Separate speakers across ${count} existing segment${count === 1 ? '' : 's'}?\n\nThis will reassign speaker labels (and may split multi-speaker turns) across your transcript, and automated results may not always work as desired. Continue?`,
+    );
+    if (!confirmed) return;
+    transcriptState.handleDiarizeSegments();
+  }
+
+  function confirmAndTrimVad() {
+    const count = audioState.isIntervalSelected
+      ? segmentsInIntervalCount
+      : transcriptState.segments.length;
+    const scopeLabel = audioState.isIntervalSelected
+      ? `${count} segment${count === 1 ? '' : 's'} in the selected range`
+      : `all ${count} segment${count === 1 ? '' : 's'}`;
+    const confirmed = window.confirm(
+      `Trim silence boundaries on ${scopeLabel}?\n\nThis will modify the start and end times of existing segments and may sometimes clip quiet speech or alter boundaries unexpectedly. Continue?`,
+    );
+    if (!confirmed) return;
+    transcriptState.handleTrimSegmentsWithVad();
+  }
 </script>
 
 <div class="inline-settings-panel segmentation-panel">
@@ -89,19 +118,6 @@
       <span>Auto Segmentation</span>
     </div>
     <div class="side-panel-header-actions">
-      <button
-        type="button"
-        class="panel-tool-btn {appState.showHelpText ? 'active' : ''}"
-        onclick={() => appState.toggleHelpText()}
-        title={appState.showHelpText
-          ? 'Hide descriptive help text'
-          : 'Show descriptive help text'}
-        aria-pressed={appState.showHelpText}
-      >
-        <i class="fa-regular fa-circle-question"></i>
-        <span>Help</span>
-      </button>
-
       <button
         type="button"
         class="panel-tool-btn"
@@ -133,7 +149,6 @@
       {#if audioState.totalAudioDuration > 0}
         <div class="settings-col">
           <div class="col-head">
-            <i class="fa-solid fa-clock"></i>
             <span>Range</span>
             {#if audioState.isIntervalSelected}
               <button
@@ -155,13 +170,23 @@
       <!-- 2) Speaker Separation -->
       <div class="settings-col">
         <div class="col-head">
-          <i class="fa-solid fa-users"></i>
           <span>Speaker Separation</span>
         </div>
 
         <div class="setting-row">
           <div class="setting-inline-row">
-            <label for="inline-diar-speakers">Expected speakers</label>
+            <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+            <!-- svelte-ignore a11y_click_events_have_key_events -->
+            <label
+              for="inline-diar-speakers"
+              onclick={(e) => {
+                e.preventDefault();
+                toggleItemHelp('speakers');
+              }}
+              title="Click to show/hide help"
+            >
+              Expected speakers
+            </label>
             <select
               id="inline-diar-speakers"
               class="setting-select setting-select-inline"
@@ -175,7 +200,7 @@
               <option value={5}>5 speakers</option>
             </select>
           </div>
-          {#if appState.showHelpText}
+          {#if openHelpKeys.speakers}
             <p class="setting-help">
               {#if multiSpeaker}
                 Separates speech into {speakerCount} participant tracks.
@@ -191,7 +216,7 @@
           <!-- Overlap detection toggle -->
           <div class="setting-row">
             <div class="setting-inline-row">
-              <label for="inline-diar-overlap" class="setting-checkbox-label">
+              <div class="setting-checkbox-label">
                 <input
                   id="inline-diar-overlap"
                   type="checkbox"
@@ -200,10 +225,21 @@
                   disabled={appState.isProcessing}
                   class="setting-checkbox"
                 />
-                <span>Detect overlapping speech</span>
-              </label>
+                <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+                <!-- svelte-ignore a11y_click_events_have_key_events -->
+                <label
+                  for="inline-diar-overlap"
+                  onclick={(e) => {
+                    e.preventDefault();
+                    toggleItemHelp('overlap');
+                  }}
+                  title="Click to show/hide help"
+                >
+                  Detect overlapping speech
+                </label>
+              </div>
             </div>
-            {#if appState.showHelpText}
+            {#if openHelpKeys.overlap}
               <p class="setting-help">
                 Identifies simultaneous speech when participants talk over each
                 other, creating parallel overlapping tiers.
@@ -214,7 +250,18 @@
           <!-- Separation sensitivity slider -->
           <div class="setting-row">
             <div class="setting-inline-row">
-              <label for="inline-diar-separation">Separation sensitivity</label>
+              <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+              <!-- svelte-ignore a11y_click_events_have_key_events -->
+              <label
+                for="inline-diar-separation"
+                onclick={(e) => {
+                  e.preventDefault();
+                  toggleItemHelp('separation');
+                }}
+                title="Click to show/hide help"
+              >
+                Separation sensitivity
+              </label>
               <div class="setting-control-right">
                 <span class="setting-val"
                   >{separationLabels[separationLevel] || 'Balanced'}</span
@@ -233,7 +280,7 @@
                 />
               </div>
             </div>
-            {#if appState.showHelpText}
+            {#if openHelpKeys.separation}
               <p class="setting-help">
                 Increase sensitivity if speakers sound similar and get merged
                 into one person; decrease sensitivity if one speaker with varied
@@ -251,7 +298,18 @@
             <div class="diar-advanced-content">
               <div class="setting-row">
                 <div class="setting-inline-row">
-                  <label for="inline-diar-model-adv">Diarization engine</label>
+                  <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+                  <!-- svelte-ignore a11y_click_events_have_key_events -->
+                  <label
+                    for="inline-diar-model-adv"
+                    onclick={(e) => {
+                      e.preventDefault();
+                      toggleItemHelp('diarModel');
+                    }}
+                    title="Click to show/hide help"
+                  >
+                    Diarization engine
+                  </label>
                   <select
                     id="inline-diar-model-adv"
                     class="setting-select setting-select-inline"
@@ -263,12 +321,29 @@
                     >
                   </select>
                 </div>
+                {#if openHelpKeys.diarModel}
+                  <p class="setting-help">
+                    <strong>CAM++</strong> assigns one speaker per turn quickly.
+                    <strong>PyAnnote + CAM++</strong> adds frame-level segmentation
+                    to detect overlapping speakers.
+                  </p>
+                {/if}
               </div>
 
               <div class="setting-row">
                 <div class="setting-inline-row">
-                  <label for="inline-diar-raw-thresh">Clustering distance</label
+                  <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+                  <!-- svelte-ignore a11y_click_events_have_key_events -->
+                  <label
+                    for="inline-diar-raw-thresh"
+                    onclick={(e) => {
+                      e.preventDefault();
+                      toggleItemHelp('diarThresh');
+                    }}
+                    title="Click to show/hide help"
                   >
+                    Clustering distance
+                  </label>
                   <div class="setting-control-right">
                     <span class="setting-val"
                       >{Number(transcriptState.diarizationThreshold).toFixed(
@@ -287,14 +362,30 @@
                     />
                   </div>
                 </div>
+                {#if openHelpKeys.diarThresh}
+                  <p class="setting-help">
+                    Cosine distance threshold for grouping voice embeddings.
+                    Lower values split similar voices more aggressively; higher
+                    values merge them.
+                  </p>
+                {/if}
               </div>
 
               {#if transcriptState.diarizationModel === 'pyannote'}
                 <div class="setting-row">
                   <div class="setting-inline-row">
-                    <label for="inline-pyannote-raw-thresh"
-                      >Speech activation</label
+                    <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+                    <!-- svelte-ignore a11y_click_events_have_key_events -->
+                    <label
+                      for="inline-pyannote-raw-thresh"
+                      onclick={(e) => {
+                        e.preventDefault();
+                        toggleItemHelp('pyannoteThresh');
+                      }}
+                      title="Click to show/hide help"
                     >
+                      Speech activation
+                    </label>
                     <div class="setting-control-right">
                       <span class="setting-val"
                         >{Number(transcriptState.pyannoteThreshold).toFixed(
@@ -313,6 +404,13 @@
                       />
                     </div>
                   </div>
+                  {#if openHelpKeys.pyannoteThresh}
+                    <p class="setting-help">
+                      Frame-level probability threshold for speaker activity.
+                      Lower values detect quieter overlapping voices; higher
+                      values reduce false overlap triggers.
+                    </p>
+                  {/if}
                 </div>
               {/if}
             </div>
@@ -320,24 +418,44 @@
         {/if}
 
         {#if multiSpeaker && transcriptState.segments.length > 0}
-          <div class="setting-row" style="margin-top: 4px;">
-            <button
-              type="button"
-              class="btn-diarize-action"
-              onclick={() => transcriptState.handleDiarizeSegments()}
-              disabled={appState.isProcessing || transcriptState.isDiarizing}
-              title="Identify and assign speakers on already segmented utterances"
-            >
-              {#if transcriptState.isDiarizing}
-                <i class="fa-solid fa-spinner fa-spin"></i>
-                <span
-                  >Identifying speakers in {transcriptState.segments.length} segments...</span
+          <div class="setting-row" style="margin-top: 2px;">
+            <div class="setting-inline-row">
+              <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+              <!-- svelte-ignore a11y_click_events_have_key_events -->
+              <label
+                for="btn-diarize-action"
+                onclick={(e) => {
+                  e.preventDefault();
+                  toggleItemHelp('diarizeAction');
+                }}
+                title="Click to show/hide help"
+              >
+                Separate speakers in transcript
+              </label>
+              <div class="setting-control-right">
+                <button
+                  id="btn-diarize-action"
+                  type="button"
+                  class="btn-diarize-action"
+                  onclick={confirmAndDiarize}
+                  disabled={appState.isProcessing ||
+                    transcriptState.isDiarizing}
+                  title="Identify and assign speakers on already segmented utterances"
                 >
-              {:else}
-                <i class="fa-solid fa-people-arrows"></i>
-                <span>Separate Speakers in Transcript</span>
-              {/if}
-            </button>
+                  {#if transcriptState.isDiarizing}
+                    <span>Running...</span>
+                  {:else}
+                    <span>Run</span>
+                  {/if}
+                </button>
+              </div>
+            </div>
+            {#if openHelpKeys.diarizeAction}
+              <p class="setting-help">
+                Re-runs speaker identification on existing segments without
+                re-running full VAD segmentation.
+              </p>
+            {/if}
           </div>
         {/if}
       </div>
@@ -345,13 +463,23 @@
       <!-- 3) Listening & Sensitivity -->
       <div class="settings-col">
         <div class="col-head">
-          <i class="fa-solid fa-microphone"></i>
           <span>Listening &amp; Sensitivity</span>
         </div>
 
         <div class="setting-row">
           <div class="setting-inline-row">
-            <label for="inline-vad-thresh">Speech threshold</label>
+            <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+            <!-- svelte-ignore a11y_click_events_have_key_events -->
+            <label
+              for="inline-vad-thresh"
+              onclick={(e) => {
+                e.preventDefault();
+                toggleItemHelp('vadThresh');
+              }}
+              title="Click to show/hide help"
+            >
+              Speech threshold
+            </label>
             <div class="setting-control-right">
               <span class="setting-val"
                 >{Number(transcriptState.vadThreshold).toFixed(2)}</span
@@ -369,7 +497,7 @@
               />
             </div>
           </div>
-          {#if appState.showHelpText}
+          {#if openHelpKeys.vadThresh}
             <p class="setting-help">
               Sensitivity: <strong>{sensitivityHint}</strong>. Lower threshold
               if quiet or distant speech is being missed; raise it if background
@@ -380,7 +508,18 @@
 
         <div class="setting-row">
           <div class="setting-inline-row">
-            <label for="inline-vad-silence">Pause to end utterance</label>
+            <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+            <!-- svelte-ignore a11y_click_events_have_key_events -->
+            <label
+              for="inline-vad-silence"
+              onclick={(e) => {
+                e.preventDefault();
+                toggleItemHelp('vadSilence');
+              }}
+              title="Click to show/hide help"
+            >
+              Pause to end utterance
+            </label>
             <div class="setting-control-right">
               <span class="setting-val"
                 >{transcriptState.vadMinSilenceMs} ms</span
@@ -397,7 +536,7 @@
               />
             </div>
           </div>
-          {#if appState.showHelpText}
+          {#if openHelpKeys.vadSilence}
             <p class="setting-help">
               Silence longer than this marks a new segment. Shorter values
               produce more, smaller segments.
@@ -407,7 +546,18 @@
 
         <div class="setting-row">
           <div class="setting-inline-row">
-            <label for="inline-vad-pad">Edge padding</label>
+            <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+            <!-- svelte-ignore a11y_click_events_have_key_events -->
+            <label
+              for="inline-vad-pad"
+              onclick={(e) => {
+                e.preventDefault();
+                toggleItemHelp('vadPad');
+              }}
+              title="Click to show/hide help"
+            >
+              Edge padding
+            </label>
             <div class="setting-control-right">
               <span class="setting-val"
                 >{transcriptState.vadSpeechPadMs} ms</span
@@ -424,7 +574,7 @@
               />
             </div>
           </div>
-          {#if appState.showHelpText}
+          {#if openHelpKeys.vadPad}
             <p class="setting-help">
               Extra audio preserved before and after each segment to prevent
               clipping word boundaries.
@@ -436,13 +586,68 @@
       <!-- 4) Segment Tidying -->
       <div class="settings-col">
         <div class="col-head">
-          <i class="fa-solid fa-broom"></i>
           <span>Segment Tidying</span>
         </div>
 
+        {#if transcriptState.segments.length > 0}
+          <div class="setting-row" style="margin-top: 2px;">
+            <div class="setting-inline-row">
+              <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+              <!-- svelte-ignore a11y_click_events_have_key_events -->
+              <label
+                for="btn-trim-vad-action"
+                onclick={(e) => {
+                  e.preventDefault();
+                  toggleItemHelp('trimAction');
+                }}
+                title="Click to show/hide help"
+              >
+                {audioState.isIntervalSelected
+                  ? `Trim in selection (${segmentsInIntervalCount})`
+                  : 'Trim in segments'}
+              </label>
+              <div class="setting-control-right">
+                <button
+                  id="btn-trim-vad-action"
+                  type="button"
+                  class="btn-trim-vad-action"
+                  onclick={confirmAndTrimVad}
+                  disabled={appState.isProcessing ||
+                    transcriptState.isTrimmingVad ||
+                    !hasAudio}
+                  title="Tighten existing segment start and end boundaries using Silero VAD without deleting or merging segments"
+                >
+                  {#if transcriptState.isTrimmingVad}
+                    <span>Running...</span>
+                  {:else}
+                    <span>Run</span>
+                  {/if}
+                </button>
+              </div>
+            </div>
+            {#if openHelpKeys.trimAction}
+              <p class="setting-help">
+                Tightens start/end boundaries of existing segments to remove
+                leading and trailing silence while preserving all text,
+                speakers, and sub-tiers.
+              </p>
+            {/if}
+          </div>
+        {/if}
         <div class="setting-row">
           <div class="setting-inline-row">
-            <label for="inline-vad-min-seg">Drop shorter than</label>
+            <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+            <!-- svelte-ignore a11y_click_events_have_key_events -->
+            <label
+              for="inline-vad-min-seg"
+              onclick={(e) => {
+                e.preventDefault();
+                toggleItemHelp('minSeg');
+              }}
+              title="Click to show/hide help"
+            >
+              Drop shorter than
+            </label>
             <div class="setting-control-right">
               <span class="setting-val"
                 >{Number(transcriptState.vadMinSegmentS).toFixed(1)} s</span
@@ -459,7 +664,7 @@
               />
             </div>
           </div>
-          {#if appState.showHelpText}
+          {#if openHelpKeys.minSeg}
             <p class="setting-help">
               Discards brief noise spikes below this duration.
             </p>
@@ -468,7 +673,18 @@
 
         <div class="setting-row">
           <div class="setting-inline-row">
-            <label for="inline-vad-min-sil">Join closer than</label>
+            <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+            <!-- svelte-ignore a11y_click_events_have_key_events -->
+            <label
+              for="inline-vad-min-sil"
+              onclick={(e) => {
+                e.preventDefault();
+                toggleItemHelp('minSil');
+              }}
+              title="Click to show/hide help"
+            >
+              Join closer than
+            </label>
             <div class="setting-control-right">
               <span class="setting-val"
                 >{Number(transcriptState.vadMinSilenceS).toFixed(1)} s</span
@@ -485,7 +701,7 @@
               />
             </div>
           </div>
-          {#if appState.showHelpText}
+          {#if openHelpKeys.minSil}
             <p class="setting-help">
               Adjacent segments closer than this duration are automatically
               merged into one.
@@ -495,7 +711,18 @@
 
         <div class="setting-row">
           <div class="setting-inline-row">
-            <label for="inline-vad-max-seg">Split longer than</label>
+            <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+            <!-- svelte-ignore a11y_click_events_have_key_events -->
+            <label
+              for="inline-vad-max-seg"
+              onclick={(e) => {
+                e.preventDefault();
+                toggleItemHelp('maxSeg');
+              }}
+              title="Click to show/hide help"
+            >
+              Split longer than
+            </label>
             <div class="setting-control-right">
               <span class="setting-val">{transcriptState.vadMaxSegmentS} s</span
               >
@@ -511,159 +738,111 @@
               />
             </div>
           </div>
-          {#if appState.showHelpText}
+          {#if openHelpKeys.maxSeg}
             <p class="setting-help">
               Caps maximum segment length so utterances fit cleanly into
               transcription model context windows.
             </p>
           {/if}
         </div>
+      </div>
 
-        {#if transcriptState.segments.length > 0}
-          <div class="setting-row" style="margin-top: 4px;">
-            <button
-              type="button"
-              class="btn-trim-vad-action"
-              onclick={() => transcriptState.handleTrimSegmentsWithVad()}
-              disabled={appState.isProcessing ||
-                transcriptState.isTrimmingVad ||
-                !hasAudio}
-              title="Tighten existing segment start and end boundaries using Silero VAD without deleting or merging segments"
+      <!-- Main Action Section at end of main panel -->
+      <div class="panel-action-bar">
+        <div class="footer-status">
+          {#if !hasAudio}
+            <span class="status-badge status-warning">
+              Load an audio file to run segmentation
+            </span>
+          {:else if audioState.isIntervalSelected}
+            <span class="status-badge status-info">
+              Selection active: {audioState.audioRangeStart.toFixed(1)}s &ndash; {audioState.audioRangeEnd.toFixed(
+                1,
+              )}s ({Math.max(
+                0,
+                audioState.audioRangeEnd - audioState.audioRangeStart,
+              ).toFixed(1)}s)
+            </span>
+          {:else}
+            <span class="status-badge status-neutral">
+              Target: Full recording ({audioState.totalAudioDuration.toFixed(
+                1,
+              )}s)
+            </span>
+          {/if}
+
+          {#if transcriptState.segments.length > 0}
+            <span class="status-badge status-pill">
+              {transcriptState.segments.length} segment{transcriptState.segments
+                .length === 1
+                ? ''
+                : 's'}
+            </span>
+          {/if}
+
+          {#if segmentsInIntervalCount > 0}
+            <span
+              class="status-badge status-warning"
+              title="{segmentsInIntervalCount} existing segment(s) in this interval will be replaced upon confirmation"
             >
-              {#if transcriptState.isTrimmingVad}
-                <i class="fa-solid fa-spinner fa-spin"></i>
-                <span>Trimming silence with VAD...</span>
-              {:else}
-                <i class="fa-solid fa-compress"></i>
-                <span
-                  >{audioState.isIntervalSelected
-                    ? `Trim in Selection (${segmentsInIntervalCount})`
-                    : 'Trim in Segments'}</span
-                >
-              {/if}
-            </button>
-            {#if appState.showHelpText}
-              <p class="setting-help">
-                Tightens start/end boundaries of existing segments to remove
-                leading and trailing silence while preserving all text,
-                speakers, and sub-tiers.
-              </p>
-            {/if}
-          </div>
-        {/if}
-      </div>
-    </div>
+              {segmentsInIntervalCount} to replace
+            </span>
+          {/if}
+        </div>
 
-    <!-- Action Bar / Footer inside panel body -->
-    <div class="panel-action-bar panel-footer">
-      <div class="footer-status">
-        {#if !hasAudio}
-          <span class="status-badge status-warning">
-            <i class="fa-solid fa-triangle-exclamation"></i>
-            Load an audio file to run segmentation
-          </span>
-        {:else if audioState.isIntervalSelected}
-          <span class="status-badge status-info">
-            <i class="fa-solid fa-crop-simple"></i>
-            Selection active: {audioState.audioRangeStart.toFixed(1)}s &ndash; {audioState.audioRangeEnd.toFixed(
-              1,
-            )}s ({Math.max(
-              0,
-              audioState.audioRangeEnd - audioState.audioRangeStart,
-            ).toFixed(1)}s)
-          </span>
-        {:else}
-          <span class="status-badge status-neutral">
-            <i class="fa-solid fa-wave-square"></i>
-            Target: Full recording ({audioState.totalAudioDuration.toFixed(1)}s)
-          </span>
-        {/if}
-
-        {#if transcriptState.segments.length > 0}
-          <span class="status-badge status-pill">
-            {transcriptState.segments.length} segment{transcriptState.segments
-              .length === 1
-              ? ''
-              : 's'}
-          </span>
-        {/if}
-
-        {#if segmentsInIntervalCount > 0}
-          <span
-            class="status-badge status-warning"
-            title="{segmentsInIntervalCount} existing segment(s) in this interval will be replaced upon confirmation"
-          >
-            <i class="fa-solid fa-triangle-exclamation"></i>
-            {segmentsInIntervalCount} to replace
-          </span>
-        {/if}
-      </div>
-
-      <div class="footer-actions">
-        <button
-          type="button"
-          class="panel-tool-btn {appState.showHelpText ? 'active' : ''}"
-          onclick={() => appState.toggleHelpText()}
-          title={appState.showHelpText
-            ? 'Hide descriptive help text'
-            : 'Show descriptive help text'}
-          aria-pressed={appState.showHelpText}
-        >
-          <i class="fa-regular fa-circle-question"></i>
-          <span>Help</span>
-        </button>
-
-        <button
-          type="button"
-          class="panel-tool-btn"
-          onclick={() => transcriptState.resetVadDiarizationDefaults()}
-          disabled={appState.isProcessing}
-          title="Reset segmentation settings to defaults"
-        >
-          <i class="fa-solid fa-rotate-left"></i>
-          <span>Reset</span>
-        </button>
-
-        {#if appState.isProcessing && (appState.activeAction === 'segment' || appState.activeAction === 'vad_trim')}
+        <div class="footer-actions">
           <button
             type="button"
-            class="btn-stop-action"
-            onclick={() => transcriptState.stopTranscription(onWorkerReset)}
-            title="Stop segmentation process"
+            class="panel-tool-btn"
+            onclick={() => transcriptState.resetVadDiarizationDefaults()}
+            disabled={appState.isProcessing}
+            title="Reset segmentation settings to defaults"
           >
-            <i class="fa-solid fa-stop"></i>
-            <span>Stop</span>
+            <i class="fa-solid fa-rotate-left"></i>
+            <span>Reset</span>
           </button>
-        {/if}
 
-        <button
-          type="button"
-          class="btn-run-action btn-run-segment"
-          onclick={() => transcriptState.handleSegmentOnly()}
-          disabled={appState.isProcessing || !hasAudio}
-          title="Run Silero Voice Activity Detection"
-        >
-          {#if appState.isProcessing && appState.activeAction === 'segment'}
-            <i class="fa-solid fa-spinner fa-spin"></i>
-            <span>Segmenting Audio...</span>
-          {:else if audioState.isIntervalSelected}
-            <i class="fa-solid fa-scissors"></i>
-            <span>Segment Selection</span>
-          {:else}
-            <i class="fa-solid fa-scissors"></i>
-            <span>Run Automatic Segmentation</span>
+          {#if appState.isProcessing && (appState.activeAction === 'segment' || appState.activeAction === 'vad_trim')}
+            <button
+              type="button"
+              class="btn-stop-action"
+              onclick={() => transcriptState.stopTranscription(onWorkerReset)}
+              title="Stop segmentation process"
+            >
+              <i class="fa-solid fa-stop"></i>
+              <span>Stop</span>
+            </button>
           {/if}
-        </button>
 
-        <button
-          type="button"
-          class="panel-close-btn"
-          onclick={onClose}
-          title="Close settings panel"
-          aria-label="Close"
-        >
-          <i class="fa-solid fa-xmark"></i>
-        </button>
+          <button
+            type="button"
+            class="btn-run-action btn-run-segment"
+            onclick={() => transcriptState.handleSegmentOnly()}
+            disabled={appState.isProcessing || !hasAudio}
+            title="Run Silero Voice Activity Detection"
+          >
+            {#if appState.isProcessing && appState.activeAction === 'segment'}
+              <i class="fa-solid fa-spinner fa-spin"></i>
+              <span>Segmenting Audio...</span>
+            {:else if audioState.isIntervalSelected}
+              <i class="fa-solid fa-scissors"></i>
+              <span>Segment Selection</span>
+            {:else}
+              <i class="fa-solid fa-scissors"></i>
+              <span>Run Automatic Segmentation</span>
+            {/if}
+          </button>
+
+          <button
+            type="button"
+            class="panel-close-btn"
+            onclick={onClose}
+            title="Close settings panel"
+            aria-label="Close"
+          >
+            <i class="fa-solid fa-xmark"></i>
+          </button>
+        </div>
       </div>
     </div>
   </div>
@@ -679,22 +858,21 @@
 
 <style>
   .inline-settings-panel {
-    background: var(--bg-hover, #f1f5f9);
+    background: var(--bg-hover, #f8fafc);
     border: 1px solid var(--border-color, #cbd5e1);
-    border-bottom: 2px solid var(--primary-color, #0284c7);
-    border-radius: 8px 8px 0 0;
-    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.06);
+    border-radius: 8px;
+    box-shadow: 0 2px 8px rgba(15, 23, 42, 0.04);
     display: flex;
     flex-direction: column;
     margin: 0;
     animation: slideDown 0.16s ease-out;
     z-index: 10;
+    overflow: hidden;
   }
 
   :global([data-theme='dark']) .inline-settings-panel {
     background: #0f172a;
     border-color: #334155;
-    border-bottom-color: #38bdf8;
     box-shadow: 0 4px 16px rgba(0, 0, 0, 0.28);
   }
 
@@ -713,19 +891,20 @@
     display: inline-flex;
     align-items: center;
     gap: 5px;
-    padding: 6px 10px;
+    height: 28px;
+    padding: 0 9px;
     font-size: 0.74rem;
     font-weight: 600;
     color: var(--text-muted, #64748b);
-    background: var(--bg-card, #ffffff);
+    background: var(--bg-hover, #f8fafc);
     border: 1px solid var(--border-color, #cbd5e1);
-    border-radius: 5px;
+    border-radius: 6px;
     cursor: pointer;
     transition: all 0.14s ease;
   }
 
   :global([data-theme='dark']) .panel-tool-btn {
-    background: #1e293b;
+    background: #0f172a;
     border-color: #475569;
     color: #94a3b8;
   }
@@ -733,50 +912,42 @@
   .panel-tool-btn:hover {
     color: var(--primary-color, #0284c7);
     border-color: var(--primary-color, #0284c7);
+    background: var(--bg-card, #ffffff);
   }
 
-  .panel-tool-btn.active {
-    background: rgba(2, 132, 199, 0.1);
-    color: var(--primary-color, #0284c7);
-    border-color: var(--primary-color, #0284c7);
-  }
-
-  :global([data-theme='dark']) .panel-tool-btn.active {
-    background: rgba(56, 189, 248, 0.15);
+  :global([data-theme='dark']) .panel-tool-btn:hover {
     color: #38bdf8;
     border-color: #38bdf8;
+    background: #334155;
   }
 
   .panel-close-btn {
-    display: flex;
+    display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 32px;
-    height: 32px;
-    border: 1px solid var(--border-color, #cbd5e1);
-    background: var(--bg-card, #ffffff);
+    width: 28px;
+    height: 28px;
+    border: 1px solid transparent;
+    background: transparent;
     border-radius: 6px;
     color: var(--text-muted, #64748b);
     cursor: pointer;
-    font-size: 0.95rem;
+    font-size: 0.85rem;
     transition: all 0.14s ease;
   }
 
   .panel-close-btn:hover {
-    background: rgba(0, 0, 0, 0.07);
+    background: var(--bg-hover, #f1f5f9);
     color: var(--text-heading, #0f172a);
-    border-color: var(--text-muted, #64748b);
   }
 
   :global([data-theme='dark']) .panel-close-btn {
-    background: #1e293b;
-    border-color: #475569;
     color: #94a3b8;
   }
 
   :global([data-theme='dark']) .panel-close-btn:hover {
-    background: rgba(255, 255, 255, 0.1);
-    color: #f1f5f9;
+    background: #334155;
+    color: #f8fafc;
   }
 
   .panel-body {
@@ -832,14 +1003,6 @@
     border-bottom-color: rgba(255, 255, 255, 0.08);
   }
 
-  .col-head i {
-    color: var(--primary-color, #0284c7);
-  }
-
-  :global([data-theme='dark']) .col-head i {
-    color: #38bdf8;
-  }
-
   .setting-row {
     display: flex;
     flex-direction: column;
@@ -867,7 +1030,15 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    cursor: pointer;
+    cursor: help;
+  }
+
+  .setting-inline-row label:hover {
+    color: var(--primary-color, #0284c7);
+  }
+
+  :global([data-theme='dark']) .setting-inline-row label:hover {
+    color: #38bdf8;
   }
 
   .setting-control-right {
@@ -933,7 +1104,6 @@
     display: inline-flex;
     align-items: center;
     gap: 7px;
-    cursor: pointer;
     font-size: 0.76rem;
     font-weight: 600;
     color: var(--text-color, #1e293b);
@@ -1002,8 +1172,8 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    gap: 6px;
-    padding: 5px 8px;
+    gap: 5px;
+    padding: 3px 10px;
     font-size: 0.74rem;
     font-weight: 600;
     background: #ede9fe;
@@ -1019,6 +1189,11 @@
     color: #6d28d9;
   }
 
+  .btn-diarize-action:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+  }
+
   :global([data-theme='dark']) .btn-diarize-action {
     background: rgba(124, 58, 237, 0.2);
     border-color: rgba(124, 58, 237, 0.35);
@@ -1029,8 +1204,8 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    gap: 6px;
-    padding: 5px 8px;
+    gap: 5px;
+    padding: 3px 10px;
     font-size: 0.74rem;
     font-weight: 600;
     background: #ecfdf5;
@@ -1039,7 +1214,6 @@
     border-radius: 5px;
     cursor: pointer;
     transition: all 0.14s ease;
-    width: 100%;
   }
 
   .btn-trim-vad-action:hover:not(:disabled) {
@@ -1072,8 +1246,8 @@
     text-decoration: underline;
   }
 
-  .panel-action-bar,
-  .panel-footer {
+  .panel-action-bar {
+    grid-column: 1 / -1;
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -1084,8 +1258,7 @@
     background: transparent;
   }
 
-  :global([data-theme='dark']) .panel-action-bar,
-  :global([data-theme='dark']) .panel-footer {
+  :global([data-theme='dark']) .panel-action-bar {
     background: transparent;
     border-top-color: #334155;
   }
@@ -1219,14 +1392,12 @@
       max-height: 100%;
       min-height: 0;
       border-radius: 8px;
-      border-top: 2px solid var(--primary-color, #0284c7);
-      border-bottom: 1px solid var(--border-color, #cbd5e1);
+      border: 1px solid var(--border-color, #cbd5e1);
       overflow: hidden;
     }
 
     :global([data-theme='dark']) .inline-settings-panel {
-      border-top-color: #38bdf8;
-      border-bottom-color: #334155;
+      border-color: #334155;
     }
 
     .side-panel-header {
@@ -1234,7 +1405,9 @@
       align-items: center;
       justify-content: space-between;
       gap: 8px;
-      padding: 8px 12px;
+      padding: 10px 12px;
+      min-height: 44px;
+      box-sizing: border-box;
       background: var(--bg-card, #ffffff);
       border-bottom: 1px solid var(--border-color, #cbd5e1);
       flex-shrink: 0;
@@ -1249,7 +1422,7 @@
       display: flex;
       align-items: center;
       gap: 8px;
-      font-size: 0.84rem;
+      font-size: 0.86rem;
       font-weight: 700;
       color: var(--text-heading, #0f172a);
     }
@@ -1275,28 +1448,23 @@
     .panel-body {
       flex: 1;
       min-height: 0;
-      overflow: hidden;
-      padding: 8px 10px;
-      gap: 6px;
+      overflow-y: auto;
+      padding: 10px 12px;
+      gap: 8px;
     }
 
     .settings-grid {
       grid-template-columns: 1fr;
-      gap: 6px;
-      flex: 1;
-      min-height: 0;
-      overflow-y: auto;
-      padding-right: 2px;
-      scrollbar-width: thin;
+      gap: 8px;
       align-content: start;
     }
 
-    .panel-footer {
-      flex-shrink: 0;
+    .panel-action-bar {
       flex-direction: column;
       align-items: stretch;
-      gap: 6px;
-      padding-top: 6px;
+      gap: 8px;
+      margin-top: 4px;
+      padding-top: 10px;
     }
 
     .footer-actions {

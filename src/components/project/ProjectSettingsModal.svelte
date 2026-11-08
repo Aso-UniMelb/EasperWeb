@@ -1,10 +1,12 @@
 <script>
   import { untrack } from 'svelte';
   import { projectState } from '../../state/projectState.svelte.js';
+  import { transcriptState } from '../../state/transcriptState.svelte.js';
   import { lexiconState } from '../../state/lexiconState.svelte.js';
   import {
     SPEAKER_COLORS,
     ensureDefaultSpeakers,
+    getSegmentSpeakerId,
   } from '../../utils/speakers.js';
   import {
     MAX_SUB_TIERS,
@@ -36,6 +38,16 @@
   let activeTab = $state('main'); // 'main' | 'subtiers' | 'validation'
   let showSubTierHelp = $state(false);
   let showValidationHelp = $state(false);
+  let expandedWordTierIds = $state({});
+  let speakerRowUid = 0;
+
+  const SPEAKER_COLOR_LIST = [
+    { ...SPEAKER_COLORS[1], label: 'Sky Blue' },
+    { ...SPEAKER_COLORS[2], label: 'Purple' },
+    { ...SPEAKER_COLORS[3], label: 'Emerald Green' },
+    { ...SPEAKER_COLORS[4], label: 'Amber' },
+    { ...SPEAKER_COLORS[5], label: 'Rose' },
+  ];
 
   // Validation Rules state
   let validateTags = $state(false);
@@ -78,6 +90,9 @@
           const existingSpeakers = projectState.activeProject.speakers;
           speakers = ensureDefaultSpeakers(existingSpeakers).map((s) => ({
             ...s,
+            id: Number(s.id) || 1,
+            originalId: Number(s.id) || 1,
+            _uid: ++speakerRowUid,
           }));
           subTiers = normalizeSubTiers(projectState.activeProject.subTiers).map(
             (t) => ({
@@ -113,6 +128,7 @@
         activeTab = 'main';
         showSubTierHelp = false;
         showValidationHelp = false;
+        expandedWordTierIds = {};
         errorMessage = '';
         successMessage = '';
       });
@@ -132,6 +148,20 @@
         )
       : [],
   );
+
+  const speakerSegmentCounts = $derived.by(() => {
+    const counts = {};
+    const segs =
+      Array.isArray(transcriptState.segments) &&
+      transcriptState.segments.length > 0
+        ? transcriptState.segments
+        : projectState.activeProject?.segments || [];
+    for (const seg of segs) {
+      const spkId = getSegmentSpeakerId(seg);
+      counts[spkId] = (counts[spkId] || 0) + 1;
+    }
+    return counts;
+  });
 
   function handleAddSpeaker() {
     errorMessage = '';
@@ -156,16 +186,39 @@
       ...speakers,
       {
         id: nextId,
+        originalId: null,
+        _uid: ++speakerRowUid,
         name: `Speaker ${nextId}`,
         initials: `S${nextId}`,
       },
-    ].sort((a, b) => Number(a.id) - Number(b.id));
+    ];
+  }
+
+  function handleSelectSpeakerColor(speaker, colorId) {
+    const targetId = Number(colorId);
+    if (Number(speaker.id) === targetId) return;
+    const isTaken = speakers.some(
+      (s) => s !== speaker && Number(s.id) === targetId,
+    );
+    if (isTaken) return;
+    speaker.id = targetId;
   }
 
   function handleRemoveSpeaker(idToRemove) {
     errorMessage = '';
     if (speakers.length <= 1) {
       errorMessage = 'A project must have at least one speaker.';
+      return;
+    }
+    const targetSpk = speakers.find((s) => Number(s.id) === Number(idToRemove));
+    const spkName = targetSpk?.name?.trim() || `Speaker ${idToRemove}`;
+    const segCount =
+      speakerSegmentCounts[targetSpk?.originalId ?? idToRemove] || 0;
+    const confirmMsg =
+      segCount > 0
+        ? `Remove "${spkName}"? Its ${segCount} ${segCount === 1 ? 'segment' : 'segments'} will be reassigned to another speaker when you save.`
+        : `Are you sure you want to remove "${spkName}"?`;
+    if (!window.confirm(confirmMsg)) {
       return;
     }
     speakers = speakers.filter((s) => Number(s.id) !== Number(idToRemove));
@@ -225,9 +278,20 @@
     tier.lexiconInput = formatLexicon(tier.lexicon);
   }
 
+  function toggleWordTierConfig(tierId) {
+    expandedWordTierIds = {
+      ...expandedWordTierIds,
+      [tierId]: !expandedWordTierIds[tierId],
+    };
+  }
+
   function handleTypeChange(tier, newType) {
     tier.type = newType;
     if (newType === SUB_TIER_TYPE_WORD) {
+      expandedWordTierIds = {
+        ...expandedWordTierIds,
+        [tier.id]: true,
+      };
       const low = (tier.name || '').toLowerCase();
       if (!tier.lexicon || tier.lexicon.length === 0) {
         if (low.includes('pos')) {
@@ -294,7 +358,8 @@
       (fixDoubleSpaces ? 1 : 0) +
       (validateAcronyms ? 1 : 0) +
       (validateCustomRules
-        ? customRules.filter((r) => r.enabled !== false && r.find?.trim()).length
+        ? customRules.filter((r) => r.enabled !== false && r.find?.trim())
+            .length
         : 0),
   );
 
@@ -315,9 +380,13 @@
       return;
     }
 
-    // Sanitize speakers
+    // Sanitize speakers and track any speaker color/ID remapping
+    const speakerIdRemap = {};
     const sanitizedSpeakers = speakers.map((s, idx) => {
       const spkId = Number(s.id) || idx + 1;
+      if (s.originalId != null && Number(s.originalId) !== spkId) {
+        speakerIdRemap[Number(s.originalId)] = spkId;
+      }
       const cleanName = (s.name || `Speaker ${spkId}`).trim();
       let cleanInitials = (s.initials || '')
         .toUpperCase()
@@ -371,9 +440,7 @@
             : DEFAULT_SPLITTERS
           : DEFAULT_SPLITTERS;
       const lexiconField =
-        type === SUB_TIER_TYPE_WORD
-          ? (t.lexiconField || '').trim()
-          : '';
+        type === SUB_TIER_TYPE_WORD ? (t.lexiconField || '').trim() : '';
       const annotator = (t.annotator || '').trim();
 
       sanitizedSubTiers.push({
@@ -404,6 +471,7 @@
         transcriber: transcriber.trim(),
         mainTierTitle: mainTierTitle.trim(),
         speakers: sanitizedSpeakers,
+        speakerIdRemap,
         subTiers: sanitizedSubTiers,
         lexiconId: lexiconId || null,
         validationRules: sanitizedValidationRules,
@@ -422,10 +490,7 @@
 </script>
 
 {#if projectState.isProjectSettingsOpen && projectState.activeProject}
-  <div
-    class="modal-backdrop"
-    role="presentation"
-  >
+  <div class="modal-backdrop" role="presentation">
     <div class="modal-dialog project-settings-dialog">
       <div class="modal-header">
         <div class="modal-title">
@@ -443,7 +508,11 @@
       </div>
 
       <!-- Tab Navigation Bar -->
-      <div class="settings-tabs-bar" role="tablist" aria-label="Project settings sections">
+      <div
+        class="settings-tabs-bar"
+        role="tablist"
+        aria-label="Project settings sections"
+      >
         <button
           type="button"
           role="tab"
@@ -496,132 +565,152 @@
         {/if}
 
         {#if activeTab === 'main'}
-        <div class="form-section">
-          <div class="general-grid">
-            <div class="form-group">
-              <label for="project-settings-title" class="form-label"
-                >Project Title</label
-              >
-              <input
-                id="project-settings-title"
-                type="text"
-                class="form-input"
-                bind:value={title}
-                placeholder="e.g., Interview Recording A"
-              />
-            </div>
-
-            <div class="form-group">
-              <label for="project-settings-lexicon" class="form-label"
-                >Active Lexicon</label
-              >
-              <select
-                id="project-settings-lexicon"
-                class="form-input"
-                bind:value={lexiconId}
-              >
-                <option value="">None (Spellchecking Disabled)</option>
-                {#each lexiconState.lexicons as lex (lex.id)}
-                  <option value={lex.id}>
-                    {lex.title || lex.name || 'Untitled Lexicon'} ({lex.entries?.length || 0} entries)
-                  </option>
-                {/each}
-              </select>
-            </div>
-          </div>
-        </div>
-
-        <div class="form-section">
-          <div class="section-header-row">
-            <div class="section-title-wrap">
-              <h4 class="section-title">
-                Main Transcription Tiers <span class="counter-badge">{speakers.length} / 5</span>
-              </h4>
-              <span class="section-subtitle">
-                Root tier title, transcriber &amp; speaker participants
-              </span>
-            </div>
-            {#if speakers.length < 5}
-              <button
-                type="button"
-                class="btn-add-speaker"
-                onclick={handleAddSpeaker}
-              >
-                <i class="fa-solid fa-user-plus"></i>
-                <span>Add Speaker</span>
-              </button>
-            {/if}
-          </div>
-
-          <div class="main-tiers-config-grid">
-            <div class="form-group">
-              <label
-                for="project-settings-main-tier"
-                class="form-label"
-                title="Title prefix for root transcription tiers in ELAN export (e.g. BIS@Speaker1)"
-              >
-                Main Tier Title
-              </label>
-              <input
-                id="project-settings-main-tier"
-                type="text"
-                class="form-input"
-                bind:value={mainTierTitle}
-                placeholder="e.g. BIS (outputs BIS@Speaker1)"
-                title="When exporting to ELAN, root tiers will be named '{mainTierTitle.trim() || 'Title'}@Speaker'"
-              />
-            </div>
-
-            <div class="form-group">
-              <label for="project-settings-transcriber" class="form-label"
-                >Transcriber</label
-              >
-              <input
-                id="project-settings-transcriber"
-                type="text"
-                class="form-input"
-                bind:value={transcriber}
-                placeholder="e.g., Alice Smith"
-                title="Transcriber name added to ANNOTATOR attribute of main transcription tiers"
-              />
-            </div>
-          </div>
-
-          <div class="speakers-list">
-            <div class="speakers-header-bar">
-              <span class="spk-th-id">#</span>
-              <span class="spk-th-name">Speaker Name</span>
-              <span class="spk-th-init">Initials</span>
-              <span class="spk-th-act"></span>
-            </div>
-            {#each speakers as spk (spk.id)}
-              {@const col = SPEAKER_COLORS[spk.id] || SPEAKER_COLORS[1]}
-              <div
-                class="speaker-row"
-                style="--spk-color: {col.primary}; --spk-bg: {col.bg}; --spk-border: {col.border}"
-              >
-                <div
-                  class="speaker-color-indicator"
-                  style="background: {col.primary};"
-                  title="Speaker ID #{spk.id}"
+          <div class="form-section">
+            <div class="general-grid">
+              <div class="form-group">
+                <label for="project-settings-title" class="form-label"
+                  >Project Title</label
                 >
-                  <span class="speaker-id-badge">#{spk.id}</span>
-                </div>
+                <input
+                  id="project-settings-title"
+                  type="text"
+                  class="form-input"
+                  bind:value={title}
+                  placeholder="e.g., Interview Recording A"
+                />
+              </div>
 
-                <div class="speaker-field speaker-name-field">
-                  <input
-                    id="spk-name-{spk.id}"
-                    type="text"
-                    class="form-input speaker-input"
-                    bind:value={spk.name}
-                    placeholder="Speaker {spk.id} Name"
-                  />
-                </div>
+              <div class="form-group">
+                <label for="project-settings-lexicon" class="form-label"
+                  >Active Lexicon</label
+                >
+                <select
+                  id="project-settings-lexicon"
+                  class="form-input"
+                  bind:value={lexiconId}
+                >
+                  <option value="">None (Spellchecking Disabled)</option>
+                  {#each lexiconState.lexicons as lex (lex.id)}
+                    <option value={lex.id}>
+                      {lex.title || lex.name || 'Untitled Lexicon'} ({lex
+                        .entries?.length || 0} entries)
+                    </option>
+                  {/each}
+                </select>
+              </div>
 
-                <div class="speaker-field speaker-initials-field">
-                  <div class="initials-input-wrapper">
+              <div class="form-group">
+                <label
+                  for="project-settings-main-tier"
+                  class="form-label"
+                  title="Title prefix for root transcription tiers in ELAN export (e.g. BIS@Speaker1)"
+                >
+                  Main Tier Title
+                </label>
+                <input
+                  id="project-settings-main-tier"
+                  type="text"
+                  class="form-input"
+                  bind:value={mainTierTitle}
+                  placeholder="e.g. BIS (outputs BIS@Speaker1)"
+                  title="When exporting to ELAN, root tiers will be named '{mainTierTitle.trim() ||
+                    'Title'}@Speaker'"
+                />
+              </div>
+
+              <div class="form-group">
+                <label for="project-settings-transcriber" class="form-label"
+                  >Transcriber</label
+                >
+                <input
+                  id="project-settings-transcriber"
+                  type="text"
+                  class="form-input"
+                  bind:value={transcriber}
+                  placeholder="e.g., Alice Smith"
+                  title="Transcriber name added to ANNOTATOR attribute of main transcription tiers"
+                />
+              </div>
+            </div>
+          </div>
+
+          <div class="form-section">
+            <div class="section-header-row">
+              <h4 class="section-title">Speakers</h4>
+              {#if speakers.length < 5}
+                <button
+                  type="button"
+                  class="btn-add-speaker"
+                  onclick={handleAddSpeaker}
+                >
+                  <i class="fa-solid fa-user-plus"></i>
+                  <span>Add Speaker</span>
+                </button>
+              {/if}
+            </div>
+
+            <div class="speakers-list">
+              <div class="speakers-header-bar">
+                <span class="spk-th-color">Color</span>
+                <span class="spk-th-name">Speaker Name</span>
+                <span class="spk-th-init">Initials</span>
+                <span class="spk-th-segs">Segments</span>
+                <span class="spk-th-act"></span>
+              </div>
+              {#each speakers as spk (spk._uid || spk.id)}
+                {@const col = SPEAKER_COLORS[spk.id] || SPEAKER_COLORS[1]}
+                {@const segCount =
+                  speakerSegmentCounts[spk.originalId ?? spk.id] || 0}
+                <div
+                  class="speaker-row"
+                  style="--spk-color: {col.primary}; --spk-bg: {col.bg}; --spk-border: {col.border}"
+                >
+                  <div
+                    class="speaker-color-picker"
+                    role="radiogroup"
+                    aria-label="Speaker color"
+                  >
+                    {#each SPEAKER_COLOR_LIST as colorOpt (colorOpt.id)}
+                      {@const isSelected = Number(spk.id) === colorOpt.id}
+                      {@const takenBy = speakers.find(
+                        (other) =>
+                          other !== spk && Number(other.id) === colorOpt.id,
+                      )}
+                      <button
+                        type="button"
+                        role="radio"
+                        aria-checked={isSelected}
+                        class="speaker-color-swatch {isSelected
+                          ? 'selected'
+                          : ''}"
+                        style="--swatch-color: {colorOpt.primary};"
+                        disabled={Boolean(takenBy)}
+                        onclick={() =>
+                          handleSelectSpeakerColor(spk, colorOpt.id)}
+                        title={takenBy
+                          ? `${colorOpt.label} (used by ${takenBy.name || 'another speaker'})`
+                          : colorOpt.label}
+                      >
+                        {#if isSelected}
+                          <i class="fa-solid fa-check"></i>
+                        {/if}
+                      </button>
+                    {/each}
+                  </div>
+
+                  <div class="speaker-field speaker-name-field">
                     <input
-                      id="spk-init-{spk.id}"
+                      id="spk-name-{spk._uid || spk.id}"
+                      type="text"
+                      class="form-input speaker-input"
+                      bind:value={spk.name}
+                      placeholder="Speaker Name"
+                    />
+                  </div>
+
+                  <div class="speaker-field speaker-initials-field">
+                    <input
+                      id="spk-init-{spk._uid || spk.id}"
                       type="text"
                       maxlength="3"
                       class="form-input speaker-input initials-input"
@@ -630,38 +719,34 @@
                       placeholder="S{spk.id}"
                       title="Max 3 initials"
                     />
-                    <span
-                      class="initials-preview"
-                      style="background: {col.primary}; color: #ffffff;"
-                    >
-                      {spk.initials || `S${spk.id}`}
-                    </span>
+                  </div>
+
+                  <div
+                    class="speaker-field speaker-segs-field"
+                    title="{segCount} {segCount === 1 ? 'segment' : 'segments'}"
+                  >
+                    <span class="speaker-seg-count">{segCount}</span>
+                  </div>
+
+                  <div class="speaker-actions">
+                    {#if speakers.length > 1}
+                      <button
+                        type="button"
+                        class="btn-delete-speaker"
+                        onclick={() => handleRemoveSpeaker(spk.id)}
+                        title="Remove {spk.name || 'speaker'}"
+                      >
+                        <i class="fa-solid fa-trash-can"></i>
+                      </button>
+                    {/if}
                   </div>
                 </div>
-
-                <div class="speaker-actions">
-                  {#if speakers.length > 1}
-                    <button
-                      type="button"
-                      class="btn-delete-speaker"
-                      onclick={() => handleRemoveSpeaker(spk.id)}
-                      title="Remove speaker {spk.id}"
-                    >
-                      <i class="fa-solid fa-trash-can"></i>
-                    </button>
-                  {/if}
-                </div>
-              </div>
-            {/each}
+              {/each}
+            </div>
           </div>
-        </div>
         {:else if activeTab === 'subtiers'}
-        <div class="form-section">
-          <div class="section-header-row">
-            <div class="section-title-wrap">
-              <h4 class="section-title">
-                Sub-tiers <span class="counter-badge">{subTiers.length} / {MAX_SUB_TIERS}</span>
-              </h4>
+          <div class="form-section">
+            <div class="section-header-row">
               <button
                 type="button"
                 class="btn-help-toggle"
@@ -673,372 +758,342 @@
                 <i class="fa-solid fa-circle-question"></i>
                 <span>Help &amp; Types</span>
               </button>
-            </div>
-            {#if subTiers.length < MAX_SUB_TIERS}
-              <button
-                type="button"
-                class="btn-add-speaker"
-                onclick={handleAddSubTier}
-              >
-                <i class="fa-solid fa-layer-group"></i>
-                <span>Add Sub-tier</span>
-              </button>
-            {/if}
-          </div>
-
-          {#if showSubTierHelp}
-            <div class="subtier-help-panel">
-              <div class="help-panel-header">
-                <div class="help-panel-title">
-                  <i class="fa-solid fa-book-open"></i>
-                  <span>Sub-tier Types &amp; Word/Morpheme Guide</span>
-                </div>
+              {#if subTiers.length < MAX_SUB_TIERS}
                 <button
                   type="button"
-                  class="btn-close-help"
-                  onclick={() => (showSubTierHelp = false)}
-                  title="Close help"
+                  class="btn-add-speaker"
+                  onclick={handleAddSubTier}
                 >
-                  <i class="fa-solid fa-xmark"></i>
+                  <i class="fa-solid fa-layer-group"></i>
+                  <span>Add Sub-tier</span>
                 </button>
-              </div>
-
-              <div class="help-cards-grid">
-                <div class="help-type-card help-card-sentence">
-                  <div class="help-type-badge sentence-badge">
-                    <i class="fa-solid fa-align-left"></i>
-                    <span>Sentence (Translation)</span>
-                  </div>
-                  <p class="help-type-desc">
-                    A single full-utterance text field per segment. Ideal for free translations, comments, or notes.
-                  </p>
-                  <div class="help-elan-note">
-                    <i class="fa-solid fa-file-export"></i>
-                    <span>ELAN: exported as a <code>Symbolic_Association</code> tier directly under the main speaker tier.</span>
-                  </div>
-                </div>
-
-                <div class="help-type-card help-card-word">
-                  <div class="help-type-badge word-badge">
-                    <i class="fa-solid fa-scissors"></i>
-                    <span>Word / Morpheme (POS, Gloss, etc.)</span>
-                  </div>
-                  <p class="help-type-desc">
-                    Divides each utterance into individual tokens for linguistic tagging (e.g. parts of speech, Leipzig glosses, morphemes).
-                  </p>
-                  <div class="help-points">
-                    <div class="help-point">
-                      <strong>Splitters:</strong> Characters like <code>-</code> (affixes) or <code>=</code> (clitics) that divide words into morphemes. Whitespace is always a splitter.
-                    </div>
-                    <div class="help-point">
-                      <strong>Tags / Presets:</strong> Define valid values (e.g. <code>prop</code>, <code>n</code>, <code>v</code>) to enable quick auto-complete when annotating.
-                    </div>
-                    <div class="help-point">
-                      <strong>Auto-Tag Field:</strong> Link to a column in your project's Active Lexicon so <em>Auto Tagging</em> automatically fills tags from dictionary matches.
-                    </div>
-                  </div>
-                  <div class="help-elan-note">
-                    <i class="fa-solid fa-file-export"></i>
-                    <span>ELAN: exports as a <code>Symbolic_Subdivision</code> tier directly under the speaker tier.</span>
-                  </div>
-                </div>
-              </div>
+              {/if}
             </div>
-          {/if}
 
-          {#if subTiers.length === 0}
-            <p class="subtier-empty">
-              No sub-tiers yet. Each segment shows a single transcription column.
-            </p>
-          {:else}
-            <div class="subtiers-list">
-              <div class="subtiers-header-bar">
-                <span class="sub-th-id">#</span>
-                <span class="sub-th-name">Sub-tier Name</span>
-                <span class="sub-th-type">Type</span>
-                <span class="sub-th-annotator">Annotator</span>
-                <span class="sub-th-act"></span>
-              </div>
-              {#each subTiers as tier (tier.id)}
-                <div
-                  class="subtier-card {tier.type === SUB_TIER_TYPE_WORD
-                    ? 'subtier-card-word'
-                    : 'subtier-card-sentence'}"
-                >
-                  <div class="subtier-card-top">
-                    <div class="subtier-index" title="Sub-tier #{tier.id}">
-                      #{tier.id}
-                    </div>
-
-                    <div class="subtier-field subtier-name-field">
-                      <input
-                        id="subtier-name-{tier.id}"
-                        type="text"
-                        class="form-input subtier-input"
-                        bind:value={tier.name}
-                        placeholder="Sub-tier name"
-                      />
-                    </div>
-
-                    <div class="subtier-field subtier-type-field">
-                      <div class="subtier-type-wrapper">
-                        <select
-                          id="subtier-type-{tier.id}"
-                          class="form-input subtier-type-select"
-                          value={tier.type}
-                          onchange={(e) =>
-                            handleTypeChange(tier, e.target.value)}
-                        >
-                          <option value={SUB_TIER_TYPE_SENTENCE}>
-                            Sentence (Translation)
-                          </option>
-                          <option value={SUB_TIER_TYPE_WORD}>
-                            Word / Morpheme (POS, Gloss)
-                          </option>
-                        </select>
-                        <button
-                          type="button"
-                          class="btn-inline-help"
-                          onclick={() => (showSubTierHelp = !showSubTierHelp)}
-                          title="Click to learn about Sentence vs. Word/Morpheme tiers"
-                        >
-                          <i class="fa-solid fa-circle-question"></i>
-                        </button>
-                      </div>
-                    </div>
-
-                    <div class="subtier-field subtier-annotator-field">
-                      <input
-                        id="subtier-annotator-{tier.id}"
-                        type="text"
-                        class="form-input subtier-input"
-                        bind:value={tier.annotator}
-                        placeholder="Annotator"
-                        title="Annotator name for this sub-tier in ELAN export"
-                      />
-                    </div>
-
-                    <div class="subtier-actions">
-                      <button
-                        type="button"
-                        class="btn-delete-speaker"
-                        onclick={() => handleRemoveSubTier(tier.id)}
-                        title="Remove {tier.name || 'sub-tier'}"
-                      >
-                        <i class="fa-solid fa-trash-can"></i>
-                      </button>
-                    </div>
+            {#if showSubTierHelp}
+              <div class="subtier-help-panel">
+                <div class="help-points">
+                  <div class="help-point">
+                    <strong>Undivided:</strong> Single full-utterance text field
+                    per segment for translations, comments, or notes.
                   </div>
+                  <div class="help-point">
+                    <strong>Divided:</strong> Token-level annotation split by
+                    whitespace and custom <strong>Splitters</strong> (e.g.
+                    <code>-</code>, <code>=</code>), with autocomplete
+                    <strong>Tags</strong>
+                    and optional <strong>Auto-Tag Field</strong> lookup from the
+                    Active Lexicons.
+                  </div>
+                </div>
+              </div>
+            {/if}
 
-                  {#if tier.type === SUB_TIER_TYPE_WORD}
-                    <div class="subtier-word-panel">
-                      <div class="word-panel-info-row">
-                        <i class="fa-solid fa-circle-info"></i>
-                        <span>
-                          Word/Morpheme tier: split words by splitters, autocomplete tags, and map to the active lexicon.
-                        </span>
-                        <button
-                          type="button"
-                          class="btn-help-inline-link"
-                          onclick={() => (showSubTierHelp = true)}
-                        >
-                          Learn more
-                        </button>
-                      </div>
-
-                      <div class="word-tier-meta-row">
-                        <div class="splitters-col">
-                          <label
-                            for="splitters-input-{tier.id}"
-                            class="sub-label compact-sub-label"
-                            title="Characters that divide utterances (space is always a splitter)"
+            {#if subTiers.length === 0}
+              <p class="subtier-empty">
+                No sub-tiers yet. Each segment shows a single transcription
+                column.
+              </p>
+            {:else}
+              <div class="settings-table-wrap">
+                <table class="settings-data-table subtiers-table">
+                  <thead>
+                    <tr>
+                      <th class="col-sub-id">#</th>
+                      <th class="col-sub-name">Sub-tier Name</th>
+                      <th class="col-sub-type">Type</th>
+                      <th class="col-sub-annotator">Annotator</th>
+                      <th class="col-sub-config">Config</th>
+                      <th class="col-sub-actions">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {#each subTiers as tier (tier.id)}
+                      {@const isWordTier = tier.type === SUB_TIER_TYPE_WORD}
+                      {@const isExpanded = Boolean(
+                        expandedWordTierIds[tier.id],
+                      )}
+                      <tr
+                        class="subtier-row {isWordTier
+                          ? 'subtier-row-word'
+                          : 'subtier-row-sentence'} {isExpanded
+                          ? 'is-expanded'
+                          : ''}"
+                      >
+                        <td class="col-sub-id">
+                          <span
+                            class="subtier-index"
+                            title="Sub-tier #{tier.id}"
                           >
-                            <i class="fa-solid fa-scissors"></i>
-                            Splitters
-                          </label>
+                            #{tier.id}
+                          </span>
+                        </td>
+                        <td class="col-sub-name">
                           <input
-                            id="splitters-input-{tier.id}"
+                            id="subtier-name-{tier.id}"
                             type="text"
-                            class="form-input splitters-input"
-                            placeholder="e.g. - = ~"
-                            bind:value={tier.splitters}
+                            class="form-input subtier-input"
+                            bind:value={tier.name}
+                            placeholder="Sub-tier name"
                           />
-                        </div>
-
-                        <div class="lexfield-col">
-                          <div class="lexfield-header-inline">
-                            <label
-                              for="lexfield-select-{tier.id}"
-                              class="sub-label compact-sub-label"
-                              title="Field in active lexicon to grab values from during Auto Tagging"
-                            >
-                              <i class="fa-solid fa-database"></i>
-                              Auto-Tag Field
-                            </label>
-                            {#if selectedLexicon}
-                              <span
-                                class="lexfield-active-badge-sm"
-                                title="Active Lexicon: {selectedLexicon.title || selectedLexicon.name}"
-                              >
-                                {selectedLexicon.title || selectedLexicon.name || 'Active'}
-                              </span>
-                            {/if}
-                          </div>
-                          {#if selectedLexicon}
-                            <select
-                              id="lexfield-select-{tier.id}"
-                              class="form-input lexfield-select-sm"
-                              bind:value={tier.lexiconField}
-                            >
-                              <option value="">None (Disabled)</option>
-                              {#each availableLexiconFields as field (field.id)}
-                                <option value={field.name}>{field.name}</option>
-                              {/each}
-                              {#if tier.lexiconField && !availableLexiconFields.some((f) => f.name === tier.lexiconField)}
-                                <option value={tier.lexiconField}>
-                                  {tier.lexiconField} (Custom)
-                                </option>
-                              {/if}
-                            </select>
-                          {:else}
-                            <div class="lexfield-no-lexicon-sm" title="Select an Active Lexicon above to enable Auto Tagging">
-                              <i class="fa-solid fa-circle-info"></i>
-                              <span>No active lexicon selected</span>
-                            </div>
-                          {/if}
-                        </div>
-                      </div>
-
-                      <div class="lexicon-header">
-                        <div class="lexicon-title-area">
-                          <span class="lexicon-title">
-                            <i class="fa-solid fa-tags"></i>
-                            Tags
-                          </span>
-                          <span class="lexicon-badge">
-                            {tier.lexicon.length}
-                          </span>
-                        </div>
-                        <div class="lexicon-presets-bar">
-                          <span class="preset-label">Presets:</span>
-                          <button
-                            type="button"
-                            class="btn-preset"
-                            onclick={() =>
-                              applyPresetLexicon(tier, COMMON_POS_LEXICON)}
-                            title="Insert common POS tags (prop, n, v, adj, adv...)"
+                        </td>
+                        <td class="col-sub-type">
+                          <select
+                            id="subtier-type-{tier.id}"
+                            class="form-input subtier-type-select"
+                            value={tier.type}
+                            onchange={(e) =>
+                              handleTypeChange(tier, e.target.value)}
                           >
-                            Common POS
-                          </button>
-                          <button
-                            type="button"
-                            class="btn-preset"
-                            onclick={() =>
-                              applyPresetLexicon(tier, UNIVERSAL_POS_LEXICON)}
-                            title="Universal Dependencies POS (NOUN, VERB, ADJ...)"
-                          >
-                            Universal POS
-                          </button>
-                          <button
-                            type="button"
-                            class="btn-preset"
-                            onclick={() =>
-                              applyPresetLexicon(tier, LEIPZIG_GLOSS_LEXICON)}
-                            title="Leipzig Glossing tags (1SG, 2SG, NOM, PAST...)"
-                          >
-                            Leipzig Gloss
-                          </button>
-                          {#if tier.lexicon.length > 0}
+                            <option value={SUB_TIER_TYPE_SENTENCE}>
+                              Undivided
+                            </option>
+                            <option value={SUB_TIER_TYPE_WORD}>
+                              Divided
+                            </option>
+                          </select>
+                        </td>
+                        <td class="col-sub-annotator">
+                          <input
+                            id="subtier-annotator-{tier.id}"
+                            type="text"
+                            class="form-input subtier-input"
+                            bind:value={tier.annotator}
+                            placeholder="Annotator"
+                            title="Annotator name for this sub-tier in ELAN export"
+                          />
+                        </td>
+                        <td class="col-sub-config">
+                          {#if isWordTier}
                             <button
                               type="button"
-                              class="btn-preset btn-preset-clear"
-                              onclick={() => applyPresetLexicon(tier, [])}
-                              title="Clear all tags"
+                              class="btn-word-config-toggle {isExpanded
+                                ? 'expanded'
+                                : ''}"
+                              onclick={() => toggleWordTierConfig(tier.id)}
+                              title={isExpanded
+                                ? 'Hide divided tier configuration'
+                                : 'Configure splitters, auto-tag field, and tags'}
                             >
-                              Clear
-                            </button>
-                          {/if}
-                        </div>
-                      </div>
-
-                      <div class="lexicon-input-group">
-                        <input
-                          id="lexicon-input-{tier.id}"
-                          type="text"
-                          class="form-input lexicon-input-sm"
-                          placeholder="Comma/space-separated tags, optional label in braces: n {'{'}Noun{'}'}, v {'{'}Verb{'}'}"
-                          value={tier.lexiconInput}
-                          oninput={(e) =>
-                            handleLexiconInput(tier, e.target.value)}
-                        />
-                      </div>
-
-                      {#if tier.lexicon.length > 0}
-                        <div class="lexicon-chips-wrapper">
-                          <div class="lexicon-chips-list">
-                            {#each tier.lexicon as tag}
-                              {@const tagVal =
-                                typeof tag === 'object' && tag !== null
-                                  ? tag.value
-                                  : tag}
-                              {@const tagLabel =
-                                typeof tag === 'object' && tag !== null
-                                  ? tag.label
-                                  : ''}
-                              <span
-                                class="lexicon-chip"
-                                title={tagLabel
-                                  ? `${tagVal}: ${tagLabel}`
-                                  : tagVal}
-                              >
-                                <span class="lexicon-chip-text">{tagVal}</span>
-                                {#if tagLabel}
-                                  <span class="lexicon-chip-label"
-                                    >{tagLabel}</span
-                                  >
-                                {/if}
-                                <button
-                                  type="button"
-                                  class="btn-chip-remove"
-                                  onclick={() => removeLexiconItem(tier, tag)}
-                                  title="Remove '{tagVal}'"
+                              <span>{tier.lexicon.length} tags</span>
+                              {#if tier.lexiconField}
+                                <span class="config-summary-sep">&bull;</span>
+                                <span class="config-summary-field"
+                                  >{tier.lexiconField}</span
                                 >
-                                  &times;
-                                </button>
-                              </span>
-                            {/each}
-                          </div>
-                        </div>
+                              {/if}
+                              <i
+                                class="fa-solid fa-chevron-{isExpanded
+                                  ? 'up'
+                                  : 'down'} config-caret"
+                              ></i>
+                            </button>
+                          {:else}
+                            <span
+                              class="sentence-config-placeholder"
+                              title="Undivided tier (single text per segment)"
+                            >
+                              &mdash;
+                            </span>
+                          {/if}
+                        </td>
+                        <td class="col-sub-actions">
+                          <button
+                            type="button"
+                            class="btn-delete-speaker"
+                            onclick={() => handleRemoveSubTier(tier.id)}
+                            title="Remove {tier.name || 'sub-tier'}"
+                          >
+                            <i class="fa-solid fa-trash-can"></i>
+                          </button>
+                        </td>
+                      </tr>
+
+                      {#if isWordTier && isExpanded}
+                        <tr class="subtier-expanded-row">
+                          <td colspan="6">
+                            <div class="subtier-word-panel">
+                              <div class="word-tier-meta-row">
+                                <div class="splitters-col">
+                                  <label
+                                    for="splitters-input-{tier.id}"
+                                    class="sub-label compact-sub-label"
+                                    title="Space-separated characters or strings that divide utterances (space is always a splitter)"
+                                  >
+                                    Splitters
+                                  </label>
+                                  <input
+                                    id="splitters-input-{tier.id}"
+                                    type="text"
+                                    class="form-input splitters-input"
+                                    placeholder="e.g. - = ((E ))"
+                                    bind:value={tier.splitters}
+                                  />
+                                </div>
+
+                                <div class="lexfield-col">
+                                  <label
+                                    for="lexfield-select-{tier.id}"
+                                    class="sub-label compact-sub-label"
+                                    title="Field in active lexicon to grab values from during Auto Tagging"
+                                  >
+                                    Auto-Tag Field
+                                  </label>
+                                  <select
+                                    id="lexfield-select-{tier.id}"
+                                    class="form-input lexfield-select-sm"
+                                    bind:value={tier.lexiconField}
+                                    disabled={!selectedLexicon}
+                                    title={selectedLexicon
+                                      ? `Active Lexicon: ${selectedLexicon.title || selectedLexicon.name}`
+                                      : 'Select an Active Lexicon in Main Settings to enable Auto Tagging'}
+                                  >
+                                    <option value="">
+                                      {selectedLexicon
+                                        ? 'None (Disabled)'
+                                        : 'No active lexicon'}
+                                    </option>
+                                    {#each availableLexiconFields as field (field.id)}
+                                      <option value={field.name}
+                                        >{field.name}</option
+                                      >
+                                    {/each}
+                                    {#if tier.lexiconField && !availableLexiconFields.some((f) => f.name === tier.lexiconField)}
+                                      <option value={tier.lexiconField}>
+                                        {tier.lexiconField} (Custom)
+                                      </option>
+                                    {/if}
+                                  </select>
+                                </div>
+                              </div>
+
+                              <div class="lexicon-header">
+                                <div class="lexicon-title-area">
+                                  <label
+                                    for="lexicon-input-{tier.id}"
+                                    class="sub-label"
+                                  >
+                                    Tags ({tier.lexicon.length})
+                                  </label>
+                                </div>
+                                <div class="lexicon-presets-bar">
+                                  <span class="preset-label">Presets:</span>
+                                  <button
+                                    type="button"
+                                    class="btn-preset"
+                                    onclick={() =>
+                                      applyPresetLexicon(
+                                        tier,
+                                        COMMON_POS_LEXICON,
+                                      )}
+                                    title="Insert common POS tags (prop, n, v, adj, adv...)"
+                                  >
+                                    Common POS
+                                  </button>
+                                  <button
+                                    type="button"
+                                    class="btn-preset"
+                                    onclick={() =>
+                                      applyPresetLexicon(
+                                        tier,
+                                        UNIVERSAL_POS_LEXICON,
+                                      )}
+                                    title="Universal Dependencies POS (NOUN, VERB, ADJ...)"
+                                  >
+                                    Universal POS
+                                  </button>
+                                  <button
+                                    type="button"
+                                    class="btn-preset"
+                                    onclick={() =>
+                                      applyPresetLexicon(
+                                        tier,
+                                        LEIPZIG_GLOSS_LEXICON,
+                                      )}
+                                    title="Leipzig Glossing tags (1SG, 2SG, NOM, PAST...)"
+                                  >
+                                    Leipzig Gloss
+                                  </button>
+                                  {#if tier.lexicon.length > 0}
+                                    <button
+                                      type="button"
+                                      class="btn-preset btn-preset-clear"
+                                      onclick={() =>
+                                        applyPresetLexicon(tier, [])}
+                                      title="Clear all tags"
+                                    >
+                                      Clear
+                                    </button>
+                                  {/if}
+                                </div>
+                              </div>
+
+                              <div class="lexicon-input-group">
+                                <input
+                                  id="lexicon-input-{tier.id}"
+                                  type="text"
+                                  class="form-input lexicon-input-sm"
+                                  placeholder="Comma/space-separated tags, optional label in braces: n {'{'}Noun{'}'}, v {'{'}Verb{'}'}"
+                                  value={tier.lexiconInput}
+                                  oninput={(e) =>
+                                    handleLexiconInput(tier, e.target.value)}
+                                />
+                              </div>
+
+                              {#if tier.lexicon.length > 0}
+                                <div class="lexicon-chips-wrapper">
+                                  <div class="lexicon-chips-list">
+                                    {#each tier.lexicon as tag}
+                                      {@const tagVal =
+                                        typeof tag === 'object' && tag !== null
+                                          ? tag.value
+                                          : tag}
+                                      {@const tagLabel =
+                                        typeof tag === 'object' && tag !== null
+                                          ? tag.label
+                                          : ''}
+                                      <span
+                                        class="lexicon-chip"
+                                        title={tagLabel
+                                          ? `${tagVal}: ${tagLabel}`
+                                          : tagVal}
+                                      >
+                                        <span class="lexicon-chip-text"
+                                          >{tagVal}</span
+                                        >
+                                        {#if tagLabel}
+                                          <span class="lexicon-chip-label"
+                                            >{tagLabel}</span
+                                          >
+                                        {/if}
+                                        <button
+                                          type="button"
+                                          class="btn-chip-remove"
+                                          onclick={() =>
+                                            removeLexiconItem(tier, tag)}
+                                          title="Remove '{tagVal}'"
+                                        >
+                                          &times;
+                                        </button>
+                                      </span>
+                                    {/each}
+                                  </div>
+                                </div>
+                              {/if}
+                            </div>
+                          </td>
+                        </tr>
                       {/if}
-                    </div>
-                  {:else}
-                    <div class="subtier-sentence-note">
-                      <i class="fa-solid fa-align-left"></i>
-                      <span>
-                        Sentence-level tier (single text per segment).
-                      </span>
-                    </div>
-                  {/if}
-                </div>
-              {/each}
-            </div>
-          {/if}
-        </div>
+                    {/each}
+                  </tbody>
+                </table>
+              </div>
+            {/if}
+          </div>
         {:else if activeTab === 'validation'}
-        <!-- Validation Rules Section -->
-        <div class="form-section">
-          <div class="section-header-row">
-            <div class="section-title-wrap">
-              <h4 class="section-title">
-                Validation Rules
-                {#if activeValidationCount > 0}
-                  <span class="counter-badge validation-active-badge">
-                    {activeValidationCount} active
-                  </span>
-                {:else}
-                  <span class="counter-badge">Off</span>
-                {/if}
-              </h4>
+          <!-- Validation Rules Section -->
+          <div class="form-section">
+            <div class="section-header-row">
               <button
                 type="button"
                 class="btn-help-toggle"
@@ -1051,314 +1106,333 @@
                 <span>Help &amp; Examples</span>
               </button>
             </div>
-          </div>
 
-          {#if showValidationHelp}
-            <div class="subtier-help-panel">
-              <div class="help-panel-header">
-                <div class="help-panel-title">
-                  <i class="fa-solid fa-shield-halved"></i>
-                  <span>Automatic Segment Validation Guide</span>
-                </div>
-                <button
-                  type="button"
-                  class="btn-close-help"
-                  onclick={() => (showValidationHelp = false)}
-                  title="Close help"
-                >
-                  <i class="fa-solid fa-xmark"></i>
-                </button>
-              </div>
-              <div class="help-points">
-                <div class="help-point">
-                  <strong>Paralinguistic Tags:</strong> Flags broken or malformed tags like
-                  <code>&lt; hes&gt;</code>, <code>&lt;  overlap  &gt;</code>,
-                  <code>&lt;Cough &gt;</code>, or <code>hes&gt;</code> and suggests
-                  the clean tag from your Allowed Paralinguistic Tags list.
-                </div>
-                <div class="help-point">
-                  <strong>Punctuation:</strong> Flags invalid apostrophes like
-                  <code>`</code> instead of <code>'</code> (e.g. <code>don`t</code>
-                  &rarr; <code>don't</code>) and multiple consecutive spaces.
-                </div>
-                <div class="help-point">
-                  <strong>Acronyms:</strong> Enforces a consistent acronym style
-                  across segments (e.g. <code>P_N_G_</code> vs. <code>P_N_G</code>
-                  vs. <code>PNG</code>).
-                </div>
-              </div>
-            </div>
-          {/if}
-
-          <div class="validation-rules-card">
-            <div class="validation-toggles-grid">
-              <!-- 1. Paralinguistic Tags Check + Allowed List directly underneath -->
-              <div class="validation-rule-group">
-                <label class="validation-check-item">
-                  <input
-                    type="checkbox"
-                    bind:checked={validateTags}
-                  />
-                  <div class="validation-check-text">
-                    <span class="validation-check-title">
-                      Validate Paralinguistic Tags
-                    </span>
-                    <span class="validation-check-desc">
-                      Catch malformed tags like <code>&lt; hes&gt;</code>, <code>&lt;  overlap  &gt;</code>, <code>&lt;Cough &gt;</code>, <code>hes&gt;</code>
-                    </span>
+            {#if showValidationHelp}
+              <div class="subtier-help-panel">
+                <div class="help-points">
+                  <div class="help-point">
+                    <strong>Paralinguistic Tags:</strong> Flags broken or
+                    malformed tags like
+                    <code>&lt; hes&gt;</code>, <code>&lt; overlap &gt;</code>,
+                    <code>&lt;Cough &gt;</code>, or <code>hes&gt;</code> and suggests
+                    the clean tag from your Allowed Paralinguistic Tags list.
                   </div>
-                </label>
+                  <div class="help-point">
+                    <strong>Punctuation:</strong> Flags invalid apostrophes like
+                    <code>`</code> instead of <code>'</code> (e.g.
+                    <code>don`t</code>
+                    &rarr; <code>don't</code>) and multiple consecutive spaces.
+                  </div>
+                  <div class="help-point">
+                    <strong>Acronyms:</strong> Enforces a consistent acronym
+                    style across segments (e.g. <code>P_N_G_</code> vs.
+                    <code>P_N_G</code>
+                    vs. <code>PNG</code>).
+                  </div>
+                </div>
+              </div>
+            {/if}
 
-                {#if validateTags}
-                  <div class="validation-subpanel">
-                    <div class="lexicon-header">
-                      <div class="lexicon-title-area">
-                        <span class="lexicon-title">
-                          <i class="fa-solid fa-code"></i>
-                          Allowed Paralinguistic Tags
-                        </span>
-                        <span class="lexicon-badge">{allowedTags.length}</span>
-                      </div>
-                      <div class="lexicon-presets-bar">
-                        <button
-                          type="button"
-                          class="btn-preset"
-                          onclick={applyDefaultAllowedTags}
-                          title="Restore default paralinguistic tags (<hes>, <overlap>, <cough>, <laughter>...)"
-                        >
-                          Standard Tags
-                        </button>
-                        {#if allowedTags.length > 0}
+            <div class="validation-rules-card">
+              <div class="validation-toggles-grid">
+                <!-- 1. Paralinguistic Tags Check + Allowed List directly underneath -->
+                <div class="validation-rule-group">
+                  <label
+                    class="validation-check-item"
+                    title="Catch malformed tags like < hes>, <  overlap  >, <Cough >, hes>"
+                  >
+                    <input type="checkbox" bind:checked={validateTags} />
+                    <div class="validation-check-text">
+                      <span class="validation-check-title">
+                        Validate Paralinguistic Tags
+                      </span>
+                    </div>
+                  </label>
+
+                  {#if validateTags}
+                    <div class="validation-subpanel">
+                      <div class="lexicon-header">
+                        <div class="lexicon-title-area">
+                          <span class="lexicon-title">
+                            <i class="fa-solid fa-code"></i>
+                            Allowed Paralinguistic Tags
+                          </span>
+                          <span class="lexicon-badge">{allowedTags.length}</span
+                          >
+                        </div>
+                        <div class="lexicon-presets-bar">
                           <button
                             type="button"
-                            class="btn-preset btn-preset-clear"
-                            onclick={() => handleAllowedTagsInput('')}
-                            title="Clear all allowed tags"
+                            class="btn-preset"
+                            onclick={applyDefaultAllowedTags}
+                            title="Restore default paralinguistic tags (<hes>, <overlap>, <cough>, <laughter>...)"
                           >
-                            Clear
+                            Standard Tags
                           </button>
-                        {/if}
-                      </div>
-                    </div>
-
-                    <input
-                      id="validation-allowed-tags-input"
-                      type="text"
-                      class="form-input lexicon-input-sm"
-                      placeholder="Space or comma-separated tags, e.g. <hes> <overlap> <cough> <laughter>"
-                      value={allowedTagsInput}
-                      oninput={(e) => handleAllowedTagsInput(e.target.value)}
-                    />
-
-                    {#if allowedTags.length > 0}
-                      <div class="lexicon-chips-list">
-                        {#each allowedTags as tag (tag)}
-                          <span class="lexicon-chip">
-                            <span class="lexicon-chip-text">{tag}</span>
+                          {#if allowedTags.length > 0}
                             <button
                               type="button"
-                              class="btn-chip-remove"
-                              onclick={() => removeAllowedTag(tag)}
-                              title="Remove '{tag}'"
+                              class="btn-preset btn-preset-clear"
+                              onclick={() => handleAllowedTagsInput('')}
+                              title="Clear all allowed tags"
                             >
-                              &times;
+                              Clear
                             </button>
-                          </span>
-                        {/each}
+                          {/if}
+                        </div>
                       </div>
-                    {/if}
-                  </div>
-                {/if}
-              </div>
 
-              <!-- 2. Invalid Apostrophe -->
-              <label class="validation-check-item">
-                <input
-                  type="checkbox"
-                  bind:checked={fixApostropheBacktick}
-                />
-                <div class="validation-check-text">
-                  <span class="validation-check-title">
-                    Invalid Apostrophe (<code>`</code> &rarr; <code>'</code>)
-                  </span>
-                  <span class="validation-check-desc">
-                    Flag backtick <code>`</code> or <code>´</code> used in place of <code>'</code>
-                  </span>
+                      <input
+                        id="validation-allowed-tags-input"
+                        type="text"
+                        class="form-input lexicon-input-sm"
+                        placeholder="Space or comma-separated tags, e.g. <hes> <overlap> <cough> <laughter>"
+                        value={allowedTagsInput}
+                        oninput={(e) => handleAllowedTagsInput(e.target.value)}
+                      />
+
+                      {#if allowedTags.length > 0}
+                        <div class="lexicon-chips-list">
+                          {#each allowedTags as tag (tag)}
+                            <span class="lexicon-chip">
+                              <span class="lexicon-chip-text">{tag}</span>
+                              <button
+                                type="button"
+                                class="btn-chip-remove"
+                                onclick={() => removeAllowedTag(tag)}
+                                title="Remove '{tag}'"
+                              >
+                                &times;
+                              </button>
+                            </span>
+                          {/each}
+                        </div>
+                      {/if}
+                    </div>
+                  {/if}
                 </div>
-              </label>
 
-              <!-- 3. Multiple Spaces -->
-              <label class="validation-check-item">
-                <input
-                  type="checkbox"
-                  bind:checked={fixDoubleSpaces}
-                />
-                <div class="validation-check-text">
-                  <span class="validation-check-title">
-                    Multiple Spaces
-                  </span>
-                  <span class="validation-check-desc">
-                    Flag 2+ consecutive spaces inside a segment
-                  </span>
-                </div>
-              </label>
-
-              <!-- 4. Acronym Format -->
-              <div class="validation-rule-group">
-                <label class="validation-check-item">
-                  <input
-                    type="checkbox"
-                    bind:checked={validateAcronyms}
-                  />
+                <!-- 2. Invalid Apostrophe -->
+                <label
+                  class="validation-check-item"
+                  title="Flag backtick ` or ´ used in place of '"
+                >
+                  <input type="checkbox" bind:checked={fixApostropheBacktick} />
                   <div class="validation-check-text">
                     <span class="validation-check-title">
-                      Acronym Format
-                    </span>
-                    <span class="validation-check-desc">
-                      Standardize acronyms across segments (e.g. <code>P_N_G_</code>, <code>P_N_G</code>, <code>PNG</code>)
+                      Invalid Apostrophe (<code>`</code> &rarr; <code>'</code>)
                     </span>
                   </div>
                 </label>
 
-                {#if validateAcronyms}
-                  <div class="validation-subpanel">
-                    <div class="lexicon-header">
-                      <label
-                        for="project-settings-acronym-mode"
-                        class="lexicon-title"
-                      >
-                        <i class="fa-solid fa-font"></i>
-                        Preferred Acronym Style
-                      </label>
-                    </div>
-                    <select
-                      id="project-settings-acronym-mode"
-                      class="form-input"
-                      bind:value={acronymMode}
-                    >
-                      <option value={ACRONYM_MODES.PLAIN}>
-                        Plain Uppercase: PNG (flags P_N_G, P_N_G_)
-                      </option>
-                      <option value={ACRONYM_MODES.UNDERSCORE}>
-                        Underscored: P_N_G (flags P_N_G_, PNG)
-                      </option>
-                      <option value={ACRONYM_MODES.TRAILING}>
-                        Trailing Underscore: P_N_G_ (flags P_N_G, PNG)
-                      </option>
-                    </select>
-                  </div>
-                {/if}
-              </div>
-
-              <!-- 5. Custom Validation Rules -->
-              <div class="validation-rule-group">
-                <label class="validation-check-item">
-                  <input
-                    type="checkbox"
-                    bind:checked={validateCustomRules}
-                  />
+                <!-- 3. Multiple Spaces -->
+                <label
+                  class="validation-check-item"
+                  title="Flag 2+ consecutive spaces inside a segment"
+                >
+                  <input type="checkbox" bind:checked={fixDoubleSpaces} />
                   <div class="validation-check-text">
                     <span class="validation-check-title">
-                      Custom Validation Rules
-                    </span>
-                    <span class="validation-check-desc">
-                      Flag specific strings or regex patterns and suggest replacements
+                      Multiple Spaces
                     </span>
                   </div>
                 </label>
 
-                {#if validateCustomRules}
-                  <div class="validation-subpanel">
-                    <div class="lexicon-header">
-                      <div class="lexicon-title-area">
-                        <span class="lexicon-title">
-                          <i class="fa-solid fa-list-check"></i>
-                          Custom Rules
-                        </span>
-                        <span class="lexicon-badge">{customRules.length}</span>
+                <!-- 4. Acronym Format -->
+                <div class="validation-rule-group">
+                  <label
+                    class="validation-check-item"
+                    title="Standardize acronyms across segments (e.g. P_N_G_, P_N_G, PNG)"
+                  >
+                    <input type="checkbox" bind:checked={validateAcronyms} />
+                    <div class="validation-check-text">
+                      <span class="validation-check-title">
+                        Acronym Format
+                      </span>
+                    </div>
+                  </label>
+
+                  {#if validateAcronyms}
+                    <div class="validation-subpanel">
+                      <div class="lexicon-header">
+                        <label
+                          for="project-settings-acronym-mode"
+                          class="lexicon-title"
+                        >
+                          <i class="fa-solid fa-font"></i>
+                          Preferred Acronym Style
+                        </label>
+                      </div>
+                      <select
+                        id="project-settings-acronym-mode"
+                        class="form-input"
+                        bind:value={acronymMode}
+                      >
+                        <option value={ACRONYM_MODES.PLAIN}>
+                          Plain Uppercase: PNG (flags P_N_G, P_N_G_)
+                        </option>
+                        <option value={ACRONYM_MODES.UNDERSCORE}>
+                          Underscored: P_N_G (flags P_N_G_, PNG)
+                        </option>
+                        <option value={ACRONYM_MODES.TRAILING}>
+                          Trailing Underscore: P_N_G_ (flags P_N_G, PNG)
+                        </option>
+                      </select>
+                    </div>
+                  {/if}
+                </div>
+
+                <!-- 5. Custom Validation Rules -->
+                <div class="validation-rule-group">
+                  <label
+                    class="validation-check-item"
+                    title="Flag specific strings or regex patterns and suggest replacements"
+                  >
+                    <input type="checkbox" bind:checked={validateCustomRules} />
+                    <div class="validation-check-text">
+                      <span class="validation-check-title">
+                        Custom Validation Rules
+                      </span>
+                    </div>
+                  </label>
+
+                  {#if validateCustomRules}
+                    <div class="validation-subpanel">
+                      <div class="settings-table-wrap">
+                        <table class="settings-data-table custom-rules-table">
+                          <thead>
+                            <tr>
+                              <th class="col-rule-active">Active</th>
+                              <th class="col-rule-find">Pattern</th>
+                              <th class="col-rule-replace">Replacement</th>
+                              <th class="col-rule-type">Type</th>
+                              <th class="col-rule-actions">Actions</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {#each customRules as rule (rule.id)}
+                              <tr>
+                                <td class="col-rule-active">
+                                  <input
+                                    type="checkbox"
+                                    bind:checked={rule.enabled}
+                                    title="Enable/disable rule"
+                                  />
+                                </td>
+                                <td class="col-rule-find">
+                                  <input
+                                    type="text"
+                                    class="form-input custom-rule-cell-input rule-find-input"
+                                    bind:value={rule.find}
+                                    placeholder="Invalid text or pattern..."
+                                  />
+                                </td>
+                                <td class="col-rule-replace">
+                                  <input
+                                    type="text"
+                                    class="form-input custom-rule-cell-input rule-replace-input"
+                                    bind:value={rule.replace}
+                                    placeholder="(delete)"
+                                  />
+                                </td>
+                                <td class="col-rule-type">
+                                  <button
+                                    type="button"
+                                    class="btn-rule-type-pill {rule.isRegex
+                                      ? 'is-regex'
+                                      : ''}"
+                                    onclick={() =>
+                                      (rule.isRegex = !rule.isRegex)}
+                                    title="Toggle between Literal Text and Regular Expression"
+                                  >
+                                    {rule.isRegex ? 'Regex' : 'Text'}
+                                  </button>
+                                </td>
+                                <td class="col-rule-actions">
+                                  <button
+                                    type="button"
+                                    class="btn-delete-speaker"
+                                    onclick={() =>
+                                      handleRemoveCustomValidationRule(rule.id)}
+                                    title="Remove custom rule"
+                                  >
+                                    <i class="fa-solid fa-trash-can"></i>
+                                  </button>
+                                </td>
+                              </tr>
+                            {/each}
+                            <tr class="custom-rule-new-row">
+                              <td class="col-rule-active">
+                                <span
+                                  class="new-rule-plus-indicator"
+                                  title="New rule"
+                                >
+                                  <i class="fa-solid fa-plus"></i>
+                                </span>
+                              </td>
+                              <td class="col-rule-find">
+                                <input
+                                  type="text"
+                                  class="form-input custom-rule-cell-input"
+                                  placeholder="New pattern to flag..."
+                                  bind:value={newRuleFind}
+                                  onkeydown={(e) => {
+                                    if (e.key === 'Enter') {
+                                      e.preventDefault();
+                                      handleAddCustomValidationRule();
+                                    }
+                                  }}
+                                />
+                              </td>
+                              <td class="col-rule-replace">
+                                <input
+                                  type="text"
+                                  class="form-input custom-rule-cell-input"
+                                  placeholder="Suggested replacement..."
+                                  bind:value={newRuleReplace}
+                                  onkeydown={(e) => {
+                                    if (e.key === 'Enter') {
+                                      e.preventDefault();
+                                      handleAddCustomValidationRule();
+                                    }
+                                  }}
+                                />
+                              </td>
+                              <td class="col-rule-type">
+                                <button
+                                  type="button"
+                                  class="btn-rule-type-pill {newRuleIsRegex
+                                    ? 'is-regex'
+                                    : ''}"
+                                  onclick={() =>
+                                    (newRuleIsRegex = !newRuleIsRegex)}
+                                  title="Toggle between Literal Text and Regular Expression"
+                                >
+                                  {newRuleIsRegex ? 'Regex' : 'Text'}
+                                </button>
+                              </td>
+                              <td class="col-rule-actions">
+                                <button
+                                  type="button"
+                                  class="btn-add-speaker btn-add-rule-inline"
+                                  disabled={!newRuleFind.trim()}
+                                  onclick={handleAddCustomValidationRule}
+                                  title="Add validation rule"
+                                >
+                                  <i class="fa-solid fa-plus"></i>
+                                  <span>Add</span>
+                                </button>
+                              </td>
+                            </tr>
+                          </tbody>
+                        </table>
                       </div>
                     </div>
-
-                    <div class="custom-rule-add-row">
-                      <input
-                        type="text"
-                        class="form-input custom-rule-input"
-                        placeholder="Invalid text or pattern..."
-                        bind:value={newRuleFind}
-                        onkeydown={(e) => {
-                          if (e.key === 'Enter') {
-                            e.preventDefault();
-                            handleAddCustomValidationRule();
-                          }
-                        }}
-                      />
-                      <span class="custom-rule-arrow">&rarr;</span>
-                      <input
-                        type="text"
-                        class="form-input custom-rule-input"
-                        placeholder="Suggested replacement..."
-                        bind:value={newRuleReplace}
-                        onkeydown={(e) => {
-                          if (e.key === 'Enter') {
-                            e.preventDefault();
-                            handleAddCustomValidationRule();
-                          }
-                        }}
-                      />
-                      <label
-                        class="custom-rule-regex-toggle"
-                        title="Treat pattern as a Regular Expression"
-                      >
-                        <input type="checkbox" bind:checked={newRuleIsRegex} />
-                        <span>Regex</span>
-                      </label>
-                      <button
-                        type="button"
-                        class="btn-add-speaker"
-                        disabled={!newRuleFind.trim()}
-                        onclick={handleAddCustomValidationRule}
-                      >
-                        <i class="fa-solid fa-plus"></i>
-                        <span>Add Rule</span>
-                      </button>
-                    </div>
-
-                    {#if customRules.length > 0}
-                      <div class="custom-rules-list">
-                        {#each customRules as rule (rule.id)}
-                          <div class="custom-rule-chip-row">
-                            <input
-                              type="checkbox"
-                              bind:checked={rule.enabled}
-                              title="Enable/disable rule"
-                            />
-                            {#if rule.isRegex}
-                              <span class="rule-regex-badge">Regex</span>
-                            {/if}
-                            <code class="rule-find-code">{rule.find}</code>
-                            <span class="custom-rule-arrow">&rarr;</span>
-                            <code class="rule-replace-code">
-                              {rule.replace || '(delete)'}
-                            </code>
-                            <button
-                              type="button"
-                              class="btn-delete-speaker"
-                              onclick={() =>
-                                handleRemoveCustomValidationRule(rule.id)}
-                              title="Remove custom rule"
-                            >
-                              <i class="fa-solid fa-trash-can"></i>
-                            </button>
-                          </div>
-                        {/each}
-                      </div>
-                    {/if}
-                  </div>
-                {/if}
+                  {/if}
+                </div>
               </div>
             </div>
           </div>
-        </div>
         {/if}
       </div>
 
@@ -1565,24 +1639,14 @@
 
   .general-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-    gap: 10px;
-  }
-
-  .main-tiers-config-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 8px 12px;
-    margin-bottom: 6px;
-    padding: 8px 10px;
-    background: var(--bg-hover, #f8fafc);
-    border: 1px solid var(--border-color, #e2e8f0);
-    border-radius: 6px;
   }
 
-  :global([data-theme='dark']) .main-tiers-config-grid {
-    background: rgba(255, 255, 255, 0.02);
-    border-color: #334155;
+  @media (max-width: 560px) {
+    .general-grid {
+      grid-template-columns: 1fr;
+    }
   }
 
   .section-header-row {
@@ -1592,35 +1656,14 @@
     gap: 8px;
   }
 
-  .section-title-wrap {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    flex-wrap: wrap;
-  }
-
   .section-title {
     margin: 0;
-    font-size: 0.86rem;
+    font-size: 0.82rem;
     font-weight: 700;
     color: var(--text-heading, #0f172a);
     display: flex;
     align-items: center;
     gap: 6px;
-  }
-
-  .counter-badge {
-    font-size: 0.7rem;
-    font-weight: 600;
-    color: var(--text-muted, #64748b);
-    background: var(--bg-muted, #e2e8f0);
-    padding: 1px 6px;
-    border-radius: 10px;
-  }
-
-  :global([data-theme='dark']) .counter-badge {
-    background: #334155;
-    color: #cbd5e1;
   }
 
   .btn-help-toggle {
@@ -1660,11 +1703,11 @@
   .subtier-help-panel {
     display: flex;
     flex-direction: column;
-    gap: 8px;
-    padding: 10px 12px;
+    gap: 6px;
+    padding: 8px 10px;
     background: var(--bg-hover, #f8fafc);
     border: 1px solid var(--border-color, #cbd5e1);
-    border-radius: 8px;
+    border-radius: 6px;
     animation: fadeInHelp 0.15s ease-out;
   }
 
@@ -1684,117 +1727,15 @@
     }
   }
 
-  .help-panel-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    border-bottom: 1px solid var(--border-color, #e2e8f0);
-    padding-bottom: 6px;
-  }
-
-  :global([data-theme='dark']) .help-panel-header {
-    border-bottom-color: #334155;
-  }
-
-  .help-panel-title {
-    font-size: 0.8rem;
-    font-weight: 700;
-    color: var(--text-heading, #0f172a);
-    display: flex;
-    align-items: center;
-    gap: 6px;
-  }
-
-  .btn-close-help {
-    background: transparent;
-    border: none;
-    color: var(--text-muted, #94a3b8);
-    font-size: 1rem;
-    cursor: pointer;
-    padding: 0 4px;
-    line-height: 1;
-  }
-
-  .btn-close-help:hover {
-    color: var(--text-heading, #0f172a);
-  }
-
-  .help-cards-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 10px;
-  }
-
-  @media (max-width: 600px) {
-    .help-cards-grid {
-      grid-template-columns: 1fr;
-    }
-  }
-
-  .help-type-card {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    padding: 8px 10px;
-    border-radius: 6px;
-    background: var(--bg-card, #ffffff);
-    border: 1px solid var(--border-color, #e2e8f0);
-    font-size: 0.74rem;
-    line-height: 1.4;
-  }
-
-  :global([data-theme='dark']) .help-type-card {
-    background: #1e293b;
-    border-color: #334155;
-  }
-
-  .help-card-sentence {
-    border-left: 3px solid #10b981;
-  }
-
-  .help-card-word {
-    border-left: 3px solid var(--primary-color, #0284c7);
-  }
-
-  .help-type-badge {
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    font-weight: 700;
-    font-size: 0.75rem;
-  }
-
-  .sentence-badge {
-    color: #059669;
-  }
-
-  :global([data-theme='dark']) .sentence-badge {
-    color: #34d399;
-  }
-
-  .word-badge {
-    color: var(--primary-color, #0284c7);
-  }
-
-  :global([data-theme='dark']) .word-badge {
-    color: #38bdf8;
-  }
-
-  .help-type-desc {
-    margin: 0;
-    color: var(--text-color, #334155);
-    font-size: 0.73rem;
-  }
-
   .help-points {
     display: flex;
     flex-direction: column;
     gap: 4px;
-    padding: 4px 0;
   }
 
   .help-point {
-    font-size: 0.71rem;
+    font-size: 0.72rem;
+    line-height: 1.4;
     color: var(--text-color, #334155);
   }
 
@@ -1816,31 +1757,6 @@
 
   :global([data-theme='dark']) .help-point code {
     background: rgba(255, 255, 255, 0.1);
-  }
-
-  .help-elan-note {
-    margin-top: auto;
-    display: flex;
-    align-items: center;
-    gap: 5px;
-    font-size: 0.68rem;
-    color: var(--text-muted, #64748b);
-    border-top: 1px dashed var(--border-color, #e2e8f0);
-    padding-top: 5px;
-  }
-
-  :global([data-theme='dark']) .help-elan-note {
-    border-top-color: #334155;
-  }
-
-  .help-elan-note code {
-    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
-      monospace;
-    color: var(--text-color, #334155);
-  }
-
-  :global([data-theme='dark']) .help-elan-note code {
-    color: #cbd5e1;
   }
 
   .form-group {
@@ -1932,9 +1848,8 @@
     letter-spacing: 0.03em;
   }
 
-  .spk-th-id {
-    width: 24px;
-    text-align: center;
+  .spk-th-color {
+    width: 118px;
   }
 
   .spk-th-name {
@@ -1942,7 +1857,13 @@
   }
 
   .spk-th-init {
-    width: 100px;
+    width: 64px;
+    text-align: center;
+  }
+
+  .spk-th-segs {
+    width: 68px;
+    text-align: center;
   }
 
   .spk-th-act {
@@ -1965,20 +1886,51 @@
     background: rgba(255, 255, 255, 0.03);
   }
 
-  .speaker-color-indicator {
-    width: 22px;
-    height: 22px;
-    border-radius: 4px;
-    display: flex;
+  .speaker-color-picker {
+    display: inline-flex;
     align-items: center;
-    justify-content: center;
+    gap: 4px;
+    width: 118px;
     flex-shrink: 0;
   }
 
-  .speaker-id-badge {
+  .speaker-color-swatch {
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    border: 2px solid transparent;
+    background: var(--swatch-color);
     color: #ffffff;
-    font-size: 0.68rem;
-    font-weight: 700;
+    font-size: 0.58rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    cursor: pointer;
+    transition:
+      transform 0.12s ease,
+      opacity 0.12s ease,
+      box-shadow 0.12s ease;
+    flex-shrink: 0;
+  }
+
+  .speaker-color-swatch:hover:not(:disabled) {
+    transform: scale(1.12);
+  }
+
+  .speaker-color-swatch.selected {
+    border-color: #ffffff;
+    box-shadow: 0 0 0 2px var(--swatch-color);
+  }
+
+  :global([data-theme='dark']) .speaker-color-swatch.selected {
+    border-color: #0f172a;
+  }
+
+  .speaker-color-swatch:disabled {
+    opacity: 0.22;
+    cursor: not-allowed;
+    transform: none;
   }
 
   .speaker-name-field {
@@ -1987,35 +1939,45 @@
   }
 
   .speaker-initials-field {
-    width: 100px;
+    width: 64px;
     flex-shrink: 0;
-  }
-
-  .initials-input-wrapper {
     display: flex;
-    align-items: center;
-    gap: 4px;
+    justify-content: center;
   }
 
   .initials-input {
-    width: 44px;
+    width: 52px;
     text-align: center;
     font-weight: 700;
     text-transform: uppercase;
     padding: 2px 4px;
   }
 
-  .initials-preview {
+  .speaker-segs-field {
+    width: 68px;
+    flex-shrink: 0;
+    display: flex;
+    justify-content: center;
+  }
+
+  .speaker-seg-count {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    padding: 1px 4px;
-    border-radius: 3px;
-    font-size: 0.68rem;
-    font-weight: 700;
-    min-width: 24px;
+    min-width: 28px;
     height: 22px;
-    box-sizing: border-box;
+    padding: 0 7px;
+    border-radius: 10px;
+    background: rgba(15, 23, 42, 0.06);
+    color: var(--text-color, #334155);
+    font-size: 0.72rem;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+  }
+
+  :global([data-theme='dark']) .speaker-seg-count {
+    background: rgba(255, 255, 255, 0.08);
+    color: #e2e8f0;
   }
 
   .speaker-actions {
@@ -2047,87 +2009,108 @@
     background: rgba(239, 68, 68, 0.2);
   }
 
-  .subtiers-list {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-  }
-
-  .subtiers-header-bar {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 2px 9px;
-    font-size: 0.68rem;
-    font-weight: 700;
-    color: var(--text-muted, #94a3b8);
-    text-transform: uppercase;
-    letter-spacing: 0.03em;
-  }
-
-  .sub-th-id {
-    width: 24px;
-    text-align: center;
-    flex-shrink: 0;
-  }
-
-  .sub-th-name {
-    flex: 1.2;
-    min-width: 0;
-  }
-
-  .sub-th-type {
-    flex: 1.1;
-    min-width: 0;
-  }
-
-  .sub-th-annotator {
-    flex: 1;
-    min-width: 0;
-  }
-
-  .sub-th-act {
-    width: 24px;
-    flex-shrink: 0;
-  }
-
-  .subtier-card {
-    display: flex;
-    flex-direction: column;
-    gap: 5px;
-    padding: 6px 9px;
+  .settings-table-wrap {
     border: 1px solid var(--border-color, #e2e8f0);
     border-radius: 6px;
-    background: var(--bg-hover, #f8fafc);
+    overflow: hidden;
+    background: var(--bg-card, #ffffff);
   }
 
-  :global([data-theme='dark']) .subtier-card {
-    background: rgba(255, 255, 255, 0.02);
+  :global([data-theme='dark']) .settings-table-wrap {
+    background: #0f172a;
     border-color: #334155;
   }
 
-  .subtier-card-word {
-    border-left: 3px solid var(--primary-color, #0284c7);
-  }
-
-  .subtier-card-sentence {
-    border-left: 3px solid #10b981;
-  }
-
-  .subtier-card-top {
-    display: flex;
-    align-items: center;
-    gap: 6px;
+  .settings-data-table {
     width: 100%;
+    border-collapse: collapse;
+    font-size: 0.76rem;
+  }
+
+  .settings-data-table thead th {
+    text-align: left;
+    padding: 6px 8px;
+    font-size: 0.68rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    color: var(--text-muted, #64748b);
+    background: var(--bg-hover, #f8fafc);
+    border-bottom: 1px solid var(--border-color, #e2e8f0);
+    white-space: nowrap;
+  }
+
+  :global([data-theme='dark']) .settings-data-table thead th {
+    background: #1e293b;
+    border-bottom-color: #334155;
+    color: #94a3b8;
+  }
+
+  .settings-data-table tbody td {
+    padding: 5px 8px;
+    border-bottom: 1px solid var(--border-color, #e2e8f0);
+    vertical-align: middle;
+  }
+
+  :global([data-theme='dark']) .settings-data-table tbody td {
+    border-bottom-color: #334155;
+  }
+
+  .settings-data-table tbody tr:last-child td {
+    border-bottom: none;
+  }
+
+  .col-sub-id {
+    width: 34px;
+    text-align: center !important;
+  }
+
+  .col-sub-name {
+    width: 28%;
+  }
+
+  .col-sub-type {
+    width: 30%;
+  }
+
+  .col-sub-annotator {
+    width: 18%;
+  }
+
+  .col-sub-config {
+    width: 18%;
+    white-space: nowrap;
+  }
+
+  .col-sub-actions {
+    width: 36px;
+    text-align: center !important;
+  }
+
+  .subtier-row.is-expanded td {
+    border-bottom-color: transparent;
+    background: rgba(2, 132, 199, 0.03);
+  }
+
+  :global([data-theme='dark']) .subtier-row.is-expanded td {
+    background: rgba(56, 189, 248, 0.04);
+  }
+
+  .subtier-expanded-row td {
+    padding: 0 8px 8px 8px !important;
+    background: rgba(2, 132, 199, 0.03);
+  }
+
+  :global([data-theme='dark']) .subtier-expanded-row td {
+    background: rgba(56, 189, 248, 0.04);
   }
 
   .subtier-index {
-    display: flex;
+    display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 24px;
-    height: 24px;
-    flex-shrink: 0;
+    width: 22px;
+    height: 22px;
     border-radius: 4px;
     background: var(--bg-muted, #e2e8f0);
     color: var(--text-muted, #64748b);
@@ -2140,99 +2123,89 @@
     color: #cbd5e1;
   }
 
-  .subtier-name-field {
-    flex: 1.2;
-    min-width: 0;
-  }
-
-  .subtier-type-field {
-    flex: 1.1;
-    min-width: 0;
-  }
-
-  .subtier-annotator-field {
-    flex: 1;
-    min-width: 0;
-  }
-
-  .subtier-type-wrapper {
-    display: flex;
-    align-items: center;
-    gap: 4px;
+  .subtier-input,
+  .subtier-type-select {
+    width: 100%;
   }
 
   .subtier-type-select {
     cursor: pointer;
     font-weight: 600;
-    flex: 1;
-    min-width: 0;
   }
 
-  .btn-inline-help {
-    background: transparent;
-    border: none;
-    color: var(--text-muted, #94a3b8);
-    font-size: 0.85rem;
-    cursor: pointer;
-    padding: 3px;
-    border-radius: 4px;
-    display: flex;
+  .btn-word-config-toggle {
+    display: inline-flex;
     align-items: center;
-    justify-content: center;
-    transition: color 0.15s ease;
+    gap: 5px;
+    height: 28px;
+    padding: 0 8px;
+    border-radius: 5px;
+    border: 1px solid var(--border-color, #cbd5e1);
+    background: var(--bg-hover, #f8fafc);
+    color: var(--text-color, #334155);
+    font-size: 0.71rem;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: all 0.15s ease;
   }
 
-  .btn-inline-help:hover {
+  .btn-word-config-toggle:hover,
+  .btn-word-config-toggle.expanded {
+    background: rgba(2, 132, 199, 0.08);
+    border-color: var(--primary-color, #0284c7);
     color: var(--primary-color, #0284c7);
   }
 
-  :global([data-theme='dark']) .btn-inline-help:hover {
+  :global([data-theme='dark']) .btn-word-config-toggle {
+    background: #1e293b;
+    border-color: #475569;
+    color: #cbd5e1;
+  }
+
+  :global([data-theme='dark']) .btn-word-config-toggle:hover,
+  :global([data-theme='dark']) .btn-word-config-toggle.expanded {
+    background: rgba(56, 189, 248, 0.14);
+    border-color: #38bdf8;
     color: #38bdf8;
+  }
+
+  .config-summary-sep {
+    opacity: 0.55;
+  }
+
+  .config-summary-field {
+    font-weight: 700;
+    max-width: 70px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .config-caret {
+    font-size: 0.62rem;
+    margin-left: 2px;
+    opacity: 0.8;
+  }
+
+  .sentence-config-placeholder {
+    color: var(--text-muted, #94a3b8);
+    font-size: 0.75rem;
+    padding-left: 6px;
   }
 
   .subtier-word-panel {
     display: flex;
     flex-direction: column;
-    gap: 5px;
-    padding: 6px 8px;
-    background: rgba(2, 132, 199, 0.04);
-    border: 1px solid rgba(2, 132, 199, 0.15);
-    border-radius: 5px;
+    gap: 6px;
+    padding: 8px 10px;
+    background: var(--bg-hover, #f8fafc);
+    border: 1px solid var(--border-color, #cbd5e1);
+    border-radius: 6px;
   }
 
   :global([data-theme='dark']) .subtier-word-panel {
-    background: rgba(56, 189, 248, 0.04);
-    border-color: rgba(56, 189, 248, 0.18);
-  }
-
-  .word-panel-info-row {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 0.72rem;
-    color: var(--primary-color, #0284c7);
-    background: rgba(2, 132, 199, 0.08);
-    padding: 3px 6px;
-    border-radius: 4px;
-    line-height: 1.3;
-  }
-
-  :global([data-theme='dark']) .word-panel-info-row {
-    color: #38bdf8;
-    background: rgba(56, 189, 248, 0.08);
-  }
-
-  .btn-help-inline-link {
-    background: transparent;
-    border: none;
-    color: inherit;
-    font-weight: 700;
-    font-size: 0.7rem;
-    text-decoration: underline;
-    cursor: pointer;
-    padding: 0;
-    margin-left: auto;
-    white-space: nowrap;
+    background: #1e293b;
+    border-color: #334155;
   }
 
   .word-tier-meta-row {
@@ -2258,56 +2231,14 @@
     min-width: 0;
   }
 
-  .lexfield-header-inline {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 4px;
-    margin-bottom: 2px;
-  }
-
-  .lexfield-active-badge-sm {
-    font-size: 0.65rem;
-    font-weight: 600;
-    color: #059669;
-    background: rgba(16, 185, 129, 0.12);
-    border: 1px solid rgba(16, 185, 129, 0.25);
-    padding: 0 5px;
-    border-radius: 8px;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    max-width: 140px;
-  }
-
-  :global([data-theme='dark']) .lexfield-active-badge-sm {
-    color: #34d399;
-    background: rgba(16, 185, 129, 0.2);
-    border-color: rgba(52, 211, 153, 0.3);
-  }
-
   .lexfield-select-sm {
     font-weight: 600;
+    width: 100%;
   }
 
-  .lexfield-no-lexicon-sm {
-    display: flex;
-    align-items: center;
-    gap: 5px;
-    font-size: 0.7rem;
-    color: #b45309;
-    background: #fffbeb;
-    border: 1px solid #fde68a;
-    border-radius: 5px;
-    padding: 3px 6px;
-    height: 30px;
-    box-sizing: border-box;
-  }
-
-  :global([data-theme='dark']) .lexfield-no-lexicon-sm {
-    color: #fbbf24;
-    background: rgba(245, 158, 11, 0.12);
-    border-color: rgba(245, 158, 11, 0.25);
+  .lexfield-select-sm:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
   }
 
   .lexicon-header {
@@ -2482,20 +2413,6 @@
     color: #ef4444;
   }
 
-  .subtier-sentence-note {
-    display: flex;
-    align-items: center;
-    gap: 5px;
-    font-size: 0.72rem;
-    color: #059669;
-    padding: 1px 4px;
-    line-height: 1.25;
-  }
-
-  :global([data-theme='dark']) .subtier-sentence-note {
-    color: #34d399;
-  }
-
   .subtier-empty {
     margin: 0;
     font-size: 0.76rem;
@@ -2580,18 +2497,6 @@
     color: #cbd5e1;
   }
 
-  .validation-active-badge {
-    background: rgba(245, 158, 11, 0.16);
-    color: #b45309;
-    border: 1px solid rgba(245, 158, 11, 0.35);
-  }
-
-  :global([data-theme='dark']) .validation-active-badge {
-    background: rgba(245, 158, 11, 0.22);
-    color: #fbbf24;
-    border-color: rgba(251, 191, 36, 0.35);
-  }
-
   .validation-rules-card {
     display: flex;
     flex-direction: column;
@@ -2647,12 +2552,6 @@
     color: var(--text-heading, #0f172a);
   }
 
-  .validation-check-desc {
-    font-size: 0.68rem;
-    color: var(--text-muted, #64748b);
-  }
-
-  .validation-check-desc code,
   .validation-check-title code {
     font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
       monospace;
@@ -2662,7 +2561,6 @@
     border-radius: 3px;
   }
 
-  :global([data-theme='dark']) .validation-check-desc code,
   :global([data-theme='dark']) .validation-check-title code {
     background: rgba(255, 255, 255, 0.1);
   }
@@ -2682,83 +2580,115 @@
     border-color: rgba(56, 189, 248, 0.18);
   }
 
-  .custom-rule-add-row {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    flex-wrap: wrap;
+  .col-rule-active {
+    width: 48px;
+    text-align: center !important;
   }
 
-  .custom-rule-input {
-    flex: 1 1 130px;
-    min-width: 110px;
+  .col-rule-find,
+  .col-rule-replace {
+    width: 36%;
+  }
+
+  .col-rule-type {
+    width: 68px;
+    text-align: center !important;
+  }
+
+  .col-rule-actions {
+    width: 58px;
+    text-align: center !important;
+  }
+
+  .custom-rule-cell-input {
+    width: 100%;
+    height: 27px;
+    padding: 2px 7px;
     font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
       monospace;
-    font-size: 0.75rem;
-  }
-
-  .custom-rule-arrow {
-    color: var(--text-muted, #64748b);
-    font-size: 0.78rem;
-    font-weight: 700;
-  }
-
-  .custom-rule-regex-toggle {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    font-size: 0.72rem;
-    font-weight: 600;
-    color: var(--text-color, #334155);
-    cursor: pointer;
-    user-select: none;
-  }
-
-  .custom-rules-list {
-    display: flex;
-    flex-direction: column;
-    gap: 3px;
-    max-height: 90px;
-    overflow-y: auto;
-  }
-
-  .custom-rule-chip-row {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 2px 6px;
-    background: var(--bg-card, #ffffff);
-    border: 1px solid var(--border-color, #e2e8f0);
-    border-radius: 4px;
     font-size: 0.74rem;
   }
 
-  :global([data-theme='dark']) .custom-rule-chip-row {
-    background: #0f172a;
-    border-color: #334155;
+  .rule-find-input {
+    color: #dc2626;
   }
 
-  .rule-regex-badge {
-    font-size: 0.62rem;
+  :global([data-theme='dark']) .rule-find-input {
+    color: #f87171;
+  }
+
+  .rule-replace-input {
+    color: #059669;
+  }
+
+  :global([data-theme='dark']) .rule-replace-input {
+    color: #34d399;
+  }
+
+  .btn-rule-type-pill {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 46px;
+    height: 22px;
+    padding: 0 6px;
+    border-radius: 4px;
+    border: 1px solid var(--border-color, #cbd5e1);
+    background: var(--bg-hover, #f8fafc);
+    color: var(--text-muted, #64748b);
+    font-size: 0.66rem;
     font-weight: 700;
-    padding: 0 4px;
-    border-radius: 3px;
+    cursor: pointer;
+    transition: all 0.12s ease;
+  }
+
+  .btn-rule-type-pill:hover {
+    border-color: var(--primary-color, #0284c7);
+    color: var(--primary-color, #0284c7);
+  }
+
+  :global([data-theme='dark']) .btn-rule-type-pill {
+    background: #1e293b;
+    border-color: #475569;
+    color: #94a3b8;
+  }
+
+  .btn-rule-type-pill.is-regex {
     background: rgba(124, 58, 237, 0.12);
+    border-color: rgba(124, 58, 237, 0.35);
     color: #7c3aed;
   }
 
-  .rule-find-code {
-    color: #dc2626;
-    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
-      monospace;
-    font-size: 0.72rem;
+  :global([data-theme='dark']) .btn-rule-type-pill.is-regex {
+    background: rgba(139, 92, 246, 0.2);
+    border-color: rgba(167, 139, 250, 0.4);
+    color: #c4b5fd;
   }
 
-  .rule-replace-code {
-    color: #059669;
-    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
-      monospace;
-    font-size: 0.72rem;
-    margin-right: auto;
+  .custom-rule-new-row td {
+    background: var(--bg-hover, #f8fafc);
+  }
+
+  :global([data-theme='dark']) .custom-rule-new-row td {
+    background: rgba(255, 255, 255, 0.02);
+  }
+
+  .new-rule-plus-indicator {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-muted, #94a3b8);
+    font-size: 0.7rem;
+  }
+
+  .btn-add-rule-inline {
+    height: 26px;
+    padding: 0 7px;
+    font-size: 0.7rem;
+  }
+
+  .btn-add-rule-inline:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
   }
 </style>

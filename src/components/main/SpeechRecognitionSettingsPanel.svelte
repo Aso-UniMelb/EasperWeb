@@ -96,36 +96,41 @@
       </div>
     {:else}
       <div class="model-row">
-        <!-- Model Selection & Preload Status -->
+        <!-- Audio Range Selection -->
+        {#if audioState.totalAudioDuration > 0}
+          <div class="range-select-container">
+            <div class="range-head">
+              <span>Range</span>
+              {#if audioState.isIntervalSelected}
+                <button
+                  type="button"
+                  class="btn-reset-interval"
+                  onclick={() => audioState.resetInterval()}
+                  title="Use entire audio recording"
+                >
+                  Reset to full
+                </button>
+              {/if}
+            </div>
+            <IntervalPicker />
+          </div>
+        {/if}
+
+        <!-- Model Selection -->
         <div class="model-select-container">
           <div class="field-label-row">
             <label for="inline-asr-model-select" class="field-label"
               >Active Model</label
             >
-            {#if selectedModel?.language}
-              <span
-                class="lang-tag"
-                title="Target language configured in Model Manager"
-              >
-                <i class="fa-solid fa-language"></i>
-                {selectedModel.language.toUpperCase()}
-              </span>
-            {/if}
-            <span
-              class="lang-tag dtype-tag"
-              title="Active Model Precision: {modelState.modelSource ===
-              'folder'
-                ? modelState.modelDtype?.toUpperCase() || 'FP32'
-                : modelState.activeDevice === 'webgpu'
-                  ? 'Q4 (Hardware-accelerated WebGPU WGSL MatMulNBits)'
-                  : 'Q8 (CPU SIMD)'}"
+            <button
+              type="button"
+              class="panel-tool-btn btn-manage-prominent"
+              onclick={() => modelState.openModelManager()}
+              title="Open Model Manager modal to download, configure or add speech models"
             >
-              {modelState.modelSource === 'folder'
-                ? modelState.modelDtype?.toUpperCase() || 'FP32'
-                : modelState.activeDevice === 'webgpu'
-                  ? 'Q4'
-                  : 'Q8'}
-            </span>
+              <i class="fa-solid fa-sliders"></i>
+              <span>Model Manager</span>
+            </button>
           </div>
 
           <div class="select-with-preload">
@@ -142,54 +147,6 @@
                 </option>
               {/each}
             </select>
-
-            <button
-              type="button"
-              class="btn-preload-pill {modelState.isModelLoaded
-                ? 'loaded'
-                : ''}"
-              onclick={() => modelState.preloadModel(appState.worker)}
-              disabled={appState.isProcessing ||
-                modelState.isModelLoading ||
-                (modelState.modelSource === 'folder' &&
-                  modelState.localFileCount === 0)}
-              title={modelState.isModelLoaded
-                ? 'Model is loaded and ready in memory (click to reload)'
-                : 'Preload model weights into browser memory ahead of transcription'}
-            >
-              {#if modelState.isModelLoading}
-                <i class="fa-solid fa-spinner fa-spin"></i>
-                <span>Loading...</span>
-              {:else if modelState.isModelLoaded}
-                <i class="fa-solid fa-circle-check"></i>
-                <span>Ready</span>
-              {:else}
-                <i class="fa-solid fa-cloud-arrow-down"></i>
-                <span>Preload</span>
-              {/if}
-            </button>
-
-            {#if modelState.isModelLoading}
-              <button
-                type="button"
-                class="btn-cancel-load"
-                onclick={() => transcriptState.stopTranscription(onWorkerReset)}
-                title="Cancel model loading"
-                aria-label="Cancel model loading"
-              >
-                <i class="fa-solid fa-xmark"></i>
-              </button>
-            {/if}
-
-            <button
-              type="button"
-              class="panel-tool-btn btn-manage-prominent"
-              onclick={() => modelState.openModelManager()}
-              title="Open Model Manager modal to download, configure or add speech models"
-            >
-              <i class="fa-solid fa-sliders"></i>
-              <span>Model Manager</span>
-            </button>
           </div>
         </div>
 
@@ -199,21 +156,6 @@
             <label for="inline-asr-device-select" class="field-label"
               >Acceleration</label
             >
-            {#if modelState.activeDevice === 'webgpu'}
-              <span
-                class="device-chip chip-gpu"
-                title="WebGPU hardware acceleration active"
-              >
-                <i class="fa-solid fa-bolt"></i> WebGPU
-              </span>
-            {:else}
-              <span
-                class="device-chip chip-cpu"
-                title="Multi-threaded CPU WebAssembly active"
-              >
-                <i class="fa-solid fa-microchip"></i> CPU
-              </span>
-            {/if}
           </div>
 
           <select
@@ -228,9 +170,9 @@
             <option value="webgpu" disabled={!modelState.isWebGpuSupported}>
               WebGPU {!modelState.isWebGpuSupported
                 ? '(Not supported)'
-                : '(Fastest)'}
+                : '(Faster)'}
             </option>
-            <option value="wasm">CPU (WASM multi-threaded)</option>
+            <option value="wasm">WebAssembly</option>
           </select>
         </div>
 
@@ -238,23 +180,8 @@
         <div class="target-select-container">
           <div class="field-label-row">
             <label for="inline-asr-output-select" class="field-label"
-              >Output Destination</label
+              >Output Tier</label
             >
-            {#if selectedTargetTier}
-              <span
-                class="target-chip chip-subtier"
-                title="Output directed to Sub-tier #{selectedTargetTier.id} ({selectedTargetTier.name})"
-              >
-                <i class="fa-solid fa-layer-group"></i> #{selectedTargetTier.id}
-              </span>
-            {:else}
-              <span
-                class="target-chip chip-main"
-                title="Output directed to Main Transcription tier"
-              >
-                <i class="fa-solid fa-align-left"></i> Main
-              </span>
-            {/if}
           </div>
 
           <select
@@ -265,7 +192,7 @@
             disabled={appState.isProcessing || modelState.isModelLoading}
             title="Select where to put the output of ASR (Main transcription or sentence-level sub-tier)"
           >
-            <option value="main">Main Transcription</option>
+            <option value="main">Main Transcription Tier</option>
             {#each sentenceSubTiers as tier (tier.id)}
               <option value={String(tier.id)}>
                 {tier.name} (Sub-tier #{tier.id})
@@ -273,27 +200,6 @@
             {/each}
           </select>
         </div>
-
-        <!-- Audio Range Selection -->
-        {#if audioState.totalAudioDuration > 0}
-          <div class="range-select-container">
-            <div class="range-head">
-              <i class="fa-solid fa-clock"></i>
-              <span>Range</span>
-              {#if audioState.isIntervalSelected}
-                <button
-                  type="button"
-                  class="btn-reset-interval"
-                  onclick={() => audioState.resetInterval()}
-                  title="Use entire audio recording"
-                >
-                  Reset to full
-                </button>
-              {/if}
-            </div>
-            <IntervalPicker />
-          </div>
-        {/if}
 
         <!-- Action & Live Status -->
         <div class="action-container">
@@ -343,7 +249,6 @@
               </span>
             {:else}
               <span class="status-chip chip-info">
-                <i class="fa-solid fa-clock"></i>
                 <span
                   ><strong>{emptyCount}</strong> of {rangeTotalCount} segment{emptyCount ===
                   1
@@ -429,22 +334,21 @@
 
 <style>
   .inline-settings-panel {
-    background: var(--bg-hover, #f1f5f9);
+    background: var(--bg-hover, #f8fafc);
     border: 1px solid var(--border-color, #cbd5e1);
-    border-bottom: 2px solid #7c3aed;
-    border-radius: 8px 8px 0 0;
-    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.06);
+    border-radius: 8px;
+    box-shadow: 0 2px 8px rgba(15, 23, 42, 0.04);
     display: flex;
     flex-direction: column;
     margin: 0;
     animation: slideDown 0.16s ease-out;
     z-index: 10;
+    overflow: hidden;
   }
 
   :global([data-theme='dark']) .inline-settings-panel {
     background: #0f172a;
     border-color: #334155;
-    border-bottom-color: #a78bfa;
     box-shadow: 0 4px 16px rgba(0, 0, 0, 0.28);
   }
 
@@ -467,65 +371,67 @@
     padding: 2px 0;
   }
 
-  /* High-visibility Manage Models button */
+  /* Manage Models button */
   .btn-manage-prominent {
     display: inline-flex;
     align-items: center;
-    gap: 6px;
-    padding: 4px 11px;
-    font-size: 0.75rem;
-    font-weight: 700;
-    background: #7c3aed;
-    color: #ffffff;
-    border: 1px solid #6d28d9;
-    border-radius: 6px;
-    box-shadow: 0 1px 3px rgba(124, 58, 237, 0.3);
+    gap: 5px;
+    padding: 2px 8px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    background: transparent;
+    color: var(--text-muted, #64748b);
+    border: 1px solid var(--border-color, #cbd5e1);
+    border-radius: 5px;
     cursor: pointer;
     transition: all 0.14s ease;
   }
 
   .btn-manage-prominent:hover {
-    background: #6d28d9;
-    color: #ffffff;
-    border-color: #5b21b6;
-    box-shadow: 0 2px 6px rgba(124, 58, 237, 0.42);
-    transform: translateY(-1px);
+    background: transparent;
+    color: #7c3aed;
+    border-color: #7c3aed;
   }
 
   :global([data-theme='dark']) .btn-manage-prominent {
-    background: #8b5cf6;
-    border-color: #7c3aed;
-    box-shadow: 0 1px 4px rgba(139, 92, 246, 0.4);
+    background: transparent;
+    color: #94a3b8;
+    border-color: #475569;
   }
 
   :global([data-theme='dark']) .btn-manage-prominent:hover {
-    background: #7c3aed;
-    border-color: #6d28d9;
+    background: transparent;
+    color: #a78bfa;
+    border-color: #a78bfa;
   }
 
   .panel-close-btn {
-    display: flex;
+    display: inline-flex;
     align-items: center;
     justify-content: center;
     width: 28px;
     height: 28px;
-    border: none;
+    border: 1px solid transparent;
     background: transparent;
-    border-radius: 5px;
+    border-radius: 6px;
     color: var(--text-muted, #64748b);
     cursor: pointer;
-    font-size: 0.95rem;
+    font-size: 0.85rem;
     transition: all 0.14s ease;
   }
 
   .panel-close-btn:hover {
-    background: rgba(0, 0, 0, 0.07);
+    background: var(--bg-hover, #f1f5f9);
     color: var(--text-heading, #0f172a);
   }
 
+  :global([data-theme='dark']) .panel-close-btn {
+    color: #94a3b8;
+  }
+
   :global([data-theme='dark']) .panel-close-btn:hover {
-    background: rgba(255, 255, 255, 0.1);
-    color: #f1f5f9;
+    background: #334155;
+    color: #f8fafc;
   }
 
   /* Compact body container */
@@ -557,6 +463,7 @@
   .field-label-row {
     display: flex;
     align-items: center;
+    justify-content: space-between;
     gap: 8px;
   }
 
@@ -568,37 +475,6 @@
 
   :global([data-theme='dark']) .field-label {
     color: #e2e8f0;
-  }
-
-  .lang-tag {
-    font-size: 0.68rem;
-    font-weight: 700;
-    background: #ede9fe;
-    color: #6d28d9;
-    border: 1px solid #ddd6fe;
-    border-radius: 4px;
-    padding: 1px 6px;
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-  }
-
-  :global([data-theme='dark']) .lang-tag {
-    background: rgba(124, 58, 237, 0.25);
-    color: #ddd6fe;
-    border-color: rgba(167, 139, 250, 0.35);
-  }
-
-  .dtype-tag {
-    background: #f0fdf4 !important;
-    color: #16a34a !important;
-    border-color: #bbf7d0 !important;
-  }
-
-  :global([data-theme='dark']) .dtype-tag {
-    background: rgba(22, 163, 74, 0.2) !important;
-    color: #86efac !important;
-    border-color: rgba(22, 163, 74, 0.35) !important;
   }
 
   .device-select-container {
@@ -637,40 +513,6 @@
     box-shadow: 0 0 0 2px rgba(167, 139, 250, 0.2);
   }
 
-  .device-chip {
-    font-size: 0.68rem;
-    font-weight: 700;
-    border-radius: 4px;
-    padding: 1px 6px;
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-  }
-
-  .chip-gpu {
-    background: #ecfdf5;
-    color: #059669;
-    border: 1px solid #a7f3d0;
-  }
-
-  :global([data-theme='dark']) .chip-gpu {
-    background: rgba(16, 185, 129, 0.2);
-    color: #6ee7b7;
-    border-color: rgba(16, 185, 129, 0.35);
-  }
-
-  .chip-cpu {
-    background: #f1f5f9;
-    color: #475569;
-    border: 1px solid #cbd5e1;
-  }
-
-  :global([data-theme='dark']) .chip-cpu {
-    background: rgba(148, 163, 184, 0.15);
-    color: #cbd5e1;
-    border-color: rgba(148, 163, 184, 0.3);
-  }
-
   .target-select-container {
     min-width: 190px;
     display: flex;
@@ -705,40 +547,6 @@
   :global([data-theme='dark']) .target-select-input:focus {
     border-color: #a78bfa;
     box-shadow: 0 0 0 2px rgba(167, 139, 250, 0.2);
-  }
-
-  .target-chip {
-    font-size: 0.68rem;
-    font-weight: 700;
-    border-radius: 4px;
-    padding: 1px 6px;
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-  }
-
-  .chip-main {
-    background: #eff6ff;
-    color: #2563eb;
-    border: 1px solid #bfdbfe;
-  }
-
-  :global([data-theme='dark']) .chip-main {
-    background: rgba(37, 99, 235, 0.2);
-    color: #93c5fd;
-    border-color: rgba(37, 99, 235, 0.35);
-  }
-
-  .chip-subtier {
-    background: #fdf2f8;
-    color: #db2777;
-    border: 1px solid #fbcfe8;
-  }
-
-  :global([data-theme='dark']) .chip-subtier {
-    background: rgba(219, 39, 119, 0.2);
-    color: #f472b6;
-    border-color: rgba(219, 39, 119, 0.35);
   }
 
   .select-with-preload {
@@ -776,68 +584,6 @@
   :global([data-theme='dark']) .model-select-input:focus {
     border-color: #a78bfa;
     box-shadow: 0 0 0 2px rgba(167, 139, 250, 0.2);
-  }
-
-  .btn-preload-pill {
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    height: 34px;
-    padding: 0 11px;
-    font-size: 0.76rem;
-    font-weight: 600;
-    background: var(--bg-muted, #f8fafc);
-    border: 1px solid var(--border-color, #cbd5e1);
-    color: var(--text-heading, #334155);
-    border-radius: 6px;
-    cursor: pointer;
-    white-space: nowrap;
-    transition: all 0.14s ease;
-  }
-
-  .btn-preload-pill:hover:not(:disabled) {
-    border-color: #7c3aed;
-    color: #7c3aed;
-    background: #f5f3ff;
-  }
-
-  .btn-preload-pill.loaded {
-    background: rgba(16, 185, 129, 0.12);
-    border-color: rgba(16, 185, 129, 0.35);
-    color: #059669;
-    font-weight: 700;
-  }
-
-  :global([data-theme='dark']) .btn-preload-pill {
-    background: #0f172a;
-    border-color: #475569;
-    color: #cbd5e1;
-  }
-
-  :global([data-theme='dark']) .btn-preload-pill:hover:not(:disabled) {
-    border-color: #a78bfa;
-    color: #c084fc;
-    background: rgba(124, 58, 237, 0.15);
-  }
-
-  :global([data-theme='dark']) .btn-preload-pill.loaded {
-    background: rgba(16, 185, 129, 0.18);
-    border-color: rgba(16, 185, 129, 0.4);
-    color: #34d399;
-  }
-
-  .btn-cancel-load {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 34px;
-    height: 34px;
-    background: #fee2e2;
-    border: 1px solid #fca5a5;
-    color: #dc2626;
-    border-radius: 6px;
-    cursor: pointer;
-    flex-shrink: 0;
   }
 
   .action-container {
@@ -1044,14 +790,6 @@
     border-bottom-color: rgba(255, 255, 255, 0.08);
   }
 
-  .range-head i {
-    color: #7c3aed;
-  }
-
-  :global([data-theme='dark']) .range-head i {
-    color: #a78bfa;
-  }
-
   .btn-reset-interval {
     margin-left: auto;
     background: transparent;
@@ -1080,14 +818,12 @@
       max-height: 100%;
       min-height: 0;
       border-radius: 8px;
-      border-top: 2px solid #7c3aed;
-      border-bottom: 1px solid var(--border-color, #cbd5e1);
+      border: 1px solid var(--border-color, #cbd5e1);
       overflow: hidden;
     }
 
     :global([data-theme='dark']) .inline-settings-panel {
-      border-top-color: #a78bfa;
-      border-bottom-color: #334155;
+      border-color: #334155;
     }
 
     .side-panel-header {
@@ -1096,6 +832,8 @@
       justify-content: space-between;
       gap: 8px;
       padding: 10px 12px;
+      min-height: 44px;
+      box-sizing: border-box;
       background: var(--bg-card, #ffffff);
       border-bottom: 1px solid var(--border-color, #cbd5e1);
       flex-shrink: 0;
@@ -1131,13 +869,13 @@
       flex: 1;
       min-height: 0;
       overflow-y: auto;
-      padding: 12px;
+      padding: 10px 12px;
     }
 
     .model-row {
       flex-direction: column;
       align-items: stretch;
-      gap: 14px;
+      gap: 8px;
     }
 
     .model-select-container,
@@ -1147,6 +885,19 @@
       min-width: 0;
       width: 100%;
       flex: none;
+      background: var(--bg-card, #ffffff);
+      border: 1px solid var(--border-color, #e2e8f0);
+      border-radius: 6px;
+      padding: 10px 12px;
+      box-sizing: border-box;
+    }
+
+    :global([data-theme='dark']) .model-select-container,
+    :global([data-theme='dark']) .device-select-container,
+    :global([data-theme='dark']) .target-select-container,
+    :global([data-theme='dark']) .range-select-container {
+      background: #1e293b;
+      border-color: #334155;
     }
 
     .select-with-preload {

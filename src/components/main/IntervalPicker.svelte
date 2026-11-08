@@ -248,35 +248,6 @@
       {/if}
     </div>
   </div>
-
-  <div class="ip-actions">
-    <button
-      type="button"
-      class="btn-pill"
-      class:is-active={audioState.isPlayingInterval}
-      onclick={() => audioState.togglePlayInterval()}
-      {disabled}
-      title="Play only the selected portion"
-    >
-      <i
-        class="fa-solid {audioState.isPlayingInterval ? 'fa-pause' : 'fa-play'}"
-      ></i>
-      <span>{audioState.isPlayingInterval ? 'Pause' : 'Play selection'}</span>
-    </button>
-
-    {#if audioState.isIntervalSelected}
-      <button
-        type="button"
-        class="btn-pill btn-pill-quiet"
-        onclick={() => audioState.resetInterval()}
-        {disabled}
-        title="Select the whole recording again"
-      >
-        <i class="fa-solid fa-rotate-left"></i>
-        <span>Whole</span>
-      </button>
-    {/if}
-  </div>
 </div>
 
 <style>

@@ -82,6 +82,23 @@ describe('subTiers utils', () => {
       ]);
     });
 
+    it('handles space-separated multi-character splitters without splitting individual characters', () => {
+      expect(
+        tokenizeWords(
+          'word-affix=clitic ((E borrowed word )) Eat (note)',
+          '- = ((E ))',
+        ),
+      ).toEqual(['word', 'affix', 'clitic', 'borrowed', 'word', 'Eat', '(note)']);
+
+      // Also works when multi-char splitters are attached directly without spaces
+      expect(tokenizeWords('((Ehello))world-1=2', '- = ((E ))')).toEqual([
+        'hello',
+        'world',
+        '1',
+        '2',
+      ]);
+    });
+
     it('always splits by whitespace even when splitters string is empty', () => {
       expect(tokenizeWords('word1-part word2=clitic word3', '')).toEqual([
         'word1-part',
