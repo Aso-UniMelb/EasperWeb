@@ -430,4 +430,83 @@ describe('ELAN export with word/morpheme sub-tiers', () => {
     expect(notesTier).toBeDefined();
     expect(notesTier.annotator).toBe('');
   });
+
+  it('supports mixed Symbolic_Subdivision and Time_Subdivision sub-tiers with custom elanTierType in the same export', () => {
+    const segments = [
+      {
+        id: 'seg-1',
+        start: 0,
+        end: 2.0,
+        speaker: 'Alice',
+        speakerId: 1,
+        text: 'hello world',
+        subTexts: {
+          '1': 'Bonjour le monde',
+          '2': ['INTJ', 'NOUN'],
+          '3': ['hɛloʊ', 'wɜrld'],
+        },
+      },
+    ];
+
+    const subTiers = [
+      {
+        id: 1,
+        name: 'Translation',
+        type: 'sentence',
+        stereotype: 'Symbolic_Association',
+        elanTierType: 'trans-assoc-type',
+      },
+      {
+        id: 2,
+        name: 'POS',
+        type: 'word',
+        stereotype: 'Symbolic_Subdivision',
+        elanTierType: 'pos-subdiv-type',
+      },
+      {
+        id: 3,
+        name: 'Phonetic',
+        type: 'word',
+        stereotype: 'Time_Subdivision',
+        elanTierType: 'phon-timesub-type',
+      },
+    ];
+
+    const speakers = [
+      { id: 1, name: 'Alice', initials: 'A', elanTierType: 'speech-root-type' },
+    ];
+
+    const xml = exportToEaf({
+      segments,
+      subTiers,
+      speakers,
+      mainTierTitle: 'Spk',
+    });
+
+    expect(xml).toContain('<LINGUISTIC_TYPE LINGUISTIC_TYPE_ID="speech-root-type" TIME_ALIGNABLE="true" GRAPHIC_REFERENCES="false" />');
+    expect(xml).toContain('<LINGUISTIC_TYPE LINGUISTIC_TYPE_ID="trans-assoc-type" CONSTRAINTS="Symbolic_Association" TIME_ALIGNABLE="false" GRAPHIC_REFERENCES="false" />');
+    expect(xml).toContain('<LINGUISTIC_TYPE LINGUISTIC_TYPE_ID="pos-subdiv-type" CONSTRAINTS="Symbolic_Subdivision" TIME_ALIGNABLE="false" GRAPHIC_REFERENCES="false" />');
+    expect(xml).toContain('<LINGUISTIC_TYPE LINGUISTIC_TYPE_ID="phon-timesub-type" CONSTRAINTS="Time_Subdivision" TIME_ALIGNABLE="true" GRAPHIC_REFERENCES="false" />');
+
+    const parsed = parseEaf(xml, 'mixed-stereotypes.eaf');
+    const rootTier = parsed.tiers.find((t) => t.tierId === 'Spk@Alice');
+    const transTier = parsed.tiers.find((t) => t.tierId === 'Translation@Alice');
+    const posTier = parsed.tiers.find((t) => t.tierId === 'POS@Alice');
+    const phonTier = parsed.tiers.find((t) => t.tierId === 'Phonetic@Alice');
+
+    expect(rootTier?.linguisticType).toBe('speech-root-type');
+    expect(rootTier?.stereotype).toBe('None');
+
+    expect(transTier?.linguisticType).toBe('trans-assoc-type');
+    expect(transTier?.stereotype).toBe('Symbolic_Association');
+
+    expect(posTier?.linguisticType).toBe('pos-subdiv-type');
+    expect(posTier?.stereotype).toBe('Symbolic_Subdivision');
+    expect(posTier?.annotations.map((a) => a.text)).toEqual(['INTJ', 'NOUN']);
+
+    expect(phonTier?.linguisticType).toBe('phon-timesub-type');
+    expect(phonTier?.stereotype).toBe('Time_Subdivision');
+    expect(phonTier?.annotations[0]).toMatchObject({ start: 0, end: 1000, text: 'hɛloʊ' });
+    expect(phonTier?.annotations[1]).toMatchObject({ start: 1000, end: 2000, text: 'wɜrld' });
+  });
 });

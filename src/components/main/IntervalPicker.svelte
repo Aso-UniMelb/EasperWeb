@@ -424,18 +424,6 @@
     color: var(--text-muted, #94a3b8);
   }
 
-  /* ---------------------------------------------------------------- Actions */
-  .ip-actions {
-    display: flex;
-    gap: 6px;
-  }
-
-  /* .btn-pill (app.css) needs flex:1 here so the two action buttons share the row */
-  .ip-actions .btn-pill {
-    flex: 1;
-    min-width: 0;
-  }
-
   /* Very narrow panels: stack the two fields */
   @container (max-width: 240px) {
     .ip-fields {

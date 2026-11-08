@@ -19,8 +19,8 @@ Linguists can import existing `.eaf` files alongside paired audio directly into 
    - Linguistic types and stereotype constraints.
 4. **Interactive Tier Mapping (`src/utils/elanImporter.js`)**:
    - The user selects which tiers represent primary speech transcriptions for each speaker (`role: 'speech'`) and which represent dependent analytical sub-tiers (`role: 'subtier'`).
-   - Easper detects root speaker tiers, common main-tier prefixes (e.g., `BIS@Speaker1` $\rightarrow$ main tier prefix `BIS`), and `ANNOTATOR` attributes for both the main transcriber and individual sub-tiers.
-   - Dependent sub-tier types (`'sentence'` vs. `'word'`) are determined strictly from the ELAN linguistic stereotype (`Symbolic_Association` $\rightarrow$ `'sentence'`; `Symbolic_Subdivision` or `Time_Subdivision` $\rightarrow$ `'word'`) rather than guessing from tier names.
+   - Easper detects root speaker tiers, common main-tier prefixes (e.g., `BIS@Speaker1` $\rightarrow$ main tier prefix `BIS`), custom ELAN tier types (`LINGUISTIC_TYPE_ID` / `LINGUISTIC_TYPE_REF`), and `ANNOTATOR` attributes for both the main transcriber and individual sub-tiers.
+   - Dependent sub-tier types (`'sentence'` vs. `'word'`) and stereotypes (`Symbolic_Association`, `Symbolic_Subdivision`, or `Time_Subdivision`) are determined strictly from the ELAN linguistic stereotype rather than guessing from tier names, and custom ELAN tier type names (`elanTierType`) are preserved per speaker and per sub-tier.
 5. On import, all segment boundaries, speaker tags, and transcripts are populated into the Vertical Waveform Timeline and stored in IndexedDB.
 
 ---
@@ -39,6 +39,8 @@ In EasperWeb, each project can define up to **3 dependent sub-tiers** that align
    - For each word or morpheme, annotators have a token label and an annotation input (`WordSubTierEditor.svelte`) for POS tags, morphological glosses, or etymology.
    - Configurable **Lexicon / Valid Values** list with auto-complete suggestions and presets (Common POS, Universal POS, Leipzig Glossing).
    - **Lexicon Auto-Tagging (`autoTagField`, [`src/utils/autoTagging.js`](../src/utils/autoTagging.js))**: Each word sub-tier can map to a field (e.g. `POS`, `Gloss`, `Meaning`) in the project's active Lexicon to automatically populate tags across segments by matching headwords.
+- **Per-Tier ELAN Tier Type & Stereotype Preservation**:
+  Each speaker has an optional `elanTierType` (`LINGUISTIC_TYPE_REF`, defaulting to `default-lt`) and each sub-tier stores both its `elanTierType` (defaulting to `dependent-lt`, `sym-subdivision-lt`, or `words-lt`) and its exact ELAN `stereotype` (`Symbolic_Association` [Undivided], `Symbolic_Subdivision` [Divided], or `Time_Subdivision` [Divided]). Both can be edited in **Project Settings** and the **ELAN Import Modal**.
 - **Per-Tier Annotator Metadata**:
   Both the primary transcription tier (`transcriber`) and each dependent sub-tier (`annotator`) store optional annotator names that round-trip cleanly with ELAN `ANNOTATOR` tier attributes.
 - **UI Editing**:
@@ -68,11 +70,12 @@ EasperWeb provides a comprehensive suite of export formats tailored for linguist
 ### 1. ELAN Annotation Document (`.eaf`)
 - **Specification**: Fully compliant with ELAN 2.8 / 3.0 XML schema and compatible with python libraries like `pympi-ling`.
 - **Hierarchical Tier Preservation**:
-  - Primary speech annotations are written as `ALIGNABLE_ANNOTATION` entries linked to time slots on `default-lt` linguistic type root tiers (optionally prefixed with the project's main tier title, e.g. `BIS@<speaker>`, and carrying the project transcriber in `ANNOTATOR`).
-  - Word/morpheme sub-tiers (`type: 'word'`, e.g. `POS@<speaker>`, `Gloss@<speaker>`) are exported directly under each speaker's root tier (`PARENT_REF="<rootTier>"`) without generating any synthetic intermediary `morphs@<speaker>` tier:
-    - By default (`Symbolic_Subdivision` constraint, `sym-subdivision-lt` type), token annotations are written as ordered `REF_ANNOTATION` entries chained via `PREVIOUS_ANNOTATION` (preserving empty tags so token positions remain aligned).
-    - When configured with `Time_Subdivision` (`words-lt` type), token annotations are exported as equal-duration `ALIGNABLE_ANNOTATION` intervals subdividing the parent utterance.
-  - Sentence-level dependent sub-tiers (`type: 'sentence'`, e.g. `Translation@<speaker>`) are exported as `REF_ANNOTATION` entries on `dependent-lt` tiers (`Symbolic_Association`) tied directly to the parent utterance.
+  - Primary speech annotations are written as `ALIGNABLE_ANNOTATION` entries linked to time slots on root tiers using each speaker's configured `elanTierType` (defaulting to `default-lt`), optionally prefixed with the project's main tier title (e.g. `BIS@<speaker>`) and carrying the project transcriber in `ANNOTATOR`.
+  - Word/morpheme sub-tiers (`type: 'word'`, e.g. `POS@<speaker>`, `Gloss@<speaker>`) are exported directly under each speaker's root tier (`PARENT_REF="<rootTier>"`) using the sub-tier's configured `elanTierType` and `stereotype` without generating any synthetic intermediary `morphs@<speaker>` tier:
+    - When configured with `Symbolic_Subdivision` (default `elanTierType: 'sym-subdivision-lt'`), token annotations are written as ordered `REF_ANNOTATION` entries chained via `PREVIOUS_ANNOTATION` (preserving empty tags so token positions remain aligned).
+    - When configured with `Time_Subdivision` (default `elanTierType: 'words-lt'`), token annotations are exported as equal-duration `ALIGNABLE_ANNOTATION` intervals subdividing the parent utterance.
+  - Sentence-level dependent sub-tiers (`type: 'sentence'`, `Symbolic_Association`, e.g. `Translation@<speaker>`) are exported as `REF_ANNOTATION` entries using the sub-tier's `elanTierType` (defaulting to `dependent-lt`) tied directly to the parent utterance.
+  - Custom `<LINGUISTIC_TYPE>` definitions are dynamically emitted in the `.eaf` footer for every unique `(LINGUISTIC_TYPE_ID, CONSTRAINTS)` pair used across speaker tiers and sub-tiers.
   - Per-tier `ANNOTATOR` metadata is preserved on both root speaker tiers and dependent sub-tiers.
 - **Media Linking**: Automatically incorporates the relative path and MIME type of the associated audio recording.
 

@@ -12,6 +12,9 @@
     MAX_SUB_TIERS,
     SUB_TIER_TYPE_SENTENCE,
     SUB_TIER_TYPE_WORD,
+    ELAN_STEREOTYPE_SYM_ASSOC,
+    ELAN_STEREOTYPE_SYM_SUBDIV,
+    ELAN_STEREOTYPE_TIME_SUBDIV,
     DEFAULT_SPLITTERS,
     COMMON_POS_LEXICON,
     UNIVERSAL_POS_LEXICON,
@@ -92,6 +95,7 @@
             ...s,
             id: Number(s.id) || 1,
             originalId: Number(s.id) || 1,
+            elanTierType: s.elanTierType || '',
             _uid: ++speakerRowUid,
           }));
           subTiers = normalizeSubTiers(projectState.activeProject.subTiers).map(
@@ -99,6 +103,12 @@
               ...t,
               annotator: t.annotator || '',
               type: t.type || SUB_TIER_TYPE_SENTENCE,
+              stereotype:
+                t.stereotype ||
+                (t.type === SUB_TIER_TYPE_WORD
+                  ? ELAN_STEREOTYPE_SYM_SUBDIV
+                  : ELAN_STEREOTYPE_SYM_ASSOC),
+              elanTierType: t.elanTierType || '',
               lexicon: Array.isArray(t.lexicon) ? [...t.lexicon] : [],
               lexiconInput: formatLexicon(t.lexicon),
               splitters:
@@ -190,6 +200,7 @@
         _uid: ++speakerRowUid,
         name: `Speaker ${nextId}`,
         initials: `S${nextId}`,
+        elanTierType: '',
       },
     ];
   }
@@ -242,6 +253,8 @@
         name: '',
         annotator: '',
         type: SUB_TIER_TYPE_SENTENCE,
+        stereotype: ELAN_STEREOTYPE_SYM_ASSOC,
+        elanTierType: '',
         lexicon: [],
         lexiconInput: '',
         splitters: DEFAULT_SPLITTERS,
@@ -285,7 +298,25 @@
     };
   }
 
-  function handleTypeChange(tier, newType) {
+  function handleStereotypeChange(tier, val) {
+    let newStereotype = ELAN_STEREOTYPE_SYM_ASSOC;
+    let newType = SUB_TIER_TYPE_SENTENCE;
+
+    if (
+      val === ELAN_STEREOTYPE_SYM_SUBDIV ||
+      val === SUB_TIER_TYPE_WORD
+    ) {
+      newStereotype = ELAN_STEREOTYPE_SYM_SUBDIV;
+      newType = SUB_TIER_TYPE_WORD;
+    } else if (val === ELAN_STEREOTYPE_TIME_SUBDIV) {
+      newStereotype = ELAN_STEREOTYPE_TIME_SUBDIV;
+      newType = SUB_TIER_TYPE_WORD;
+    } else {
+      newStereotype = ELAN_STEREOTYPE_SYM_ASSOC;
+      newType = SUB_TIER_TYPE_SENTENCE;
+    }
+
+    tier.stereotype = newStereotype;
     tier.type = newType;
     if (newType === SUB_TIER_TYPE_WORD) {
       expandedWordTierIds = {
@@ -399,6 +430,7 @@
         id: spkId,
         name: cleanName,
         initials: cleanInitials,
+        elanTierType: (s.elanTierType || '').trim(),
       };
     });
 
@@ -422,9 +454,18 @@
       seenNames.add(key);
 
       const type =
-        t.type === SUB_TIER_TYPE_WORD
+        t.type === SUB_TIER_TYPE_WORD ||
+        t.stereotype === ELAN_STEREOTYPE_SYM_SUBDIV ||
+        t.stereotype === ELAN_STEREOTYPE_TIME_SUBDIV
           ? SUB_TIER_TYPE_WORD
           : SUB_TIER_TYPE_SENTENCE;
+      const stereotype =
+        type === SUB_TIER_TYPE_WORD
+          ? t.stereotype === ELAN_STEREOTYPE_TIME_SUBDIV
+            ? ELAN_STEREOTYPE_TIME_SUBDIV
+            : ELAN_STEREOTYPE_SYM_SUBDIV
+          : ELAN_STEREOTYPE_SYM_ASSOC;
+      const elanTierType = (t.elanTierType || '').trim();
       const lexicon =
         type === SUB_TIER_TYPE_WORD
           ? parseLexicon(
@@ -448,6 +489,8 @@
         name,
         annotator,
         type,
+        stereotype,
+        elanTierType,
         lexicon,
         splitters,
         lexiconField,
@@ -654,6 +697,7 @@
                 <span class="spk-th-color">Color</span>
                 <span class="spk-th-name">Speaker Name</span>
                 <span class="spk-th-init">Initials</span>
+                <span class="spk-th-elantype">ELAN Tier Type</span>
                 <span class="spk-th-segs">Segments</span>
                 <span class="spk-th-act"></span>
               </div>
@@ -721,6 +765,17 @@
                     />
                   </div>
 
+                  <div class="speaker-field speaker-elantype-field">
+                    <input
+                      id="spk-elantype-{spk._uid || spk.id}"
+                      type="text"
+                      class="form-input speaker-input speaker-elantype-input"
+                      bind:value={spk.elanTierType}
+                      placeholder="default-lt"
+                      title="ELAN Tier Type (LINGUISTIC_TYPE_REF) for this speaker's root tier"
+                    />
+                  </div>
+
                   <div
                     class="speaker-field speaker-segs-field"
                     title="{segCount} {segCount === 1 ? 'segment' : 'segments'}"
@@ -774,16 +829,22 @@
               <div class="subtier-help-panel">
                 <div class="help-points">
                   <div class="help-point">
-                    <strong>Undivided:</strong> Single full-utterance text field
-                    per segment for translations, comments, or notes.
+                    <strong>Symbolic Association (Undivided):</strong> Single
+                    full-utterance text field per segment for translations,
+                    comments, or notes (1-to-1 ELAN <code>REF_ANNOTATION</code>).
                   </div>
                   <div class="help-point">
-                    <strong>Divided:</strong> Token-level annotation split by
-                    whitespace and custom <strong>Splitters</strong> (e.g.
-                    <code>-</code>, <code>=</code>), with autocomplete
-                    <strong>Tags</strong>
+                    <strong>Symbolic / Time Subdivision (Divided):</strong>
+                    Token-level annotation split by whitespace and custom
+                    <strong>Splitters</strong> (e.g. <code>-</code>,
+                    <code>=</code>), with autocomplete <strong>Tags</strong>
                     and optional <strong>Auto-Tag Field</strong> lookup from the
-                    Active Lexicons.
+                    Active Lexicon.
+                  </div>
+                  <div class="help-point">
+                    <strong>ELAN Tier Type:</strong> Custom
+                    <code>LINGUISTIC_TYPE_ID</code> name preserved when importing
+                    and exporting ELAN (<code>.eaf</code>) files.
                   </div>
                 </div>
               </div>
@@ -801,7 +862,8 @@
                     <tr>
                       <th class="col-sub-id">#</th>
                       <th class="col-sub-name">Sub-tier Name</th>
-                      <th class="col-sub-type">Type</th>
+                      <th class="col-sub-type">Stereotype / Type</th>
+                      <th class="col-sub-elantype">ELAN Tier Type</th>
                       <th class="col-sub-annotator">Annotator</th>
                       <th class="col-sub-config">Config</th>
                       <th class="col-sub-actions">Actions</th>
@@ -809,7 +871,15 @@
                   </thead>
                   <tbody>
                     {#each subTiers as tier (tier.id)}
-                      {@const isWordTier = tier.type === SUB_TIER_TYPE_WORD}
+                      {@const isWordTier =
+                        tier.type === SUB_TIER_TYPE_WORD ||
+                        tier.stereotype === ELAN_STEREOTYPE_SYM_SUBDIV ||
+                        tier.stereotype === ELAN_STEREOTYPE_TIME_SUBDIV}
+                      {@const currentStereotype =
+                        tier.stereotype ||
+                        (isWordTier
+                          ? ELAN_STEREOTYPE_SYM_SUBDIV
+                          : ELAN_STEREOTYPE_SYM_ASSOC)}
                       {@const isExpanded = Boolean(
                         expandedWordTierIds[tier.id],
                       )}
@@ -841,17 +911,35 @@
                           <select
                             id="subtier-type-{tier.id}"
                             class="form-input subtier-type-select"
-                            value={tier.type}
+                            value={currentStereotype}
                             onchange={(e) =>
-                              handleTypeChange(tier, e.target.value)}
+                              handleStereotypeChange(tier, e.target.value)}
+                            title="ELAN Constraint Stereotype and Easper division behavior"
                           >
-                            <option value={SUB_TIER_TYPE_SENTENCE}>
-                              Undivided
+                            <option value={ELAN_STEREOTYPE_SYM_ASSOC}>
+                              Symbolic Association (Undivided)
                             </option>
-                            <option value={SUB_TIER_TYPE_WORD}>
-                              Divided
+                            <option value={ELAN_STEREOTYPE_SYM_SUBDIV}>
+                              Symbolic Subdivision (Divided)
+                            </option>
+                            <option value={ELAN_STEREOTYPE_TIME_SUBDIV}>
+                              Time Subdivision (Divided)
                             </option>
                           </select>
+                        </td>
+                        <td class="col-sub-elantype">
+                          <input
+                            id="subtier-elantype-{tier.id}"
+                            type="text"
+                            class="form-input subtier-input"
+                            bind:value={tier.elanTierType}
+                            placeholder={isWordTier
+                              ? currentStereotype === ELAN_STEREOTYPE_TIME_SUBDIV
+                                ? 'words-lt'
+                                : 'sym-subdivision-lt'
+                              : 'dependent-lt'}
+                            title="ELAN Tier Type (LINGUISTIC_TYPE_REF) for this sub-tier"
+                          />
                         </td>
                         <td class="col-sub-annotator">
                           <input
@@ -911,7 +999,7 @@
 
                       {#if isWordTier && isExpanded}
                         <tr class="subtier-expanded-row">
-                          <td colspan="6">
+                          <td colspan="7">
                             <div class="subtier-word-panel">
                               <div class="word-tier-meta-row">
                                 <div class="splitters-col">
@@ -1470,7 +1558,7 @@
       0 16px 24px -4px rgba(0, 0, 0, 0.15),
       0 6px 8px -4px rgba(0, 0, 0, 0.1);
     width: 100%;
-    max-width: 720px;
+    max-width: 820px;
     display: flex;
     flex-direction: column;
     overflow: hidden;
@@ -1861,6 +1949,10 @@
     text-align: center;
   }
 
+  .spk-th-elantype {
+    width: 150px;
+  }
+
   .spk-th-segs {
     width: 68px;
     text-align: center;
@@ -1951,6 +2043,18 @@
     font-weight: 700;
     text-transform: uppercase;
     padding: 2px 4px;
+  }
+
+  .speaker-elantype-field {
+    width: 150px;
+    flex-shrink: 0;
+  }
+
+  .speaker-elantype-input {
+    width: 100%;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+      monospace;
+    font-size: 0.75rem;
   }
 
   .speaker-segs-field {
@@ -2066,19 +2170,23 @@
   }
 
   .col-sub-name {
-    width: 28%;
+    width: 20%;
   }
 
   .col-sub-type {
-    width: 30%;
+    width: 26%;
+  }
+
+  .col-sub-elantype {
+    width: 18%;
   }
 
   .col-sub-annotator {
-    width: 18%;
+    width: 14%;
   }
 
   .col-sub-config {
-    width: 18%;
+    width: 14%;
     white-space: nowrap;
   }
 

@@ -19,6 +19,10 @@ export const MAX_SUB_TIERS = 5;
 export const SUB_TIER_TYPE_SENTENCE = 'sentence';
 export const SUB_TIER_TYPE_WORD = 'word';
 
+export const ELAN_STEREOTYPE_SYM_ASSOC = 'Symbolic_Association';
+export const ELAN_STEREOTYPE_SYM_SUBDIV = 'Symbolic_Subdivision';
+export const ELAN_STEREOTYPE_TIME_SUBDIV = 'Time_Subdivision';
+
 /** Suggestions offered in the project settings UI. */
 export const SUB_TIER_PRESETS = [
   'Translation',
@@ -317,11 +321,35 @@ export function normalizeSubTiers(raw, { sort = true } = {}) {
 
     usedIds.add(id);
 
+    const rawStereotype =
+      typeof item === 'object' && item.stereotype != null
+        ? String(item.stereotype).trim()
+        : '';
+
+    const hasExplicitType =
+      typeof item === 'object' && item.type != null && String(item.type).trim() !== '';
+
     const type =
       typeof item === 'object' &&
-      (item.type === SUB_TIER_TYPE_WORD || item.type === 'morpheme')
+      (item.type === SUB_TIER_TYPE_WORD ||
+        item.type === 'morpheme' ||
+        (!hasExplicitType &&
+          (rawStereotype === ELAN_STEREOTYPE_SYM_SUBDIV ||
+            rawStereotype === ELAN_STEREOTYPE_TIME_SUBDIV)))
         ? SUB_TIER_TYPE_WORD
         : SUB_TIER_TYPE_SENTENCE;
+
+    const stereotype =
+      type === SUB_TIER_TYPE_WORD
+        ? rawStereotype === ELAN_STEREOTYPE_TIME_SUBDIV
+          ? ELAN_STEREOTYPE_TIME_SUBDIV
+          : ELAN_STEREOTYPE_SYM_SUBDIV
+        : ELAN_STEREOTYPE_SYM_ASSOC;
+
+    const elanTierType =
+      typeof item === 'object' && item.elanTierType != null
+        ? String(item.elanTierType).trim()
+        : '';
 
     let lexicon = [];
     if (typeof item === 'object') {
@@ -347,6 +375,8 @@ export function normalizeSubTiers(raw, { sort = true } = {}) {
       id,
       name: name || `Sub-tier ${id}`,
       type,
+      stereotype,
+      elanTierType,
       lexicon,
       splitters,
       lexiconField,
@@ -471,6 +501,8 @@ export function buildColumns(
       name: MAIN_COLUMN_NAME,
       isMain: true,
       type: SUB_TIER_TYPE_SENTENCE,
+      stereotype: 'None',
+      elanTierType: '',
       lexicon: [],
       splitters: DEFAULT_SPLITTERS,
       lexiconField: '',
@@ -480,6 +512,8 @@ export function buildColumns(
       key: String(t.id),
       name: t.name,
       type: t.type || SUB_TIER_TYPE_SENTENCE,
+      stereotype: t.stereotype || ELAN_STEREOTYPE_SYM_ASSOC,
+      elanTierType: t.elanTierType || '',
       lexicon: t.lexicon || [],
       splitters: t.splitters ?? DEFAULT_SPLITTERS,
       lexiconField: t.lexiconField || '',

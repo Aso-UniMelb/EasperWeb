@@ -59,14 +59,30 @@ export class ElanEaf {
   addTier(
     tierId,
     participant = '',
-    { parentRef = null, typeRef = ALIGNED_TYPE, annotator = '' } = {},
+    {
+      parentRef = null,
+      typeRef = ALIGNED_TYPE,
+      stereotype = null,
+      annotator = '',
+    } = {},
   ) {
+    const resolvedStereotype =
+      stereotype ||
+      (!parentRef
+        ? 'None'
+        : typeRef === SUBDIVISION_TYPE
+          ? 'Time_Subdivision'
+          : typeRef === SYM_SUBDIVISION_TYPE
+            ? 'Symbolic_Subdivision'
+            : 'Symbolic_Association');
+
     if (!this.tiers.has(tierId)) {
       this.tiers.set(tierId, {
         participant,
         annotator,
         parentRef,
-        typeRef,
+        typeRef: typeRef || ALIGNED_TYPE,
+        stereotype: resolvedStereotype,
         annotations: [],
       });
       return;
@@ -77,6 +93,9 @@ export class ElanEaf {
     if (parentRef && !tier.parentRef) tier.parentRef = parentRef;
     if (typeRef && tier.typeRef === ALIGNED_TYPE && typeRef !== ALIGNED_TYPE) {
       tier.typeRef = typeRef;
+    }
+    if (stereotype && (!tier.stereotype || tier.stereotype === 'None')) {
+      tier.stereotype = stereotype;
     }
   }
 
@@ -93,10 +112,14 @@ export class ElanEaf {
     endMs,
     value = '',
     participant = '',
-    { annotator = '' } = {},
+    { annotator = '', typeRef = ALIGNED_TYPE } = {},
   ) {
     const textVal = cleanSpeechText(value || '');
-    this.addTier(tierId, participant, { annotator });
+    this.addTier(tierId, participant, {
+      annotator,
+      typeRef: typeRef || ALIGNED_TYPE,
+      stereotype: 'None',
+    });
     const s = Math.round(Number(startMs));
     const e = Math.round(Number(endMs));
     if (e <= s) return null; // Discard invalid or zero-length duration
@@ -121,6 +144,7 @@ export class ElanEaf {
    * @param {Array<{ value: string, startMs: number, endMs: number }>} items
    * @param {Object} [options]
    * @param {string} [options.annotator='']
+   * @param {string} [options.typeRef=SUBDIVISION_TYPE]
    * @returns {Array<string>} Array of local handles for each subdivided annotation
    */
   addSubdividedAnnotations(
@@ -128,13 +152,14 @@ export class ElanEaf {
     parentTierId,
     parentLocalId,
     items = [],
-    { annotator = '' } = {},
+    { annotator = '', typeRef = SUBDIVISION_TYPE } = {},
   ) {
     if (!parentLocalId || !Array.isArray(items) || items.length === 0) return [];
 
     this.addTier(tierId, '', {
       parentRef: parentTierId,
-      typeRef: SUBDIVISION_TYPE,
+      typeRef: typeRef || SUBDIVISION_TYPE,
+      stereotype: 'Time_Subdivision',
       annotator,
     });
 
@@ -171,6 +196,7 @@ export class ElanEaf {
    * @param {Array<string|{ value: string }>} items Array of word tokens or objects
    * @param {Object} [options]
    * @param {string} [options.annotator='']
+   * @param {string} [options.typeRef=SYM_SUBDIVISION_TYPE]
    * @returns {Array<string>} Array of local handles for each subdivided annotation
    */
   addSymbolicSubdivisionAnnotations(
@@ -178,13 +204,14 @@ export class ElanEaf {
     parentTierId,
     parentLocalId,
     items = [],
-    { annotator = '' } = {},
+    { annotator = '', typeRef = SYM_SUBDIVISION_TYPE } = {},
   ) {
     if (!parentLocalId || !Array.isArray(items) || items.length === 0) return [];
 
     this.addTier(tierId, '', {
       parentRef: parentTierId,
-      typeRef: SYM_SUBDIVISION_TYPE,
+      typeRef: typeRef || SYM_SUBDIVISION_TYPE,
+      stereotype: 'Symbolic_Subdivision',
       annotator,
     });
 
@@ -220,20 +247,22 @@ export class ElanEaf {
    * @param {Object} [options]
    * @param {boolean} [options.allowEmpty=false] Whether to preserve empty annotations
    * @param {string} [options.annotator='']
+   * @param {string} [options.typeRef=DEPENDENT_TYPE]
    */
   addRefAnnotation(
     tierId,
     parentTierId,
     parentLocalId,
     value = '',
-    { allowEmpty = false, annotator = '' } = {},
+    { allowEmpty = false, annotator = '', typeRef = DEPENDENT_TYPE } = {},
   ) {
     if (!parentLocalId) return null;
     const textVal = cleanSpeechText(value || '');
     if (!textVal && !allowEmpty) return null;
     this.addTier(tierId, '', {
       parentRef: parentTierId,
-      typeRef: DEPENDENT_TYPE,
+      typeRef: typeRef || DEPENDENT_TYPE,
+      stereotype: 'Symbolic_Association',
       annotator,
     });
     const localId = `n${++this.localIdCounter}`;
@@ -280,14 +309,20 @@ export class ElanEaf {
         annotator: tierData.annotator || '',
         parentRef: null,
         typeRef: tierData.typeRef || ALIGNED_TYPE,
+        stereotype: 'None',
         isAlignable: true,
         annotations: mapped,
       });
     }
 
-    // Pass 2 — Subdivided time-aligned tiers (typeRef === SUBDIVISION_TYPE).
+    // Pass 2 — Subdivided time-aligned tiers (stereotype === 'Time_Subdivision').
     for (const [tierId, tierData] of this.tiers.entries()) {
-      if (tierData.typeRef !== SUBDIVISION_TYPE) continue;
+      if (
+        !tierData.parentRef ||
+        tierData.stereotype !== 'Time_Subdivision'
+      ) {
+        continue;
+      }
 
       // Group annotations by parentLocalId to preserve subdivision chaining
       const groups = new Map();
@@ -338,15 +373,21 @@ export class ElanEaf {
         participant: tierData.participant,
         annotator: tierData.annotator || '',
         parentRef: tierData.parentRef,
-        typeRef: SUBDIVISION_TYPE,
+        typeRef: tierData.typeRef || SUBDIVISION_TYPE,
+        stereotype: 'Time_Subdivision',
         isAlignable: true,
         annotations: mapped,
       });
     }
 
-    // Pass 3 — Symbolic subdivision tiers (typeRef === SYM_SUBDIVISION_TYPE).
+    // Pass 3 — Symbolic subdivision tiers (stereotype === 'Symbolic_Subdivision').
     for (const [tierId, tierData] of this.tiers.entries()) {
-      if (tierData.typeRef !== SYM_SUBDIVISION_TYPE) continue;
+      if (
+        !tierData.parentRef ||
+        tierData.stereotype !== 'Symbolic_Subdivision'
+      ) {
+        continue;
+      }
 
       const groups = new Map();
       for (const ann of tierData.annotations) {
@@ -380,18 +421,19 @@ export class ElanEaf {
         participant: tierData.participant,
         annotator: tierData.annotator || '',
         parentRef: tierData.parentRef,
-        typeRef: SYM_SUBDIVISION_TYPE,
+        typeRef: tierData.typeRef || SYM_SUBDIVISION_TYPE,
+        stereotype: 'Symbolic_Subdivision',
         isAlignable: false,
         annotations: mapped,
       });
     }
 
-    // Pass 4 — Dependent reference tiers (typeRef === DEPENDENT_TYPE or SYM_ASSOCIATION_TYPE).
+    // Pass 4 — Dependent reference tiers (Symbolic_Association).
     for (const [tierId, tierData] of this.tiers.entries()) {
       if (
-        tierData.typeRef === SUBDIVISION_TYPE ||
-        tierData.typeRef === SYM_SUBDIVISION_TYPE ||
-        !tierData.parentRef
+        !tierData.parentRef ||
+        tierData.stereotype === 'Time_Subdivision' ||
+        tierData.stereotype === 'Symbolic_Subdivision'
       ) {
         continue;
       }
@@ -411,6 +453,7 @@ export class ElanEaf {
         annotator: tierData.annotator || '',
         parentRef: tierData.parentRef,
         typeRef: tierData.typeRef || DEPENDENT_TYPE,
+        stereotype: 'Symbolic_Association',
         isAlignable: false,
         annotations: mapped,
       });
@@ -419,16 +462,26 @@ export class ElanEaf {
     // Ensure timeslots are in non-decreasing order
     timeSlots.sort((a, b) => a.time - b.time);
 
-    const hasTimeSubdivisionTiers = Array.from(this.tiers.values()).some(
-      (t) => t.typeRef === SUBDIVISION_TYPE,
-    );
-    const hasSymSubdivisionTiers = Array.from(this.tiers.values()).some(
-      (t) => t.typeRef === SYM_SUBDIVISION_TYPE,
-    );
-    const hasDependentTiers = Array.from(this.tiers.values()).some(
-      (t) =>
-        t.typeRef === DEPENDENT_TYPE || t.typeRef === SYM_ASSOCIATION_TYPE,
-    );
+    // Collect and disambiguate LINGUISTIC_TYPE definitions (typeRef -> stereotype)
+    const linguisticTypes = new Map();
+    if (this.tiers.size === 0) {
+      linguisticTypes.set(ALIGNED_TYPE, 'None');
+    } else {
+      for (const data of tierOutput.values()) {
+        let typeId = (data.typeRef || ALIGNED_TYPE).trim();
+        const st =
+          data.stereotype || (data.parentRef ? 'Symbolic_Association' : 'None');
+        if (linguisticTypes.has(typeId) && linguisticTypes.get(typeId) !== st) {
+          const suffix =
+            st === 'None'
+              ? 'root'
+              : st.toLowerCase().replace(/_/g, '-');
+          typeId = `${typeId}-${suffix}`;
+          data.typeRef = typeId;
+        }
+        linguisticTypes.set(typeId, st);
+      }
+    }
 
     let xml = `<?xml version="1.0" encoding="UTF-8"?>
 `;
@@ -478,12 +531,12 @@ export class ElanEaf {
         : '';
 
       if (data.annotations.length === 0) {
-        xml += `	<TIER TIER_ID="${escapeXml(tierId)}"${annotAttr}${parentAttr}${partAttr} LINGUISTIC_TYPE_REF="${data.typeRef}" />
+        xml += `	<TIER TIER_ID="${escapeXml(tierId)}"${annotAttr}${parentAttr}${partAttr} LINGUISTIC_TYPE_REF="${escapeXml(data.typeRef)}" />
 `;
         continue;
       }
 
-      xml += `	<TIER TIER_ID="${escapeXml(tierId)}"${annotAttr}${parentAttr}${partAttr} LINGUISTIC_TYPE_REF="${data.typeRef}">
+      xml += `	<TIER TIER_ID="${escapeXml(tierId)}"${annotAttr}${parentAttr}${partAttr} LINGUISTIC_TYPE_REF="${escapeXml(data.typeRef)}">
 `;
       if (data.isAlignable) {
         for (const ann of data.annotations) {
@@ -520,19 +573,20 @@ export class ElanEaf {
     }
 
     // LINGUISTIC_TYPE & CONSTRAINTS
-    xml += `	<LINGUISTIC_TYPE LINGUISTIC_TYPE_ID="${ALIGNED_TYPE}" TIME_ALIGNABLE="true" GRAPHIC_REFERENCES="false" />
+    for (const [ltId, st] of linguisticTypes.entries()) {
+      if (!st || st === 'None') {
+        xml += `	<LINGUISTIC_TYPE LINGUISTIC_TYPE_ID="${escapeXml(ltId)}" TIME_ALIGNABLE="true" GRAPHIC_REFERENCES="false" />
 `;
-    if (hasTimeSubdivisionTiers) {
-      xml += `	<LINGUISTIC_TYPE LINGUISTIC_TYPE_ID="${SUBDIVISION_TYPE}" CONSTRAINTS="Time_Subdivision" TIME_ALIGNABLE="true" GRAPHIC_REFERENCES="false" />
+      } else if (st === 'Time_Subdivision') {
+        xml += `	<LINGUISTIC_TYPE LINGUISTIC_TYPE_ID="${escapeXml(ltId)}" CONSTRAINTS="Time_Subdivision" TIME_ALIGNABLE="true" GRAPHIC_REFERENCES="false" />
 `;
-    }
-    if (hasSymSubdivisionTiers) {
-      xml += `	<LINGUISTIC_TYPE LINGUISTIC_TYPE_ID="${SYM_SUBDIVISION_TYPE}" CONSTRAINTS="Symbolic_Subdivision" TIME_ALIGNABLE="false" GRAPHIC_REFERENCES="false" />
+      } else if (st === 'Symbolic_Subdivision') {
+        xml += `	<LINGUISTIC_TYPE LINGUISTIC_TYPE_ID="${escapeXml(ltId)}" CONSTRAINTS="Symbolic_Subdivision" TIME_ALIGNABLE="false" GRAPHIC_REFERENCES="false" />
 `;
-    }
-    if (hasDependentTiers) {
-      xml += `	<LINGUISTIC_TYPE LINGUISTIC_TYPE_ID="${DEPENDENT_TYPE}" CONSTRAINTS="Symbolic_Association" TIME_ALIGNABLE="false" GRAPHIC_REFERENCES="false" />
+      } else {
+        xml += `	<LINGUISTIC_TYPE LINGUISTIC_TYPE_ID="${escapeXml(ltId)}" CONSTRAINTS="Symbolic_Association" TIME_ALIGNABLE="false" GRAPHIC_REFERENCES="false" />
 `;
+      }
     }
     xml += `	<CONSTRAINT STEREOTYPE="Time_Subdivision" DESCRIPTION="Time subdivision of parent annotation's time interval, no time gaps allowed within this interval" />
 `;
@@ -559,12 +613,12 @@ export class ElanEaf {
  * @param {boolean} [options.includeWordTier=false] Whether to also include a word-level tier
  * @param {string} [options.mainTierTitle=''] Title prefix for main transcription root tiers (e.g. 'BIS' yields 'BIS@Speaker1')
  * @param {string} [options.transcriber=''] Transcriber / author name for main transcription root tiers
- * @param {Array} [options.speakers=[]] Array of speaker objects [{ id, name, initials }]
- * @param {Array} [options.subTiers=[]] Project sub-tiers [{ id, name, annotator }] in the order
+ * @param {Array} [options.speakers=[]] Array of speaker objects [{ id, name, initials, elanTierType }]
+ * @param {Array} [options.subTiers=[]] Project sub-tiers [{ id, name, annotator, elanTierType, stereotype }] in the order
  *   they should appear; each becomes a dependent tier under every speaker tier,
  *   e.g. `Translation@John Doe`
  * @param {string} [options.author='EasperWeb'] Project author / transcriber name
- * @param {'Symbolic_Subdivision'|'Time_Subdivision'} [options.subdivisionStereotype='Symbolic_Subdivision'] Tier stereotype for word subdivisions
+ * @param {'Symbolic_Subdivision'|'Time_Subdivision'} [options.subdivisionStereotype='Symbolic_Subdivision'] Tier stereotype fallback for word subdivisions
  * @returns {string} XML string in .eaf format
  */
 export function exportToEaf({
@@ -582,8 +636,45 @@ export function exportToEaf({
   const eaf = new ElanEaf({ author });
   eaf.addLinkedFile(audioFileName, 'audio/x-wav');
 
-  const isTimeSubdivision = subdivisionStereotype === 'Time_Subdivision';
-  const morphTypeRef = isTimeSubdivision ? SUBDIVISION_TYPE : SYM_SUBDIVISION_TYPE;
+  // Track which raw sub-tiers had an explicit stereotype specified by the caller
+  const explicitSubTierStereotypes = new Map();
+  if (Array.isArray(subTiers)) {
+    for (const rawSt of subTiers) {
+      if (rawSt && typeof rawSt === 'object' && rawSt.stereotype) {
+        const key = rawSt.id != null ? Number(rawSt.id) : rawSt.name;
+        explicitSubTierStereotypes.set(key, String(rawSt.stereotype).trim());
+      }
+    }
+  }
+
+  const getWordSubTierStereotype = (st) => {
+    const explicit =
+      explicitSubTierStereotypes.get(st.id) ||
+      explicitSubTierStereotypes.get(st.name);
+    if (
+      explicit === 'Time_Subdivision' ||
+      explicit === 'Symbolic_Subdivision'
+    ) {
+      return explicit;
+    }
+    if (subdivisionStereotype === 'Time_Subdivision') {
+      return 'Time_Subdivision';
+    }
+    return st.stereotype === 'Time_Subdivision'
+      ? 'Time_Subdivision'
+      : 'Symbolic_Subdivision';
+  };
+
+  const getSubTierTypeRef = (st) => {
+    const custom = (st.elanTierType || '').trim();
+    if (custom) return custom;
+    if (st.type === SUB_TIER_TYPE_WORD) {
+      return getWordSubTierStereotype(st) === 'Time_Subdivision'
+        ? SUBDIVISION_TYPE
+        : SYM_SUBDIVISION_TYPE;
+    }
+    return DEPENDENT_TYPE;
+  };
 
   const mainAnnotator = (
     transcriber ||
@@ -635,23 +726,29 @@ export function exportToEaf({
     for (const spk of speakers) {
       const spkLabel = spk.name ? spk.name.trim() : `Speaker ${spk.id}`;
       const rootTierId = getSpeakerRootTierId(spkLabel);
+      const spkTypeRef = (spk.elanTierType || '').trim() || ALIGNED_TYPE;
       eaf.addTier(rootTierId, spk.name || `Speaker ${spk.id}`, {
-        typeRef: ALIGNED_TYPE,
+        typeRef: spkTypeRef,
+        stereotype: 'None',
         annotator: mainAnnotator,
       });
 
       for (const st of cleanSubTiers) {
         const subTierAnnotator = (st.annotator || '').trim();
+        const subTypeRef = getSubTierTypeRef(st);
         if (st.type === SUB_TIER_TYPE_WORD) {
+          const wordStereotype = getWordSubTierStereotype(st);
           eaf.addTier(dependentTierId(st.name, spkLabel), '', {
             parentRef: rootTierId,
-            typeRef: morphTypeRef,
+            typeRef: subTypeRef,
+            stereotype: wordStereotype,
             annotator: subTierAnnotator,
           });
         } else {
           eaf.addTier(dependentTierId(st.name, spkLabel), '', {
             parentRef: rootTierId,
-            typeRef: DEPENDENT_TYPE,
+            typeRef: subTypeRef,
+            stereotype: 'Symbolic_Association',
             annotator: subTierAnnotator,
           });
         }
@@ -704,6 +801,7 @@ export function exportToEaf({
         participant = 'Speaker 1';
       }
       const rootTierId = getSpeakerRootTierId(spkLabel);
+      const spkTypeRef = (speakerObj?.elanTierType || '').trim() || ALIGNED_TYPE;
 
       const startMs = Math.round(seg.start * 1000);
       const endMs = Math.round(seg.end * 1000);
@@ -715,12 +813,13 @@ export function exportToEaf({
         endMs,
         text,
         participant,
-        { annotator: mainAnnotator },
+        { annotator: mainAnnotator, typeRef: spkTypeRef },
       );
       if (!parentLocalId) continue;
 
       for (const st of cleanSubTiers) {
         const subTierAnnotator = (st.annotator || '').trim();
+        const subTypeRef = getSubTierTypeRef(st);
         if (st.type === SUB_TIER_TYPE_WORD) {
           const words = tokenizeWords(
             seg.text,
@@ -730,8 +829,10 @@ export function exportToEaf({
             const tags = getWordAnnotations(seg, st.id, words.length);
             const cleanTags = tags.map((t) => (t ? String(t).trim() : ''));
             const subTierId = dependentTierId(st.name, spkLabel);
+            const isTimeSubdiv =
+              getWordSubTierStereotype(st) === 'Time_Subdivision';
 
-            if (isTimeSubdivision) {
+            if (isTimeSubdiv) {
               const durationMs = endMs - startMs;
               const tagItems = cleanTags.map((tagVal, idx) => {
                 const mStart =
@@ -753,7 +854,7 @@ export function exportToEaf({
                 rootTierId,
                 parentLocalId,
                 tagItems,
-                { annotator: subTierAnnotator },
+                { annotator: subTierAnnotator, typeRef: subTypeRef },
               );
             } else {
               eaf.addSymbolicSubdivisionAnnotations(
@@ -761,7 +862,7 @@ export function exportToEaf({
                 rootTierId,
                 parentLocalId,
                 cleanTags,
-                { annotator: subTierAnnotator },
+                { annotator: subTierAnnotator, typeRef: subTypeRef },
               );
             }
           }
@@ -773,17 +874,20 @@ export function exportToEaf({
               rootTierId,
               parentLocalId,
               subText,
-              { annotator: subTierAnnotator },
+              { annotator: subTierAnnotator, typeRef: subTypeRef },
             );
           }
         }
       }
     }
   } else if (chunks && chunks.length > 0) {
+    const fallbackSpkObj = speakers && speakers[0] ? speakers[0] : null;
     const fallbackSpk =
-      speakers && speakers[0]?.name ? speakers[0].name.trim() : 'Speaker 1';
+      fallbackSpkObj?.name ? fallbackSpkObj.name.trim() : 'Speaker 1';
     const fallbackTier = getSpeakerRootTierId(fallbackSpk);
     const fallbackParticipant = fallbackSpk;
+    const fallbackTypeRef =
+      (fallbackSpkObj?.elanTierType || '').trim() || ALIGNED_TYPE;
     for (const chunk of chunks) {
       const text = cleanSpeechText(chunk.text);
       if (!text) continue;
@@ -796,7 +900,7 @@ export function exportToEaf({
         endMs,
         text,
         fallbackParticipant,
-        { annotator: mainAnnotator },
+        { annotator: mainAnnotator, typeRef: fallbackTypeRef },
       );
     }
   }

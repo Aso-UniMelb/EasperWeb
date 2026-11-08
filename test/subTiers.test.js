@@ -195,6 +195,8 @@ describe('subTiers utils', () => {
         id: 1,
         name: 'Translation',
         type: 'sentence',
+        stereotype: 'Symbolic_Association',
+        elanTierType: '',
         lexicon: [],
         splitters: DEFAULT_SPLITTERS,
         lexiconField: '',
@@ -204,6 +206,8 @@ describe('subTiers utils', () => {
         id: 2,
         name: 'POS',
         type: 'word',
+        stereotype: 'Symbolic_Subdivision',
+        elanTierType: '',
         lexicon: [
           { value: 'prop', label: 'Proper Name' },
           { value: 'n', label: 'Noun' },
@@ -216,21 +220,45 @@ describe('subTiers utils', () => {
       });
     });
 
-    it('preserves custom splitters, lexiconField, and annotator when specified', () => {
+    it('preserves custom splitters, lexiconField, annotator, stereotype, and elanTierType when specified', () => {
       const raw = [
         {
           id: 1,
           name: 'Morphs',
           type: 'word',
+          stereotype: 'Time_Subdivision',
+          elanTierType: 'custom-morph-lt',
           splitters: '~ = :',
           lexiconField: 'Gloss',
           annotator: 'Alice Linguist',
+        },
+        {
+          id: 2,
+          name: 'FreeTranslation',
+          stereotype: 'Symbolic_Association',
+          elanTierType: 'ft-lt',
+        },
+        {
+          id: 3,
+          name: 'AutoWordFromStereotype',
+          stereotype: 'Symbolic_Subdivision',
+          elanTierType: 'sym-sub-lt',
         },
       ];
       const normalized = normalizeSubTiers(raw);
       expect(normalized[0].splitters).toBe('~ = :');
       expect(normalized[0].lexiconField).toBe('Gloss');
       expect(normalized[0].annotator).toBe('Alice Linguist');
+      expect(normalized[0].stereotype).toBe('Time_Subdivision');
+      expect(normalized[0].elanTierType).toBe('custom-morph-lt');
+
+      expect(normalized[1].type).toBe('sentence');
+      expect(normalized[1].stereotype).toBe('Symbolic_Association');
+      expect(normalized[1].elanTierType).toBe('ft-lt');
+
+      expect(normalized[2].type).toBe('word');
+      expect(normalized[2].stereotype).toBe('Symbolic_Subdivision');
+      expect(normalized[2].elanTierType).toBe('sym-sub-lt');
     });
 
     it('defaults type to sentence and cleans string lexicons with labels', () => {

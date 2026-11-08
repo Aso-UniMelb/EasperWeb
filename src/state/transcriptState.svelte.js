@@ -3755,6 +3755,8 @@ class TranscriptState {
           id: Number(c.key),
           name: c.name,
           type: c.type,
+          stereotype: c.stereotype || '',
+          elanTierType: c.elanTierType || '',
           lexicon: c.lexicon,
           splitters: c.splitters,
           annotator: c.annotator || '',

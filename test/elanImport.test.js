@@ -321,9 +321,134 @@ describe('ELAN import with annotators and main tier title', () => {
     expect(exportedXml).not.toContain('morphs@');
     expect(exportedXml).not.toContain('morphemes@');
     expect(exportedXml).not.toContain('Symbolic_Subdivision" TIME_ALIGNABLE');
-    expect(exportedXml).toContain('TIER_ID="Gloss@Speaker1" PARENT_REF="BIS@Speaker1" LINGUISTIC_TYPE_REF="dependent-lt"');
-    expect(exportedXml).toContain('TIER_ID="POS@Speaker1" PARENT_REF="BIS@Speaker1" LINGUISTIC_TYPE_REF="dependent-lt"');
-    expect(exportedXml).toContain('TIER_ID="morph@Speaker1" PARENT_REF="BIS@Speaker1" LINGUISTIC_TYPE_REF="dependent-lt"');
+    expect(exportedXml).toContain('TIER_ID="Gloss@Speaker1" PARENT_REF="BIS@Speaker1" LINGUISTIC_TYPE_REF="sym-assoc-lt"');
+    expect(exportedXml).toContain('TIER_ID="POS@Speaker1" PARENT_REF="BIS@Speaker1" LINGUISTIC_TYPE_REF="sym-assoc-lt"');
+    expect(exportedXml).toContain('TIER_ID="morph@Speaker1" PARENT_REF="BIS@Speaker1" LINGUISTIC_TYPE_REF="sym-assoc-lt"');
+  });
+
+  it('preserves custom ELAN tier types (elanTierType) and stereotypes for speakers and sub-tiers through import and export roundtrip', () => {
+    const rawXml = `<?xml version="1.0" encoding="UTF-8"?>
+<ANNOTATION_DOCUMENT AUTHOR="Linguist" DATE="2026-11-08T00:00:00" VERSION="3.0" FORMAT="3.0">
+  <HEADER TIME_UNITS="milliseconds" />
+  <TIME_ORDER>
+    <TIME_SLOT TIME_SLOT_ID="ts1" TIME_VALUE="0" />
+    <TIME_SLOT TIME_SLOT_ID="ts2" TIME_VALUE="1000" />
+    <TIME_SLOT TIME_SLOT_ID="ts3" TIME_VALUE="2000" />
+    <TIME_SLOT TIME_SLOT_ID="ts4" TIME_VALUE="3000" />
+  </TIME_ORDER>
+  <TIER TIER_ID="tx@SpkA" PARTICIPANT="SpkA" LINGUISTIC_TYPE_REF="utterance-lt">
+    <ANNOTATION>
+      <ALIGNABLE_ANNOTATION ANNOTATION_ID="a1" TIME_SLOT_REF1="ts1" TIME_SLOT_REF2="ts3">
+        <ANNOTATION_VALUE>hello world</ANNOTATION_VALUE>
+      </ALIGNABLE_ANNOTATION>
+    </ANNOTATION>
+  </TIER>
+  <TIER TIER_ID="tx@SpkB" PARTICIPANT="SpkB" LINGUISTIC_TYPE_REF="utterance-b-lt">
+    <ANNOTATION>
+      <ALIGNABLE_ANNOTATION ANNOTATION_ID="a2" TIME_SLOT_REF1="ts3" TIME_SLOT_REF2="ts4">
+        <ANNOTATION_VALUE>hi</ANNOTATION_VALUE>
+      </ALIGNABLE_ANNOTATION>
+    </ANNOTATION>
+  </TIER>
+  <TIER TIER_ID="ft@SpkA" PARENT_REF="tx@SpkA" LINGUISTIC_TYPE_REF="free-trans-lt">
+    <ANNOTATION>
+      <REF_ANNOTATION ANNOTATION_ID="a3" ANNOTATION_REF="a1">
+        <ANNOTATION_VALUE>greeting world</ANNOTATION_VALUE>
+      </REF_ANNOTATION>
+    </ANNOTATION>
+  </TIER>
+  <TIER TIER_ID="pos@SpkA" PARENT_REF="tx@SpkA" LINGUISTIC_TYPE_REF="pos-sym-lt">
+    <ANNOTATION>
+      <REF_ANNOTATION ANNOTATION_ID="a4" ANNOTATION_REF="a1">
+        <ANNOTATION_VALUE>INTJ</ANNOTATION_VALUE>
+      </REF_ANNOTATION>
+    </ANNOTATION>
+    <ANNOTATION>
+      <REF_ANNOTATION ANNOTATION_ID="a5" ANNOTATION_REF="a1" PREVIOUS_ANNOTATION="a4">
+        <ANNOTATION_VALUE>NOUN</ANNOTATION_VALUE>
+      </REF_ANNOTATION>
+    </ANNOTATION>
+  </TIER>
+  <TIER TIER_ID="morph@SpkA" PARENT_REF="tx@SpkA" LINGUISTIC_TYPE_REF="morph-time-lt">
+    <ANNOTATION>
+      <ALIGNABLE_ANNOTATION ANNOTATION_ID="a6" TIME_SLOT_REF1="ts1" TIME_SLOT_REF2="ts2">
+        <ANNOTATION_VALUE>M1</ANNOTATION_VALUE>
+      </ALIGNABLE_ANNOTATION>
+    </ANNOTATION>
+    <ANNOTATION>
+      <ALIGNABLE_ANNOTATION ANNOTATION_ID="a7" TIME_SLOT_REF1="ts2" TIME_SLOT_REF2="ts3">
+        <ANNOTATION_VALUE>M2</ANNOTATION_VALUE>
+      </ALIGNABLE_ANNOTATION>
+    </ANNOTATION>
+  </TIER>
+  <LINGUISTIC_TYPE LINGUISTIC_TYPE_ID="utterance-lt" TIME_ALIGNABLE="true" />
+  <LINGUISTIC_TYPE LINGUISTIC_TYPE_ID="utterance-b-lt" TIME_ALIGNABLE="true" />
+  <LINGUISTIC_TYPE LINGUISTIC_TYPE_ID="free-trans-lt" CONSTRAINTS="Symbolic_Association" TIME_ALIGNABLE="false" />
+  <LINGUISTIC_TYPE LINGUISTIC_TYPE_ID="pos-sym-lt" CONSTRAINTS="Symbolic_Subdivision" TIME_ALIGNABLE="false" />
+  <LINGUISTIC_TYPE LINGUISTIC_TYPE_ID="morph-time-lt" CONSTRAINTS="Time_Subdivision" TIME_ALIGNABLE="true" />
+</ANNOTATION_DOCUMENT>`;
+
+    const parsed = parseEaf(rawXml, 'custom-types.eaf');
+    expect(parsed.linguisticTypes).toHaveLength(5);
+
+    const detected = detectTierDefaults(parsed);
+
+    // Per-speaker ELAN tier type preserved
+    const spkA = detected.speakers.find((s) => s.name === 'SpkA');
+    const spkB = detected.speakers.find((s) => s.name === 'SpkB');
+    expect(spkA?.elanTierType).toBe('utterance-lt');
+    expect(spkB?.elanTierType).toBe('utterance-b-lt');
+
+    // Per-sub-tier ELAN tier type and stereotype preserved
+    const ftSub = detected.subTiers.find((st) => st.name === 'ft');
+    const posSub = detected.subTiers.find((st) => st.name === 'pos');
+    const morphSub = detected.subTiers.find((st) => st.name === 'morph');
+
+    expect(ftSub).toMatchObject({
+      type: 'sentence',
+      stereotype: 'Symbolic_Association',
+      elanTierType: 'free-trans-lt',
+    });
+    expect(posSub).toMatchObject({
+      type: 'word',
+      stereotype: 'Symbolic_Subdivision',
+      elanTierType: 'pos-sym-lt',
+    });
+    expect(morphSub).toMatchObject({
+      type: 'word',
+      stereotype: 'Time_Subdivision',
+      elanTierType: 'morph-time-lt',
+    });
+
+    const compiled = compileElanToProject({
+      eafData: parsed,
+      tierConfigs: detected.tierConfigs,
+      speakers: detected.speakers,
+      subTiers: detected.subTiers,
+    });
+
+    expect(compiled.speakers.find((s) => s.name === 'SpkA')?.elanTierType).toBe('utterance-lt');
+    expect(compiled.speakers.find((s) => s.name === 'SpkB')?.elanTierType).toBe('utterance-b-lt');
+
+    const exportedXml = exportToEaf({
+      segments: compiled.segments,
+      subTiers: compiled.subTiers,
+      speakers: compiled.speakers,
+      mainTierTitle: detected.suggestedMainTierTitle,
+    });
+
+    // Verify exported XML preserves custom LINGUISTIC_TYPE_IDs and CONSTRAINTS
+    expect(exportedXml).toContain('<LINGUISTIC_TYPE LINGUISTIC_TYPE_ID="utterance-lt" TIME_ALIGNABLE="true" GRAPHIC_REFERENCES="false" />');
+    expect(exportedXml).toContain('<LINGUISTIC_TYPE LINGUISTIC_TYPE_ID="utterance-b-lt" TIME_ALIGNABLE="true" GRAPHIC_REFERENCES="false" />');
+    expect(exportedXml).toContain('<LINGUISTIC_TYPE LINGUISTIC_TYPE_ID="free-trans-lt" CONSTRAINTS="Symbolic_Association" TIME_ALIGNABLE="false" GRAPHIC_REFERENCES="false" />');
+    expect(exportedXml).toContain('<LINGUISTIC_TYPE LINGUISTIC_TYPE_ID="pos-sym-lt" CONSTRAINTS="Symbolic_Subdivision" TIME_ALIGNABLE="false" GRAPHIC_REFERENCES="false" />');
+    expect(exportedXml).toContain('<LINGUISTIC_TYPE LINGUISTIC_TYPE_ID="morph-time-lt" CONSTRAINTS="Time_Subdivision" TIME_ALIGNABLE="true" GRAPHIC_REFERENCES="false" />');
+
+    expect(exportedXml).toContain('<TIER TIER_ID="tx@SpkA" PARTICIPANT="SpkA" LINGUISTIC_TYPE_REF="utterance-lt">');
+    expect(exportedXml).toContain('<TIER TIER_ID="tx@SpkB" PARTICIPANT="SpkB" LINGUISTIC_TYPE_REF="utterance-b-lt">');
+    expect(exportedXml).toContain('<TIER TIER_ID="ft@SpkA" PARENT_REF="tx@SpkA" LINGUISTIC_TYPE_REF="free-trans-lt">');
+    expect(exportedXml).toContain('<TIER TIER_ID="pos@SpkA" PARENT_REF="tx@SpkA" LINGUISTIC_TYPE_REF="pos-sym-lt">');
+    expect(exportedXml).toContain('<TIER TIER_ID="morph@SpkA" PARENT_REF="tx@SpkA" LINGUISTIC_TYPE_REF="morph-time-lt">');
   });
 
   it('roundtrips word sub-tiers cleanly without creating an intermediary morphs@ tier', () => {
@@ -383,6 +508,34 @@ describe('ELAN import with annotators and main tier title', () => {
     expect(compiled.segments[0].subTexts[String(transTier.id)]).toBe(
       'The books are here',
     );
+  });
+
+  it('sorts tierConfigs so dependent tiers appear directly below their parent tier', () => {
+    const rawXml = `<?xml version="1.0" encoding="UTF-8"?>
+<ANNOTATION_DOCUMENT VERSION="3.0">
+  <TIME_ORDER>
+    <TIME_SLOT TIME_SLOT_ID="ts1" TIME_VALUE="0"/>
+    <TIME_SLOT TIME_SLOT_ID="ts2" TIME_VALUE="1000"/>
+  </TIME_ORDER>
+  <TIER TIER_ID="Spk1" LINGUISTIC_TYPE_REF="default-lt" />
+  <TIER TIER_ID="Spk2" LINGUISTIC_TYPE_REF="default-lt" />
+  <TIER TIER_ID="Trans@Spk2" PARENT_REF="Spk2" LINGUISTIC_TYPE_REF="dependent-lt" />
+  <TIER TIER_ID="Trans@Spk1" PARENT_REF="Spk1" LINGUISTIC_TYPE_REF="dependent-lt" />
+  <TIER TIER_ID="Gloss@Spk1" PARENT_REF="Spk1" LINGUISTIC_TYPE_REF="dependent-lt" />
+  <LINGUISTIC_TYPE LINGUISTIC_TYPE_ID="default-lt" TIME_ALIGNABLE="true" />
+  <LINGUISTIC_TYPE LINGUISTIC_TYPE_ID="dependent-lt" CONSTRAINTS="Symbolic_Association" TIME_ALIGNABLE="false" />
+</ANNOTATION_DOCUMENT>`;
+
+    const parsed = parseEaf(rawXml, 'sorted.eaf');
+    const detected = detectTierDefaults(parsed);
+
+    expect(detected.tierConfigs.map((tc) => tc.tierId)).toEqual([
+      'Spk1',
+      'Trans@Spk1',
+      'Gloss@Spk1',
+      'Spk2',
+      'Trans@Spk2',
+    ]);
   });
 });
 

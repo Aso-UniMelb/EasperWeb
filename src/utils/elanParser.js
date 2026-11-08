@@ -365,6 +365,7 @@ export function parseEaf(xmlString, fileName = 'unknown.eaf') {
     author,
     date,
     mediaDescriptors,
+    linguisticTypes: Array.from(linguisticTypeMap.values()),
     tiers,
     allAnnotations,
   };

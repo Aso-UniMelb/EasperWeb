@@ -457,6 +457,12 @@ class ModelState {
         if (stored) addedPresetIds = JSON.parse(stored);
       } catch (e) {}
 
+      let presetCustomTitles = {};
+      try {
+        const storedTitles = localStorage.getItem('easper_preset_model_titles');
+        if (storedTitles) presetCustomTitles = JSON.parse(storedTitles) || {};
+      } catch (e) {}
+
       // Reconstruct models from added IDs
       const activePresets = [];
       for (const pId of addedPresetIds) {
@@ -487,11 +493,12 @@ class ModelState {
           const langName = isWhistle
             ? getWhistleLanguageName(lang)
             : getLanguageName(lang);
+          const defaultTitle = `${base.baseTitle || base.title} (${langName})`;
           activePresets.push({
             ...base,
             id: pId,
             baseId: base.baseId || base.id,
-            title: `${base.baseTitle || base.title} (${langName})`,
+            title: presetCustomTitles[pId] || defaultTitle,
             language: lang,
             languageName: langName,
           });
@@ -725,6 +732,17 @@ class ModelState {
           JSON.stringify(addedPresetIds),
         );
       } catch (e) {}
+      try {
+        const storedTitles = localStorage.getItem('easper_preset_model_titles');
+        if (storedTitles) {
+          const titles = JSON.parse(storedTitles) || {};
+          delete titles[id];
+          localStorage.setItem(
+            'easper_preset_model_titles',
+            JSON.stringify(titles),
+          );
+        }
+      } catch (e) {}
     } else {
       // Deletes model metadata and all associated binary file Blobs from IndexedDB
       await deleteAsrModel(id);
@@ -760,6 +778,37 @@ class ModelState {
     } else {
       appState.statusMessage = `Deleted model "${target.title}" and purged from local storage.`;
     }
+  }
+
+  async renameModel(id, newTitle) {
+    const cleanTitle = String(newTitle || '').trim();
+    if (!cleanTitle) return false;
+    const idx = this.models.findIndex((m) => m.id === id);
+    if (idx === -1) return false;
+
+    const updated = { ...this.models[idx], title: cleanTitle };
+    this.models[idx] = updated;
+    this.models = [...this.models];
+
+    if (updated.isPreset) {
+      let customTitles = {};
+      try {
+        const stored = localStorage.getItem('easper_preset_model_titles');
+        if (stored) customTitles = JSON.parse(stored) || {};
+      } catch (e) {}
+      customTitles[id] = cleanTitle;
+      try {
+        localStorage.setItem(
+          'easper_preset_model_titles',
+          JSON.stringify(customTitles),
+        );
+      } catch (e) {}
+    } else {
+      await saveAsrModel($state.snapshot(updated));
+    }
+
+    appState.statusMessage = `Renamed model to "${cleanTitle}".`;
+    return true;
   }
 
   async deleteModel(id) {

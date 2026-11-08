@@ -19,6 +19,28 @@
   let sortField = $state('title'); // 'title' | 'modelSource' | 'language' | 'dtype'
   let sortDir = $state('asc'); // 'asc' | 'desc'
 
+  let editingModelId = $state(null);
+  let editingModelTitle = $state('');
+
+  function startRenameModel(model) {
+    editingModelId = model.id;
+    editingModelTitle = model.title || '';
+  }
+
+  async function saveRenameModel(modelId) {
+    const trimmed = editingModelTitle.trim();
+    if (trimmed) {
+      await modelState.renameModel(modelId, trimmed);
+    }
+    editingModelId = null;
+    editingModelTitle = '';
+  }
+
+  function cancelRenameModel() {
+    editingModelId = null;
+    editingModelTitle = '';
+  }
+
   function toggleSort(field) {
     if (sortField === field) {
       sortDir = sortDir === 'asc' ? 'desc' : 'asc';
@@ -336,7 +358,27 @@
                 </td>
                 <td class="col-model">
                   <div class="model-title-cell">
-                    {#if m.modelSource === 'hub' && m.modelId}
+                    {#if editingModelId === m.id}
+                      <!-- svelte-ignore a11y_autofocus -->
+                      <input
+                        type="text"
+                        class="model-title-edit-input"
+                        bind:value={editingModelTitle}
+                        autofocus
+                        onclick={(e) => e.stopPropagation()}
+                        onkeydown={(e) => {
+                          e.stopPropagation();
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            saveRenameModel(m.id);
+                          } else if (e.key === 'Escape') {
+                            e.preventDefault();
+                            cancelRenameModel();
+                          }
+                        }}
+                        aria-label="Edit model title"
+                      />
+                    {:else if m.modelSource === 'hub' && m.modelId}
                       <a
                         href="https://huggingface.co/{m.modelId}"
                         target="_blank"
@@ -456,28 +498,66 @@
                   {/if}
                 </td>
                 <td class="col-actions">
-                  <button
-                    type="button"
-                    class="btn-subtle text-danger"
-                    onclick={(e) => {
-                      e.stopPropagation();
-                      const note = m.isPreset
-                        ? ' (You can restore default presets anytime)'
-                        : '';
-                      if (
-                        confirm(
-                          `Delete model "${m.title}" from your library?${note}`,
-                        )
-                      ) {
-                        modelState.deleteCustomModel(m.id);
-                      }
-                    }}
-                    title={m.isPreset
-                      ? 'Delete preset model'
-                      : 'Delete custom model'}
-                  >
-                    <i class="fa-solid fa-trash-can"></i>
-                  </button>
+                  <div class="table-actions-group">
+                    {#if editingModelId === m.id}
+                      <button
+                        type="button"
+                        class="btn-subtle text-primary"
+                        onclick={(e) => {
+                          e.stopPropagation();
+                          saveRenameModel(m.id);
+                        }}
+                        title="Save model title"
+                      >
+                        <i class="fa-solid fa-check"></i>
+                      </button>
+                      <button
+                        type="button"
+                        class="btn-subtle"
+                        onclick={(e) => {
+                          e.stopPropagation();
+                          cancelRenameModel();
+                        }}
+                        title="Cancel rename"
+                      >
+                        <i class="fa-solid fa-xmark"></i>
+                      </button>
+                    {:else}
+                      <button
+                        type="button"
+                        class="btn-subtle"
+                        onclick={(e) => {
+                          e.stopPropagation();
+                          startRenameModel(m);
+                        }}
+                        title="Rename model title"
+                      >
+                        <i class="fa-solid fa-pen"></i>
+                      </button>
+                      <button
+                        type="button"
+                        class="btn-subtle text-danger"
+                        onclick={(e) => {
+                          e.stopPropagation();
+                          const note = m.isPreset
+                            ? ' (You can restore default presets anytime)'
+                            : '';
+                          if (
+                            confirm(
+                              `Delete model "${m.title}" from your library?${note}`,
+                            )
+                          ) {
+                            modelState.deleteCustomModel(m.id);
+                          }
+                        }}
+                        title={m.isPreset
+                          ? 'Delete preset model'
+                          : 'Delete custom model'}
+                      >
+                        <i class="fa-solid fa-trash-can"></i>
+                      </button>
+                    {/if}
+                  </div>
                 </td>
               </tr>
             {/each}
@@ -1172,7 +1252,7 @@
   }
 
   .col-actions {
-    width: 60px;
+    width: 96px;
     text-align: right;
   }
 
@@ -1180,11 +1260,39 @@
     text-align: right;
   }
 
+  .table-actions-group {
+    display: inline-flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 4px;
+  }
+
   .model-title-cell {
     display: flex;
     align-items: center;
     gap: 8px;
     flex-wrap: wrap;
+  }
+
+  .model-title-edit-input {
+    width: 100%;
+    max-width: 260px;
+    padding: 5px 9px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--text-heading, #0f172a);
+    background: var(--bg-card, #ffffff);
+    border: 1px solid var(--primary-color, #0284c7);
+    border-radius: 6px;
+    outline: none;
+    box-shadow: 0 0 0 2px rgba(2, 132, 199, 0.15);
+  }
+
+  :global([data-theme='dark']) .model-title-edit-input {
+    color: #f8fafc;
+    background: #0f172a;
+    border-color: #38bdf8;
+    box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.2);
   }
 
   .model-title-plain {

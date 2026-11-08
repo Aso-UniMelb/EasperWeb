@@ -1,22 +1,11 @@
 <script>
   import { projectState } from '../../state/projectState.svelte.js';
-  import { appState } from '../../state/appState.svelte.js';
   import { transcriptState } from '../../state/transcriptState.svelte.js';
   import { parseEaf, matchAudioAndEaf } from '../../utils/elanParser.js';
   import {
     detectTierDefaults,
     compileElanToProject,
   } from '../../utils/elanImporter.js';
-  import {
-    SPEAKER_COLORS,
-    getSpeakerColor,
-    getSpeakerInitials,
-  } from '../../utils/speakers.js';
-  import {
-    MAX_SUB_TIERS,
-    SUB_TIER_PRESETS,
-    normalizeSubTiers,
-  } from '../../utils/subTiers.js';
   import { lexiconState } from '../../state/lexiconState.svelte.js';
 
   let isTargetActiveProject = $derived(
@@ -100,13 +89,11 @@
 
       // Auto-detect tier defaults
       const detected = detectTierDefaults(parsedEaf);
-      if (!title.trim()) {
-        title = detected.suggestedTitle;
-      }
-      if (!transcriber.trim() && detected.suggestedTranscriber) {
+      title = detected.suggestedTitle || title;
+      if (detected.suggestedTranscriber) {
         transcriber = detected.suggestedTranscriber;
       }
-      if (!mainTierTitle.trim() && detected.suggestedMainTierTitle) {
+      if (detected.suggestedMainTierTitle) {
         mainTierTitle = detected.suggestedMainTierTitle;
       }
       speakers = detected.speakers;
@@ -179,42 +166,21 @@
     }
   }
 
-  function handleAddSpeaker() {
-    if (speakers.length >= 5) {
-      errorMessage = 'Maximum of 5 speakers allowed.';
-      return;
-    }
-    const usedIds = new Set(speakers.map((s) => Number(s.id)));
-    let nextId = 1;
-    while (nextId <= 5 && usedIds.has(nextId)) nextId++;
-    if (nextId > 5) return;
-
-    speakers = [
-      ...speakers,
-      {
-        id: nextId,
-        name: `Speaker ${nextId}`,
-        initials: `S${nextId}`,
-      },
-    ].sort((a, b) => a.id - b.id);
+  function formatStereotypeShort(stereotype) {
+    if (!stereotype || stereotype === 'None') return 'Root';
+    if (stereotype === 'Symbolic_Subdivision') return 'Sym Subdiv';
+    if (stereotype === 'Symbolic_Association') return 'Sym Assoc';
+    if (stereotype === 'Time_Subdivision') return 'Time Subdiv';
+    if (stereotype === 'Included_In') return 'Included In';
+    return stereotype;
   }
 
-  function handleAddSubTier() {
-    if (subTiers.length >= MAX_SUB_TIERS) {
-      errorMessage = `Maximum of ${MAX_SUB_TIERS} sub-tiers allowed.`;
-      return;
-    }
-    const used = new Set(subTiers.map((t) => Number(t.id)));
-    let nextId = 1;
-    while (nextId <= MAX_SUB_TIERS && used.has(nextId)) nextId++;
-    if (nextId > MAX_SUB_TIERS) return;
-
-    subTiers = [
-      ...subTiers,
-      { id: nextId, name: '', annotator: '' },
-    ].sort((a, b) => a.id - b.id);
-  }
-
+  let includedTierCount = $derived(
+    tierConfigs.filter((t) => t.included).length,
+  );
+  let skippedTierCount = $derived(
+    tierConfigs.filter((t) => !t.included).length,
+  );
   let selectedSpeakerTierCount = $derived(
     tierConfigs.filter((t) => t.included && t.role === 'speaker').length,
   );
@@ -239,7 +205,7 @@
     }
     if (selectedSpeakerTierCount === 0) {
       errorMessage =
-        'Please select at least one tier as "Speaker Utterance" to generate segments.';
+        'Please include at least one tier mapped to a Speaker to generate segments.';
       return;
     }
 
@@ -297,10 +263,7 @@
 </script>
 
 {#if projectState.isElanOverwriteWarningOpen && projectState.activeProject}
-  <div
-    class="modal-backdrop"
-    role="presentation"
-  >
+  <div class="modal-backdrop" role="presentation">
     <div
       class="modal-dialog elan-warning-dialog"
       role="dialog"
@@ -346,11 +309,10 @@
             </p>
             <p class="elan-warning-secondary">
               Proceeding will delete all current segments in
-              <strong>{projectState.activeProject.title}</strong> and open the
-              ELAN (.eaf) import dialog so you can configure and import
-              speakers, sub-tiers, and utterances directly into the loaded audio
-              recording without re-converting the audio or rebuilding the
-              waveform.
+              <strong>{projectState.activeProject.title}</strong> and open the ELAN
+              (.eaf) import dialog so you can configure and import speakers, sub-tiers,
+              and utterances directly into the loaded audio recording without re-converting
+              the audio or rebuilding the waveform.
             </p>
           </div>
         </div>
@@ -383,30 +345,49 @@
 {/if}
 
 {#if projectState.isImportElanOpen}
-  <div
-    class="modal-backdrop"
-    role="presentation"
-  >
+  <div class="modal-backdrop" role="presentation">
     <div class="modal-dialog elan-import-dialog">
+      <!-- Hidden file inputs -->
+      <input
+        type="file"
+        multiple
+        accept=".eaf,.wav,.mp3,.m4a,.ogg,.flac"
+        bind:this={comboInputEl}
+        onchange={(e) => handleComboFiles(e.target.files)}
+        style="display: none;"
+      />
+      <input
+        type="file"
+        accept=".eaf"
+        bind:this={eafInputEl}
+        onchange={(e) => {
+          const f = e.target.files?.[0];
+          if (f) handleEafSelected(f);
+        }}
+        style="display: none;"
+      />
+      <input
+        type="file"
+        accept=".wav,.mp3,.m4a,.ogg,.flac"
+        bind:this={audioInputEl}
+        onchange={(e) => {
+          const f = e.target.files?.[0];
+          if (f) handleAudioSelected(f);
+        }}
+        style="display: none;"
+      />
+
       <!-- Modal Header -->
       <div class="modal-header">
         <div class="modal-title">
           <i class="fa-solid fa-file-waveform modal-title-icon"></i>
-          <div>
+          <div class="modal-title-text">
             {#if isTargetActiveProject}
               <h3>
                 Import ELAN (.eaf) into "{projectState.activeProject.title}"
               </h3>
-              <p class="modal-subtitle">
-                Configure speakers and sub-tiers from ELAN for the currently
-                loaded audio
-              </p>
             {:else}
-              <h3>Import from ELAN (.eaf + .wav)</h3>
-              <p class="modal-subtitle">
-                Convert multi-tier ELAN annotations into Easper dialogue
-                segments
-              </p>
+              <h3>Import from ELAN (.eaf + Audio)</h3>
             {/if}
           </div>
         </div>
@@ -424,15 +405,13 @@
       <!-- Modal Body -->
       <div class="modal-body">
         {#if isConverting}
-          <!-- Converting / Processing Indicator -->
           <div class="converting-overlay">
             <div class="converting-spinner">
               <i class="fa-solid fa-circle-notch fa-spin"></i>
             </div>
             <h4>Importing ELAN Annotations...</h4>
             <p class="converting-subtext">
-              {convertingMessage ||
-                'Building segments and updating project...'}
+              {convertingMessage || 'Building segments and updating project...'}
             </p>
           </div>
         {:else}
@@ -443,98 +422,76 @@
             </div>
           {/if}
 
-          <!-- Step 1: File Selection Area -->
-          <div class="elan-files-section">
-            <div
-              class="combo-dropzone {isDropZoneHover
-                ? 'drag-over'
-                : ''} {eafFile && (isTargetActiveProject || audioFile)
-                ? 'files-ready'
-                : ''}"
-              ondragover={(e) => {
-                e.preventDefault();
-                isDropZoneHover = true;
-              }}
-              ondragleave={() => (isDropZoneHover = false)}
-              ondrop={handleDrop}
-              role="region"
-              aria-label="ELAN file drop zone"
-            >
-              {#if !isTargetActiveProject}
-                <div class="dropzone-header">
-                  <i class="fa-solid fa-cloud-arrow-up drop-icon"></i>
-                  <div class="drop-text-wrap">
-                    <strong>Drop .eaf and audio file together here</strong>
-                    <span>or select files individually below</span>
-                  </div>
-                  <button
-                    type="button"
-                    class="btn-select-both"
-                    onclick={() => comboInputEl?.click()}
-                  >
-                    <i class="fa-solid fa-folder-open"></i> Browse Pair
-                  </button>
-                  <input
-                    type="file"
-                    multiple
-                    accept=".eaf,.wav,.mp3,.m4a,.ogg,.flac"
-                    bind:this={comboInputEl}
-                    onchange={(e) => handleComboFiles(e.target.files)}
-                    style="display: none;"
-                  />
+          <!-- File Selection Area (Compact strip when loaded, full dropzone when empty) -->
+          <div
+            class="elan-files-section {parsedEaf
+              ? 'is-compact'
+              : ''} {isDropZoneHover ? 'drag-over' : ''} {eafFile &&
+            (isTargetActiveProject || audioFile)
+              ? 'files-ready'
+              : ''}"
+            ondragover={(e) => {
+              e.preventDefault();
+              isDropZoneHover = true;
+            }}
+            ondragleave={() => (isDropZoneHover = false)}
+            ondrop={handleDrop}
+            role="region"
+            aria-label="ELAN file drop zone"
+          >
+            {#if !parsedEaf && !isTargetActiveProject}
+              <div class="dropzone-header">
+                <i class="fa-solid fa-cloud-arrow-up drop-icon"></i>
+                <div class="drop-text-wrap">
+                  <strong>Drop .eaf and audio file together here</strong>
+                  <span>or select files below</span>
                 </div>
-              {/if}
+                <button
+                  type="button"
+                  class="btn-select-both"
+                  onclick={() => comboInputEl?.click()}
+                >
+                  <i class="fa-solid fa-folder-open"></i> Browse Pair
+                </button>
+              </div>
+            {/if}
 
-              <!-- Individual File Slots -->
-              <div class="file-slots-grid">
-                <!-- Slot 1: EAF File -->
-                <div class="file-slot {eafFile ? 'slot-loaded' : ''}">
-                  <div class="slot-icon">
-                    <i class="fa-solid fa-file-code"></i>
-                  </div>
-                  <div class="slot-info">
-                    <span class="slot-label">ELAN Annotation File</span>
-                    {#if eafFile}
+            <div class="file-slots-grid">
+              <!-- Slot 1: EAF File -->
+              <div class="file-slot {eafFile ? 'slot-loaded' : ''}">
+                <i class="fa-solid fa-file-code slot-icon"></i>
+                <div class="slot-info">
+                  <span class="slot-label">ELAN (.eaf)</span>
+                  {#if eafFile}
+                    <div class="slot-file-row">
                       <strong class="slot-filename" title={eafFile.name}>
                         {eafFile.name}
                       </strong>
                       <span class="slot-meta">
-                        {parsedEaf?.tiers?.length || 0} tiers, {parsedEaf
-                          ?.allAnnotations?.length || 0} annotations
+                        ({parsedEaf?.tiers?.length || 0} tiers, {parsedEaf
+                          ?.allAnnotations?.length || 0} ann.)
                       </span>
-                    {:else}
-                      <span class="slot-placeholder"
-                        >Drop or choose an .eaf file</span
-                      >
-                    {/if}
-                  </div>
-                  <button
-                    type="button"
-                    class="btn-slot-choose"
-                    onclick={() => eafInputEl?.click()}
-                  >
-                    {eafFile ? 'Replace' : 'Choose .eaf'}
-                  </button>
-                  <input
-                    type="file"
-                    accept=".eaf"
-                    bind:this={eafInputEl}
-                    onchange={(e) => {
-                      const f = e.target.files?.[0];
-                      if (f) handleEafSelected(f);
-                    }}
-                    style="display: none;"
-                  />
-                </div>
-
-                <!-- Slot 2: Audio File -->
-                {#if isTargetActiveProject}
-                  <div class="file-slot slot-loaded">
-                    <div class="slot-icon">
-                      <i class="fa-solid fa-file-audio"></i>
                     </div>
-                    <div class="slot-info">
-                      <span class="slot-label">Loaded Project Audio</span>
+                  {:else}
+                    <span class="slot-placeholder">Drop or choose .eaf</span>
+                  {/if}
+                </div>
+                <button
+                  type="button"
+                  class="btn-slot-choose"
+                  onclick={() => eafInputEl?.click()}
+                >
+                  {eafFile ? 'Change' : 'Choose .eaf'}
+                </button>
+              </div>
+
+              <!-- Slot 2: Audio File -->
+              {#if isTargetActiveProject}
+                <div class="file-slot slot-loaded">
+                  <i class="fa-solid fa-file-audio slot-icon"></i>
+                  <div class="slot-info">
+                    <span class="slot-label">Active Audio</span>
+                    <div class="slot-file-row">
                       <strong
                         class="slot-filename"
                         title={projectState.activeProject.audioFileName}
@@ -543,413 +500,190 @@
                           'recording-16khz.wav'}
                       </strong>
                       <span class="slot-meta">
-                        Already converted &amp; ready ({projectState
-                          .activeProject.audioDuration || 0}s)
+                        ({projectState.activeProject.audioDuration || 0}s)
                       </span>
                     </div>
                   </div>
-                {:else}
-                  <div class="file-slot {audioFile ? 'slot-loaded' : ''}">
-                    <div class="slot-icon">
-                      <i class="fa-solid fa-file-audio"></i>
-                    </div>
-                    <div class="slot-info">
-                      <span class="slot-label">Audio Recording</span>
-                      {#if audioFile}
+                </div>
+              {:else}
+                <div class="file-slot {audioFile ? 'slot-loaded' : ''}">
+                  <i class="fa-solid fa-file-audio slot-icon"></i>
+                  <div class="slot-info">
+                    <span class="slot-label">Audio</span>
+                    {#if audioFile}
+                      <div class="slot-file-row">
                         <strong class="slot-filename" title={audioFile.name}>
                           {audioFile.name}
                         </strong>
                         <span class="slot-meta">
-                          {(audioFile.size / (1024 * 1024)).toFixed(2)} MB
+                          ({(audioFile.size / (1024 * 1024)).toFixed(1)} MB)
                         </span>
-                      {:else}
-                        <span class="slot-placeholder"
-                          >No audio file selected</span
-                        >
-                      {/if}
-                    </div>
-                    <button
-                      type="button"
-                      class="btn-slot-choose"
-                      onclick={() => audioInputEl?.click()}
-                    >
-                      {audioFile ? 'Replace' : 'Choose Audio'}
-                    </button>
-                    <input
-                      type="file"
-                      accept=".wav,.mp3,.m4a,.ogg,.flac"
-                      bind:this={audioInputEl}
-                      onchange={(e) => {
-                        const f = e.target.files?.[0];
-                        if (f) handleAudioSelected(f);
-                      }}
-                      style="display: none;"
-                    />
+                      </div>
+                    {:else}
+                      <span class="slot-placeholder">Choose matching audio</span
+                      >
+                    {/if}
                   </div>
-                {/if}
-              </div>
-            </div>
-
-            <!-- Audio Verification Status Badge -->
-            {#if audioMatch}
-              {#if audioMatch.matched}
-                <div class="match-badge match-success">
-                  <i class="fa-solid fa-circle-check"></i>
-                  <span
-                    ><strong>Audio Verified:</strong> {audioMatch.reason}</span
+                  <button
+                    type="button"
+                    class="btn-slot-choose"
+                    onclick={() => audioInputEl?.click()}
                   >
-                </div>
-              {:else}
-                <div class="match-badge match-warning">
-                  <i class="fa-solid fa-triangle-exclamation"></i>
-                  <span
-                    ><strong>Filename Note:</strong>
-                    {audioMatch.reason} You can still proceed if this is the matching
-                    audio recording.</span
-                  >
+                    {audioFile ? 'Change' : 'Choose Audio'}
+                  </button>
                 </div>
               {/if}
+            </div>
+
+            {#if audioMatch}
+              <div
+                class="match-badge {audioMatch.matched
+                  ? 'match-success'
+                  : 'match-warning'}"
+              >
+                <i
+                  class="fa-solid {audioMatch.matched
+                    ? 'fa-circle-check'
+                    : 'fa-triangle-exclamation'}"
+                ></i>
+                <span>
+                  <strong>
+                    {audioMatch.matched ? 'Audio Verified:' : 'Filename Note:'}
+                  </strong>
+                  {audioMatch.reason}
+                </span>
+              </div>
             {/if}
           </div>
 
           {#if parsedEaf}
-            {#if !isTargetActiveProject}
-              <!-- Step 2: Project Metadata -->
-              <div class="project-meta-grid">
-                <div class="form-group">
-                  <label for="elan-proj-title"
-                    >Project Title <span class="label-required">*</span></label
-                  >
-                  <input
-                    id="elan-proj-title"
-                    type="text"
-                    class="form-control"
-                    placeholder="e.g. Field Interview - Session 1"
-                    bind:value={title}
-                  />
-                </div>
-                <div class="form-group">
-                  <label for="elan-proj-lexicon"
-                    >Spellcheck Lexicon (Optional)</label
-                  >
-                  <select
-                    id="elan-proj-lexicon"
-                    class="form-control"
-                    bind:value={lexiconId}
-                  >
-                    <option value="">None (Spellchecking Disabled)</option>
-                    {#each lexiconState.lexicons as lex (lex.id)}
-                      <option value={lex.id}>
-                        {lex.title || lex.name || 'Untitled Lexicon'} ({lex
-                          .entries?.length || 0} entries)
-                      </option>
-                    {/each}
-                  </select>
-                </div>
-              </div>
-            {/if}
-
-            <!-- Step 3: Speakers & Sub-Tiers Configuration -->
-            <div class="mapping-config-section">
-              <div class="config-columns">
-                <!-- Main Transcription Tiers Column -->
-                <div class="config-card">
-                  <div class="config-card-header">
-                    <div class="header-left">
-                      <i class="fa-solid fa-users"></i>
-                      <strong
-                        >Main Transcription Tiers ({speakers.length}/5)</strong
-                      >
-                    </div>
-                    {#if speakers.length < 5}
-                      <button
-                        type="button"
-                        class="btn-add-item"
-                        onclick={handleAddSpeaker}
-                      >
-                        <i class="fa-solid fa-plus"></i> Add Speaker
-                      </button>
-                    {/if}
-                  </div>
-
-                  <div class="card-config-fields">
-                    <div class="form-group-compact">
-                      <label
-                        for="elan-proj-main-tier"
-                        title="Prefix for root tiers in ELAN export (e.g. BIS@Speaker1)"
-                      >
-                        Main Tier Title
-                      </label>
-                      <input
-                        id="elan-proj-main-tier"
-                        type="text"
-                        class="form-control form-control-sm"
-                        placeholder="e.g. BIS or Transcription"
-                        bind:value={mainTierTitle}
-                      />
-                    </div>
-                    <div class="form-group-compact">
-                      <label
-                        for="elan-proj-transcriber"
-                        title="Transcriber / author of main tiers"
-                      >
-                        Transcriber
-                      </label>
-                      <input
-                        id="elan-proj-transcriber"
-                        type="text"
-                        class="form-control form-control-sm"
-                        placeholder="e.g. Alice Smith"
-                        bind:value={transcriber}
-                      />
-                    </div>
-                  </div>
-
-                  <div class="items-list">
-                    {#each speakers as spk (spk.id)}
-                      {@const color = getSpeakerColor(spk.id)}
-                      <div class="item-row speaker-item">
-                        <span
-                          class="speaker-dot"
-                          style="background: {color.primary}; border-color: {color.border};"
-                        ></span>
-                        <input
-                          type="text"
-                          class="form-control form-control-sm spk-name-input"
-                          bind:value={spk.name}
-                          oninput={() => {
-                            spk.initials = getSpeakerInitials(spk.name, spk.id);
-                          }}
-                          placeholder="Speaker {spk.id} Name"
-                        />
-                        <span class="spk-initials-badge" title="Initials">
-                          {spk.initials || `S${spk.id}`}
-                        </span>
-                      </div>
-                    {/each}
-                  </div>
-                </div>
-
-                <!-- Sub-Tiers Column -->
-                <div class="config-card">
-                  <div class="config-card-header">
-                    <div class="header-left">
-                      <i class="fa-solid fa-layer-group"></i>
-                      <strong
-                        >Sub-Tiers ({subTiers.length}/{MAX_SUB_TIERS})</strong
-                      >
-                    </div>
-                    {#if subTiers.length < MAX_SUB_TIERS}
-                      <button
-                        type="button"
-                        class="btn-add-item"
-                        onclick={handleAddSubTier}
-                      >
-                        <i class="fa-solid fa-plus"></i> Add Sub-Tier
-                      </button>
-                    {/if}
-                  </div>
-                  <div class="items-list">
-                    {#if subTiers.length === 0}
-                      <p class="empty-subtiers-note">
-                        No sub-tiers detected. Click "Add Sub-Tier" if you have
-                        translation or gloss layers.
-                      </p>
-                    {:else}
-                      <div class="subtiers-header-mini">
-                        <span class="mini-th-id">#</span>
-                        <span class="mini-th-name">Sub-tier Name</span>
-                        <span class="mini-th-annotator">Annotator</span>
-                      </div>
-                      {#each subTiers as st (st.id)}
-                        <div class="item-row subtier-item">
-                          <span class="subtier-num-badge">#{st.id}</span>
-                          <input
-                            type="text"
-                            class="form-control form-control-sm subtier-name-input"
-                            bind:value={st.name}
-                            placeholder="Sub-tier name"
-                          />
-                          <input
-                            type="text"
-                            class="form-control form-control-sm subtier-annotator-input"
-                            bind:value={st.annotator}
-                            placeholder="Annotator"
-                            title="Annotator for this sub-tier"
-                          />
-                        </div>
-                      {/each}
-                    {/if}
-                  </div>
-                </div>
-              </div>
-
-              <!-- Step 4: Tiers Mapping Table -->
-              <div class="tiers-table-container">
-                <div class="table-header-title">
+            <!-- ELAN Tiers Summary Table -->
+            <div class="tiers-table-container">
+              <div class="table-header-title">
+                <div class="table-header-left">
                   <i class="fa-solid fa-table-list"></i>
-                  <span
-                    >ELAN Tiers to Import ({tierConfigs.length} Tiers Found)</span
-                  >
+                  <span>
+                    ELAN Tiers ({includedTierCount} importing{skippedTierCount >
+                    0
+                      ? `, ${skippedTierCount} not imported`
+                      : ''})
+                  </span>
                 </div>
+                <span class="table-header-hint">
+                  Speakers, sub-tiers, and tier types can be edited in Project
+                  Settings after import
+                </span>
+              </div>
 
-                <div class="tiers-table-wrapper">
-                  <table class="tiers-table">
-                    <thead>
-                      <tr>
-                        <th class="th-check">
-                          <input
-                            type="checkbox"
-                            checked={tierConfigs.every((t) => t.included)}
-                            onchange={(e) => {
-                              const checked = e.target.checked;
-                              tierConfigs = tierConfigs.map((t) => ({
-                                ...t,
-                                included: checked,
-                              }));
-                            }}
-                            title="Toggle all tiers"
-                          />
-                        </th>
-                        <th class="th-tier">ELAN Tier</th>
-                        <th class="th-annotations">Annotations</th>
-                        <th class="th-role">Import As</th>
-                        <th class="th-target">Assigned Target</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {#each tierConfigs as tier, idx (tier.tierId)}
-                        <tr
-                          class={tier.included ? 'row-active' : 'row-ignored'}
-                        >
-                          <td class="td-check">
-                            <input
-                              type="checkbox"
-                              bind:checked={tier.included}
-                            />
-                          </td>
-                          <td class="td-tier">
-                            <div class="tier-id-wrap">
-                              <strong class="tier-name">{tier.tierId}</strong>
-                              {#if tier.parentRef}
-                                <span
-                                  class="badge-parent"
-                                  title="Child of {tier.parentRef}"
-                                >
-                                  <i class="fa-solid fa-turn-up fa-rotate-90"
-                                  ></i>
-                                  child of {tier.parentRef}
-                                </span>
-                              {:else}
-                                <span class="badge-root">Root Tier</span>
-                              {/if}
-                              {#if tier.participant}
-                                <span class="badge-participant">
-                                  <i class="fa-solid fa-user"></i>
-                                  {tier.participant}
-                                </span>
-                              {/if}
-                              {#if tier.annotator}
-                                <span
-                                  class="badge-annotator"
-                                  title="Annotator: {tier.annotator}"
-                                >
-                                  <i class="fa-solid fa-pen-nib"></i>
-                                  {tier.annotator}
-                                </span>
-                              {/if}
-                              {#if tier.stereotype && tier.stereotype !== 'None'}
-                                <span
-                                  class="badge-stereotype badge-stereotype-{tier.stereotype.toLowerCase()}"
-                                  title="ELAN Constraint Stereotype: {tier.stereotype}"
-                                >
-                                  {#if tier.stereotype === 'Symbolic_Subdivision'}
-                                    <i class="fa-solid fa-layer-group"></i>
-                                    Symbolic Subdivision
-                                  {:else if tier.stereotype === 'Symbolic_Association'}
-                                    <i class="fa-solid fa-link"></i>
-                                    Symbolic Association
-                                  {:else if tier.stereotype === 'Time_Subdivision'}
-                                    <i class="fa-solid fa-clock"></i>
-                                    Time Subdivision
-                                  {:else if tier.stereotype === 'Included_In'}
-                                    <i class="fa-solid fa-arrows-left-right-to-line"></i>
-                                    Included In
-                                  {:else}
-                                    {tier.stereotype}
-                                  {/if}
-                                </span>
-                              {/if}
-                            </div>
-                            {#if tier.sampleText}
-                              <p class="tier-sample" title={tier.sampleText}>
-                                "{tier.sampleText.slice(0, 75)}{tier.sampleText
-                                  .length > 75
-                                  ? '...'
-                                  : ''}"
-                              </p>
-                            {/if}
-                          </td>
-                          <td class="td-annotations">
-                            <span class="ann-count-badge">
-                              {tier.annotationCount}
-                            </span>
-                          </td>
-                          <td class="td-role">
-                            <select
-                              class="form-select form-select-sm"
-                              bind:value={tier.role}
-                              disabled={!tier.included}
+              <div class="tiers-table-wrapper">
+                <table class="tiers-table">
+                  <thead>
+                    <tr>
+                      <th class="th-tier">Tier Name</th>
+                      <th class="th-parent">Parent Tier</th>
+                      <th class="th-participant">Participant</th>
+                      <th class="th-annotator">Annotator</th>
+                      <th class="th-type">Type &amp; Stereotype</th>
+                      <th class="th-annotations">Segments</th>
+                      <th class="th-sample">Sample</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {#each tierConfigs as tier (tier.tierId)}
+                      <tr class={tier.included ? 'row-active' : 'row-ignored'}>
+                        <td class="td-tier">
+                          <strong class="tier-name" title={tier.tierId}>
+                            {tier.tierId}
+                          </strong>
+                        </td>
+                        <td class="td-parent">
+                          {#if tier.parentRef}
+                            <span
+                              class="tier-plain-cell"
+                              title={tier.parentRef}
                             >
-                              <option value="speaker"
-                                >🗣️ Speaker Utterance</option
+                              {tier.parentRef}
+                            </span>
+                          {:else}
+                            <span class="sample-empty">&mdash;</span>
+                          {/if}
+                        </td>
+                        <td class="td-participant">
+                          {#if tier.participant}
+                            <span
+                              class="tier-plain-cell"
+                              title={tier.participant}
+                            >
+                              {tier.participant}
+                            </span>
+                          {:else}
+                            <span class="sample-empty">&mdash;</span>
+                          {/if}
+                        </td>
+                        <td class="td-annotator">
+                          {#if tier.annotator}
+                            <span
+                              class="tier-plain-cell"
+                              title={tier.annotator}
+                            >
+                              {tier.annotator}
+                            </span>
+                          {:else}
+                            <span class="sample-empty">&mdash;</span>
+                          {/if}
+                        </td>
+                        <td class="td-type">
+                          <div class="type-cell-wrap">
+                            {#if tier.linguisticType}
+                              <span
+                                class="badge-linguistic-type"
+                                title="ELAN Tier Type (LINGUISTIC_TYPE_REF): {tier.linguisticType}"
                               >
-                              <option value="subtier">📝 Sub-Tier Layer</option>
-                              <option value="ignore">🚫 Ignore Tier</option>
-                            </select>
-                          </td>
-                          <td class="td-target">
-                            {#if !tier.included || tier.role === 'ignore'}
-                              <span class="target-disabled">—</span>
-                            {:else if tier.role === 'speaker'}
-                              <select
-                                class="form-select form-select-sm spk-selector"
-                                bind:value={tier.speakerId}
-                              >
-                                {#each speakers as spk}
-                                  <option value={spk.id}>
-                                    Speaker {spk.id}: {spk.name}
-                                  </option>
-                                {/each}
-                              </select>
-                            {:else if tier.role === 'subtier'}
-                              {#if subTiers.length > 0}
-                                <select
-                                  class="form-select form-select-sm subtier-selector"
-                                  bind:value={tier.subTierId}
-                                >
-                                  {#each subTiers as st}
-                                    <option value={st.id}>
-                                      Sub-Tier {st.id}: {st.name}
-                                    </option>
-                                  {/each}
-                                </select>
-                              {:else}
-                                <button
-                                  type="button"
-                                  class="btn-create-subtier-inline"
-                                  onclick={handleAddSubTier}
-                                >
-                                  + Create Sub-Tier
-                                </button>
-                              {/if}
+                                {tier.linguisticType}
+                              </span>
                             {/if}
-                          </td>
-                        </tr>
-                      {/each}
-                    </tbody>
-                  </table>
-                </div>
+                            {#if tier.stereotype && tier.stereotype !== 'None'}
+                              <span
+                                class="badge-stereotype badge-stereotype-{tier.stereotype.toLowerCase()}"
+                                title="ELAN Stereotype: {tier.stereotype}"
+                              >
+                                {formatStereotypeShort(tier.stereotype)}
+                              </span>
+                            {:else}
+                              <span
+                                class="badge-root"
+                                title="Root time-alignable tier"
+                              >
+                                Root
+                              </span>
+                            {/if}
+                          </div>
+                        </td>
+                        <td class="td-annotations">
+                          <span
+                            class="ann-count-badge {tier.annotationCount === 0
+                              ? 'is-zero'
+                              : ''}"
+                          >
+                            {tier.annotationCount}
+                          </span>
+                        </td>
+                        <td class="td-sample">
+                          {#if tier.sampleText}
+                            <span
+                              class="tier-sample-cell"
+                              title={tier.sampleText}
+                            >
+                              {tier.sampleText}
+                            </span>
+                          {:else}
+                            <span class="sample-empty">&mdash;</span>
+                          {/if}
+                        </td>
+                      </tr>
+                    {/each}
+                  </tbody>
+                </table>
               </div>
             </div>
           {/if}
@@ -972,7 +706,7 @@
             <span>
               {isTargetActiveProject
                 ? 'Select an .eaf file to configure tier mappings.'
-                : 'Select both files to configure tier mappings.'}
+                : 'Select .eaf and audio files to configure tier mappings.'}
             </span>
           {/if}
         </div>
@@ -995,11 +729,9 @@
               isConverting}
           >
             <i class="fa-solid fa-file-import"></i>
-            <span
-              >{isTargetActiveProject
-                ? 'Import into Project'
-                : 'Import Project'}</span
-            >
+            <span>
+              {isTargetActiveProject ? 'Import into Project' : 'Import Project'}
+            </span>
           </button>
         </div>
       </div>
@@ -1011,28 +743,30 @@
   .modal-backdrop {
     position: fixed;
     inset: 0;
-    background: rgba(15, 23, 42, 0.7);
+    background: rgba(15, 23, 42, 0.65);
     backdrop-filter: blur(4px);
     display: flex;
     align-items: center;
     justify-content: center;
     z-index: 1050;
-    padding: 16px;
+    padding: 10px;
+    box-sizing: border-box;
   }
 
   .elan-import-dialog {
     background: var(--bg-card, #ffffff);
     color: var(--text-heading, #0f172a);
     border: 1px solid var(--border-color, #e2e8f0);
-    border-radius: 14px;
+    border-radius: 10px;
     width: 100%;
-    max-width: 860px;
-    max-height: 90vh;
+    max-width: 1200px;
+    max-height: calc(100vh - 20px);
+    max-height: calc(100dvh - 20px);
     display: flex;
     flex-direction: column;
     box-shadow:
-      0 20px 25px -5px rgba(0, 0, 0, 0.2),
-      0 10px 10px -5px rgba(0, 0, 0, 0.08);
+      0 16px 24px -4px rgba(0, 0, 0, 0.18),
+      0 6px 8px -4px rgba(0, 0, 0, 0.1);
     overflow: hidden;
   }
 
@@ -1043,11 +777,13 @@
   }
 
   .modal-header {
-    padding: 16px 20px;
+    padding: 10px 16px;
     border-bottom: 1px solid var(--border-color, #e2e8f0);
     display: flex;
     align-items: center;
     justify-content: space-between;
+    gap: 8px;
+    flex-shrink: 0;
   }
 
   :global([data-theme='dark']) .modal-header {
@@ -1057,35 +793,41 @@
   .modal-title {
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: 8px;
+    min-width: 0;
   }
 
   .modal-title-icon {
-    font-size: 1.6rem;
+    font-size: 1.1rem;
     color: var(--primary-color, #0284c7);
+    flex-shrink: 0;
   }
 
   .modal-title h3 {
     margin: 0;
-    font-size: 1.15rem;
+    font-size: 0.95rem;
     font-weight: 700;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .modal-subtitle {
     margin: 2px 0 0 0;
-    font-size: 0.8rem;
+    font-size: 0.76rem;
     color: var(--text-muted, #64748b);
   }
 
   .btn-modal-close {
     background: transparent;
     border: none;
-    font-size: 1.1rem;
+    font-size: 1rem;
     color: var(--text-muted, #64748b);
     cursor: pointer;
-    padding: 6px;
-    border-radius: 6px;
+    padding: 4px 6px;
+    border-radius: 5px;
     transition: all 0.15s;
+    flex-shrink: 0;
   }
 
   .btn-modal-close:hover {
@@ -1099,20 +841,22 @@
   }
 
   .modal-body {
-    padding: 18px 20px;
+    padding: 12px 16px;
     overflow-y: auto;
     display: flex;
     flex-direction: column;
-    gap: 16px;
+    gap: 10px;
+    flex: 1;
+    min-height: 0;
   }
 
   .modal-alert {
-    padding: 10px 14px;
-    border-radius: 8px;
-    font-size: 0.85rem;
+    padding: 7px 10px;
+    border-radius: 6px;
+    font-size: 0.78rem;
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 8px;
   }
 
   .modal-alert-danger {
@@ -1127,57 +871,62 @@
     color: #fca5a5;
   }
 
-  /* File Dropzone & Slots */
+  /* File Dropzone & Compact Strip */
   .elan-files-section {
+    border: 1.5px dashed var(--border-color, #cbd5e1);
+    border-radius: 8px;
+    padding: 10px 12px;
+    background: var(--bg-hover, #f8fafc);
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: 8px;
+    transition: all 0.15s;
+    flex-shrink: 0;
   }
 
-  .combo-dropzone {
-    border: 2px dashed var(--border-color, #cbd5e1);
-    border-radius: 10px;
-    padding: 14px;
-    background: var(--bg-hover, #f8fafc);
-    transition: all 0.2s;
+  .elan-files-section.is-compact {
+    border-style: solid;
+    padding: 6px 10px;
+    gap: 6px;
   }
 
-  :global([data-theme='dark']) .combo-dropzone {
+  :global([data-theme='dark']) .elan-files-section {
     border-color: #475569;
     background: rgba(15, 23, 42, 0.4);
   }
 
-  .combo-dropzone.drag-over {
+  .elan-files-section.drag-over {
     border-color: var(--primary-color, #0284c7);
     background: rgba(2, 132, 199, 0.08);
   }
 
-  .combo-dropzone.files-ready {
-    border-color: #10b981;
-    background: rgba(16, 185, 129, 0.04);
+  .elan-files-section.files-ready {
+    border-color: rgba(16, 185, 129, 0.45);
+    background: rgba(16, 185, 129, 0.03);
   }
 
   .dropzone-header {
     display: flex;
     align-items: center;
-    gap: 12px;
-    margin-bottom: 12px;
+    gap: 10px;
+    flex-wrap: wrap;
   }
 
   .drop-icon {
-    font-size: 1.5rem;
+    font-size: 1.25rem;
     color: var(--primary-color, #0284c7);
   }
 
   .drop-text-wrap {
     flex: 1;
+    min-width: 180px;
     display: flex;
     flex-direction: column;
-    font-size: 0.84rem;
+    font-size: 0.8rem;
   }
 
   .drop-text-wrap span {
-    font-size: 0.75rem;
+    font-size: 0.72rem;
     color: var(--text-muted, #64748b);
   }
 
@@ -1185,14 +934,14 @@
     background: var(--bg-card, #ffffff);
     border: 1px solid var(--border-color, #cbd5e1);
     color: var(--text-heading, #0f172a);
-    padding: 6px 12px;
-    border-radius: 6px;
-    font-size: 0.8rem;
+    padding: 4px 10px;
+    border-radius: 5px;
+    font-size: 0.75rem;
     font-weight: 600;
     cursor: pointer;
     display: inline-flex;
     align-items: center;
-    gap: 6px;
+    gap: 5px;
     transition: all 0.15s;
   }
 
@@ -1209,24 +958,19 @@
 
   .file-slots-grid {
     display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 10px;
-  }
-
-  @media (max-width: 640px) {
-    .file-slots-grid {
-      grid-template-columns: 1fr;
-    }
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 8px;
   }
 
   .file-slot {
     display: flex;
     align-items: center;
-    gap: 10px;
-    padding: 10px 12px;
-    border-radius: 8px;
+    gap: 8px;
+    padding: 5px 9px;
+    border-radius: 6px;
     border: 1px solid var(--border-color, #e2e8f0);
     background: var(--bg-card, #ffffff);
+    min-width: 0;
   }
 
   :global([data-theme='dark']) .file-slot {
@@ -1243,53 +987,65 @@
   }
 
   .slot-icon {
-    font-size: 1.3rem;
+    font-size: 1rem;
     color: var(--primary-color, #0284c7);
+    flex-shrink: 0;
   }
 
   .slot-info {
     flex: 1;
     display: flex;
     flex-direction: column;
-    overflow: hidden;
+    min-width: 0;
   }
 
   .slot-label {
-    font-size: 0.7rem;
+    font-size: 0.64rem;
     text-transform: uppercase;
-    letter-spacing: 0.5px;
+    letter-spacing: 0.04em;
     font-weight: 700;
     color: var(--text-muted, #64748b);
+    line-height: 1.1;
+  }
+
+  .slot-file-row {
+    display: flex;
+    align-items: baseline;
+    gap: 5px;
+    min-width: 0;
   }
 
   .slot-filename {
-    font-size: 0.85rem;
+    font-size: 0.78rem;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
   }
 
   .slot-placeholder {
-    font-size: 0.8rem;
+    font-size: 0.75rem;
     color: var(--text-muted, #94a3b8);
     font-style: italic;
   }
 
   .slot-meta {
-    font-size: 0.72rem;
+    font-size: 0.68rem;
     color: var(--text-muted, #64748b);
+    white-space: nowrap;
+    flex-shrink: 0;
   }
 
   .btn-slot-choose {
     background: transparent;
     border: 1px solid var(--border-color, #cbd5e1);
     color: var(--text-heading, #0f172a);
-    padding: 4px 10px;
-    border-radius: 5px;
-    font-size: 0.75rem;
+    padding: 3px 8px;
+    border-radius: 4px;
+    font-size: 0.71rem;
     font-weight: 600;
     cursor: pointer;
     white-space: nowrap;
+    flex-shrink: 0;
   }
 
   .btn-slot-choose:hover {
@@ -1304,12 +1060,12 @@
 
   /* Match Badges */
   .match-badge {
-    padding: 8px 12px;
-    border-radius: 6px;
-    font-size: 0.82rem;
+    padding: 4px 8px;
+    border-radius: 5px;
+    font-size: 0.73rem;
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 6px;
   }
 
   .match-success {
@@ -1336,246 +1092,15 @@
     color: #fcd34d;
   }
 
-  /* Project Meta Grid */
-  .project-meta-grid {
-    display: grid;
-    grid-template-columns: 2fr 1fr;
-    gap: 12px;
-  }
-
-  @media (max-width: 640px) {
-    .project-meta-grid {
-      grid-template-columns: 1fr;
-    }
-  }
-
-  .form-group {
-    display: flex;
-    flex-direction: column;
-    gap: 5px;
-  }
-
-  .form-group label {
-    font-size: 0.8rem;
-    font-weight: 600;
-    color: var(--text-heading, #0f172a);
-  }
-
-  .label-required {
-    color: #ef4444;
-  }
-
-  .form-control {
-    padding: 7px 10px;
-    border: 1px solid var(--border-color, #cbd5e1);
-    border-radius: 6px;
-    font-size: 0.85rem;
-    background: var(--bg-card, #ffffff);
-    color: var(--text-heading, #0f172a);
-  }
-
-  :global([data-theme='dark']) .form-control {
-    background: #0f172a;
-    border-color: #334155;
-    color: #f8fafc;
-  }
-
-  .form-control:focus {
-    outline: none;
-    border-color: var(--primary-color, #0284c7);
-    box-shadow: 0 0 0 2px rgba(2, 132, 199, 0.15);
-  }
-
-  .form-control-sm {
-    padding: 4px 8px;
-    font-size: 0.8rem;
-  }
-
-  /* Mapping Config Columns */
-  .mapping-config-section {
-    display: flex;
-    flex-direction: column;
-    gap: 14px;
-  }
-
-  .config-columns {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 12px;
-  }
-
-  @media (max-width: 640px) {
-    .config-columns {
-      grid-template-columns: 1fr;
-    }
-  }
-
-  .config-card {
-    border: 1px solid var(--border-color, #e2e8f0);
-    border-radius: 8px;
-    padding: 10px 12px;
-    background: var(--bg-hover, #f8fafc);
-  }
-
-  :global([data-theme='dark']) .config-card {
-    background: rgba(15, 23, 42, 0.4);
-    border-color: #334155;
-  }
-
-  .config-card-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-bottom: 8px;
-    padding-bottom: 6px;
-    border-bottom: 1px solid var(--border-color, #e2e8f0);
-  }
-
-  :global([data-theme='dark']) .config-card-header {
-    border-bottom-color: #334155;
-  }
-
-  .header-left {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 0.82rem;
-  }
-
-  .btn-add-item {
-    background: transparent;
-    border: none;
-    color: var(--primary-color, #0284c7);
-    font-size: 0.75rem;
-    font-weight: 700;
-    cursor: pointer;
-    padding: 2px 6px;
-    border-radius: 4px;
-  }
-
-  .btn-add-item:hover {
-    background: rgba(2, 132, 199, 0.1);
-  }
-
-  .card-config-fields {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    margin-bottom: 10px;
-    padding-bottom: 8px;
-    border-bottom: 1px dashed var(--border-color, #e2e8f0);
-  }
-
-  :global([data-theme='dark']) .card-config-fields {
-    border-bottom-color: #334155;
-  }
-
-  .form-group-compact {
-    display: flex;
-    flex-direction: column;
-    gap: 3px;
-  }
-
-  .form-group-compact label {
-    font-size: 0.72rem;
-    font-weight: 600;
-    color: var(--text-muted, #64748b);
-    text-transform: uppercase;
-    letter-spacing: 0.4px;
-  }
-
-  .subtiers-header-mini {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    font-size: 0.68rem;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.4px;
-    color: var(--text-muted, #64748b);
-    padding: 0 2px 2px 2px;
-  }
-
-  .mini-th-id {
-    width: 24px;
-    text-align: center;
-  }
-
-  .mini-th-name {
-    flex: 1.2;
-  }
-
-  .mini-th-annotator {
-    flex: 1;
-  }
-
-  .items-list {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-  }
-
-  .item-row {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-
-  .speaker-dot {
-    width: 10px;
-    height: 10px;
-    border-radius: 50%;
-    border: 2px solid;
-    flex-shrink: 0;
-  }
-
-  .spk-name-input {
-    flex: 1;
-  }
-
-  .subtier-name-input {
-    flex: 1.2;
-  }
-
-  .subtier-annotator-input {
-    flex: 1;
-  }
-
-  .spk-initials-badge {
-    background: var(--bg-hover, #e2e8f0);
-    color: var(--text-muted, #475569);
-    font-size: 0.7rem;
-    font-weight: 700;
-    padding: 2px 6px;
-    border-radius: 4px;
-  }
-
-  :global([data-theme='dark']) .spk-initials-badge {
-    background: #334155;
-    color: #94a3b8;
-  }
-
-  .subtier-num-badge {
-    background: #ede9fe;
-    color: #7c3aed;
-    font-size: 0.72rem;
-    font-weight: 700;
-    padding: 2px 6px;
-    border-radius: 4px;
-  }
-
-  .empty-subtiers-note {
-    font-size: 0.75rem;
-    color: var(--text-muted, #64748b);
-    font-style: italic;
-    margin: 4px 0;
-  }
-
-  /* Tiers Table */
+  /* Compact Tiers Table */
   .tiers-table-container {
     border: 1px solid var(--border-color, #e2e8f0);
-    border-radius: 8px;
+    border-radius: 7px;
     overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    min-height: 140px;
+    flex: 1;
   }
 
   :global([data-theme='dark']) .tiers-table-container {
@@ -1584,13 +1109,15 @@
 
   .table-header-title {
     background: var(--bg-hover, #f1f5f9);
-    padding: 8px 12px;
-    font-size: 0.82rem;
+    padding: 6px 10px;
+    font-size: 0.76rem;
     font-weight: 700;
     display: flex;
     align-items: center;
+    justify-content: space-between;
     gap: 8px;
     border-bottom: 1px solid var(--border-color, #e2e8f0);
+    flex-wrap: wrap;
   }
 
   :global([data-theme='dark']) .table-header-title {
@@ -1598,29 +1125,44 @@
     border-bottom-color: #334155;
   }
 
+  .table-header-left {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .table-header-hint {
+    font-size: 0.68rem;
+    font-weight: 500;
+    color: var(--text-muted, #64748b);
+  }
+
   .tiers-table-wrapper {
-    max-height: 260px;
+    overflow-x: auto;
     overflow-y: auto;
+    max-height: 360px;
   }
 
   .tiers-table {
     width: 100%;
     border-collapse: collapse;
-    font-size: 0.82rem;
+    font-size: 0.75rem;
   }
 
   .tiers-table th {
     background: var(--bg-card, #ffffff);
-    padding: 7px 10px;
+    padding: 5px 8px;
     text-align: left;
-    font-size: 0.74rem;
+    font-size: 0.65rem;
+    font-weight: 700;
     text-transform: uppercase;
-    letter-spacing: 0.5px;
+    letter-spacing: 0.03em;
     color: var(--text-muted, #64748b);
     border-bottom: 1px solid var(--border-color, #e2e8f0);
     position: sticky;
     top: 0;
     z-index: 2;
+    white-space: nowrap;
   }
 
   :global([data-theme='dark']) .tiers-table th {
@@ -1629,7 +1171,7 @@
   }
 
   .tiers-table td {
-    padding: 7px 10px;
+    padding: 4px 8px;
     border-bottom: 1px solid var(--border-color, #f1f5f9);
     vertical-align: middle;
   }
@@ -1638,76 +1180,96 @@
     border-bottom-color: rgba(255, 255, 255, 0.05);
   }
 
-  .row-ignored {
-    opacity: 0.5;
+  .tiers-table tbody tr:last-child td {
+    border-bottom: none;
   }
 
-  .th-check,
-  .td-check {
-    width: 32px;
+  .row-ignored {
+    opacity: 0.55;
+  }
+
+  .th-annotations,
+  .td-annotations {
     text-align: center;
   }
 
-  .tier-id-wrap {
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 6px;
+  .tier-name {
+    font-size: 0.77rem;
+    white-space: nowrap;
   }
 
-  .tier-name {
-    font-size: 0.84rem;
+  .tier-plain-cell {
+    display: block;
+    font-size: 0.74rem;
+    color: var(--text-heading, #0f172a);
+    white-space: nowrap;
+  }
+
+  :global([data-theme='dark']) .tier-plain-cell {
+    color: #e2e8f0;
+  }
+
+  .tier-sample-cell {
+    display: block;
+    font-size: 0.72rem;
+    color: var(--text-muted, #64748b);
+    font-style: italic;
+    white-space: nowrap;
+  }
+
+  .sample-empty {
+    color: var(--text-muted, #94a3b8);
+    font-size: 0.72rem;
+  }
+
+  .type-cell-wrap {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex-wrap: nowrap;
+  }
+
+  .badge-linguistic-type {
+    background: #f1f5f9;
+    color: #334155;
+    border: 1px solid #cbd5e1;
+    font-size: 0.65rem;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+      monospace;
+    padding: 1px 5px;
+    border-radius: 3px;
+    white-space: nowrap;
+  }
+
+  :global([data-theme='dark']) .badge-linguistic-type {
+    background: #334155;
+    color: #e2e8f0;
+    border-color: #475569;
   }
 
   .badge-root {
     background: #e0f2fe;
     color: #0369a1;
-    font-size: 0.68rem;
+    font-size: 0.64rem;
     font-weight: 700;
     padding: 1px 5px;
-    border-radius: 4px;
+    border-radius: 3px;
+    white-space: nowrap;
+    flex-shrink: 0;
   }
 
-  .badge-parent {
-    background: #f1f5f9;
-    color: #475569;
-    font-size: 0.68rem;
-    padding: 1px 5px;
-    border-radius: 4px;
-  }
-
-  :global([data-theme='dark']) .badge-parent {
-    background: #334155;
-    color: #cbd5e1;
-  }
-
-  .badge-participant {
-    background: #fef3c7;
-    color: #92400e;
-    font-size: 0.68rem;
-    padding: 1px 5px;
-    border-radius: 4px;
-  }
-
-  .badge-annotator {
-    background: #ecfdf5;
-    color: #065f46;
-    font-size: 0.68rem;
-    padding: 1px 5px;
-    border-radius: 4px;
-    display: inline-flex;
-    align-items: center;
-    gap: 3px;
+  :global([data-theme='dark']) .badge-root {
+    background: rgba(2, 132, 199, 0.25);
+    color: #7dd3fc;
   }
 
   .badge-stereotype {
-    font-size: 0.68rem;
+    font-size: 0.64rem;
     padding: 1px 5px;
-    border-radius: 4px;
-    display: inline-flex;
-    align-items: center;
-    gap: 3px;
-    font-weight: 500;
+    border-radius: 3px;
+    white-space: nowrap;
+    font-weight: 600;
+    flex-shrink: 0;
   }
 
   .badge-stereotype-symbolic_subdivision {
@@ -1758,90 +1320,55 @@
     border-color: rgba(251, 191, 36, 0.35);
   }
 
-  :global([data-theme='dark']) .badge-annotator {
-    background: rgba(16, 185, 129, 0.2);
-    color: #6ee7b7;
-  }
-
-  .tier-sample {
-    margin: 2px 0 0 0;
-    font-size: 0.74rem;
-    color: var(--text-muted, #64748b);
-    font-style: italic;
-  }
-
   .ann-count-badge {
     background: var(--bg-hover, #f1f5f9);
-    padding: 2px 7px;
-    border-radius: 10px;
-    font-size: 0.75rem;
-    font-weight: 600;
+    padding: 1px 6px;
+    border-radius: 8px;
+    font-size: 0.7rem;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .ann-count-badge.is-zero {
+    opacity: 0.5;
+    font-weight: 500;
   }
 
   :global([data-theme='dark']) .ann-count-badge {
     background: #334155;
   }
 
-  .form-select {
-    padding: 4px 8px;
-    border-radius: 6px;
-    border: 1px solid var(--border-color, #cbd5e1);
-    font-size: 0.8rem;
-    background: var(--bg-card, #ffffff);
-    color: var(--text-heading, #0f172a);
-    width: 100%;
-  }
-
-  :global([data-theme='dark']) .form-select {
-    background: #0f172a;
-    border-color: #334155;
-    color: #f8fafc;
-  }
-
-  .target-disabled {
-    color: var(--text-muted, #94a3b8);
-    font-size: 0.8rem;
-  }
-
-  .btn-create-subtier-inline {
-    background: #ede9fe;
-    border: 1px dashed #c084fc;
-    color: #7c3aed;
-    font-size: 0.72rem;
-    font-weight: 700;
-    padding: 3px 8px;
-    border-radius: 4px;
-    cursor: pointer;
-  }
-
   /* Converting / Spinner */
   .converting-overlay {
-    padding: 40px 20px;
+    padding: 32px 16px;
     text-align: center;
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 12px;
+    gap: 10px;
   }
 
   .converting-spinner {
-    font-size: 2.2rem;
+    font-size: 2rem;
     color: var(--primary-color, #0284c7);
   }
 
   .converting-subtext {
-    font-size: 0.85rem;
+    font-size: 0.8rem;
     color: var(--text-muted, #64748b);
   }
 
   /* Modal Footer */
   .modal-footer {
-    padding: 12px 20px;
+    padding: 9px 16px;
     border-top: 1px solid var(--border-color, #e2e8f0);
     display: flex;
     align-items: center;
     justify-content: space-between;
+    gap: 10px;
+    flex-wrap: wrap;
     background: var(--bg-hover, #f8fafc);
+    flex-shrink: 0;
   }
 
   :global([data-theme='dark']) .modal-footer {
@@ -1850,27 +1377,29 @@
   }
 
   .footer-summary {
-    font-size: 0.82rem;
+    font-size: 0.76rem;
     color: var(--text-muted, #64748b);
   }
 
   .footer-actions {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 8px;
+    margin-left: auto;
   }
 
   .btn {
-    padding: 7px 16px;
-    border-radius: 6px;
-    font-size: 0.85rem;
+    padding: 5px 12px;
+    border-radius: 5px;
+    font-size: 0.78rem;
     font-weight: 600;
     cursor: pointer;
     display: inline-flex;
     align-items: center;
-    gap: 6px;
+    gap: 5px;
     transition: all 0.15s;
     border: none;
+    white-space: nowrap;
   }
 
   .btn-secondary {
@@ -1909,9 +1438,9 @@
     color: var(--text-heading, #0f172a);
     border: 1px solid var(--border-color, #e2e8f0);
     border-top: 4px solid #f59e0b;
-    border-radius: 14px;
+    border-radius: 10px;
     width: 100%;
-    max-width: 520px;
+    max-width: 480px;
     display: flex;
     flex-direction: column;
     box-shadow:
@@ -1939,19 +1468,19 @@
 
   .elan-warning-icon {
     color: #d97706;
-    font-size: 1.25rem;
+    font-size: 1.15rem;
   }
 
   .elan-warning-body {
-    padding: 18px 20px;
+    padding: 14px 16px;
   }
 
   .elan-warning-card {
     display: flex;
     align-items: flex-start;
-    gap: 12px;
-    padding: 14px;
-    border-radius: 10px;
+    gap: 10px;
+    padding: 12px;
+    border-radius: 8px;
     background: #fffbeb;
     border: 1px solid #fde68a;
   }
@@ -1962,27 +1491,27 @@
   }
 
   .elan-warning-card-icon {
-    width: 34px;
-    height: 34px;
-    border-radius: 8px;
+    width: 30px;
+    height: 30px;
+    border-radius: 6px;
     background: rgba(217, 119, 6, 0.15);
     color: #d97706;
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 0.95rem;
+    font-size: 0.88rem;
     flex-shrink: 0;
   }
 
   .elan-warning-card-content {
     display: flex;
     flex-direction: column;
-    gap: 6px;
+    gap: 4px;
   }
 
   .elan-warning-primary {
     margin: 0;
-    font-size: 0.9rem;
+    font-size: 0.84rem;
     font-weight: 700;
     color: var(--text-heading, #0f172a);
   }
@@ -1993,8 +1522,8 @@
 
   .elan-warning-secondary {
     margin: 0;
-    font-size: 0.82rem;
-    line-height: 1.45;
+    font-size: 0.78rem;
+    line-height: 1.4;
     color: var(--text-muted, #475569);
   }
 
@@ -2009,5 +1538,27 @@
 
   .btn-warning-confirm:hover:not(:disabled) {
     background: #b45309;
+  }
+
+  @media (max-width: 540px) {
+    .modal-backdrop {
+      padding: 6px;
+    }
+
+    .modal-header,
+    .modal-body,
+    .modal-footer {
+      padding-left: 10px;
+      padding-right: 10px;
+    }
+
+    .footer-summary {
+      width: 100%;
+    }
+
+    .footer-actions {
+      width: 100%;
+      justify-content: flex-end;
+    }
   }
 </style>

@@ -14,6 +14,9 @@ import {
   MAX_SUB_TIERS,
   SUB_TIER_TYPE_WORD,
   SUB_TIER_TYPE_SENTENCE,
+  ELAN_STEREOTYPE_SYM_ASSOC,
+  ELAN_STEREOTYPE_SYM_SUBDIV,
+  ELAN_STEREOTYPE_TIME_SUBDIV,
   normalizeSubTiers,
 } from './subTiers.js';
 import { getSpeakerInitials } from './speakers.js';
@@ -105,6 +108,7 @@ export function detectTierDefaults(eafData) {
       id: nextSpeakerId,
       name: rawName,
       initials,
+      elanTierType: (t.linguisticType || '').trim(),
     });
     rootTierToSpeakerId.set(t.tierId, nextSpeakerId);
     nextSpeakerId++;
@@ -112,7 +116,7 @@ export function detectTierDefaults(eafData) {
 
   // Ensure at least one speaker exists
   if (speakers.length === 0) {
-    speakers.push({ id: 1, name: 'Speaker 1', initials: 'S1' });
+    speakers.push({ id: 1, name: 'Speaker 1', initials: 'S1', elanTierType: '' });
   }
 
   // 3. Detect Sub-Tiers from Dependent Tiers & Tier Names (e.g. Translation@Speaker)
@@ -120,14 +124,18 @@ export function detectTierDefaults(eafData) {
   const subTierMap = new Map(); // subTierName.toLowerCase() -> subTierId
   const subTierAnnotatorMap = new Map(); // subTierName.toLowerCase() -> annotator
   const subTierTypeMap = new Map(); // subTierName.toLowerCase() -> 'word' | 'sentence'
+  const subTierStereotypeMap = new Map(); // subTierName.toLowerCase() -> stereotype
+  const subTierElanTypeMap = new Map(); // subTierName.toLowerCase() -> linguisticType
 
   const tierMap = new Map(tiers.map((t) => [t.tierId, t]));
 
-  // Helper to register a sub-tier name, optional annotator, and type
+  // Helper to register a sub-tier name, optional annotator, type, stereotype, and ELAN tier type
   const registerSubTier = (
     rawName,
     annotator = '',
     type = SUB_TIER_TYPE_SENTENCE,
+    stereotype = ELAN_STEREOTYPE_SYM_ASSOC,
+    elanTierType = '',
   ) => {
     const clean = (rawName || '').trim();
     if (!clean) return null;
@@ -136,8 +144,17 @@ export function detectTierDefaults(eafData) {
       if (annotator?.trim() && !subTierAnnotatorMap.get(lower)) {
         subTierAnnotatorMap.set(lower, annotator.trim());
       }
+      if (elanTierType?.trim() && !subTierElanTypeMap.get(lower)) {
+        subTierElanTypeMap.set(lower, elanTierType.trim());
+      }
       if (type === SUB_TIER_TYPE_WORD) {
         subTierTypeMap.set(lower, SUB_TIER_TYPE_WORD);
+        subTierStereotypeMap.set(
+          lower,
+          stereotype === ELAN_STEREOTYPE_TIME_SUBDIV
+            ? ELAN_STEREOTYPE_TIME_SUBDIV
+            : ELAN_STEREOTYPE_SYM_SUBDIV,
+        );
       }
       return subTierMap.get(lower);
     }
@@ -146,8 +163,19 @@ export function detectTierDefaults(eafData) {
       detectedSubTierNames.add(clean);
       subTierMap.set(lower, id);
       subTierTypeMap.set(lower, type);
+      subTierStereotypeMap.set(
+        lower,
+        type === SUB_TIER_TYPE_WORD
+          ? stereotype === ELAN_STEREOTYPE_TIME_SUBDIV
+            ? ELAN_STEREOTYPE_TIME_SUBDIV
+            : ELAN_STEREOTYPE_SYM_SUBDIV
+          : ELAN_STEREOTYPE_SYM_ASSOC,
+      );
       if (annotator?.trim()) {
         subTierAnnotatorMap.set(lower, annotator.trim());
+      }
+      if (elanTierType?.trim()) {
+        subTierElanTypeMap.set(lower, elanTierType.trim());
       }
       return id;
     }
@@ -191,29 +219,44 @@ export function detectTierDefaults(eafData) {
 
     const parentTier = tierMap.get(t.parentRef);
     let type = SUB_TIER_TYPE_SENTENCE;
-    if (
-      isSubdivisionStereotype(t.stereotype) ||
-      isSubdivisionStereotype(parentTier?.stereotype)
-    ) {
+    let effectiveStereotype = ELAN_STEREOTYPE_SYM_ASSOC;
+    if (isSubdivisionStereotype(t.stereotype)) {
       type = SUB_TIER_TYPE_WORD;
+      effectiveStereotype = t.stereotype;
+    } else if (isSubdivisionStereotype(parentTier?.stereotype)) {
+      type = SUB_TIER_TYPE_WORD;
+      effectiveStereotype = parentTier.stereotype;
     }
 
-    registerSubTier(subName, t.annotator, type);
+    registerSubTier(
+      subName,
+      t.annotator,
+      type,
+      effectiveStereotype,
+      t.linguisticType,
+    );
   }
 
-  // Build final subTiers array with annotator and type info preserved
+  // Build final subTiers array with annotator, type, stereotype, and elanTierType info preserved
   const subTiers = Array.from(detectedSubTierNames).map((name) => {
     const lower = name.toLowerCase();
+    const type = subTierTypeMap.get(lower) || SUB_TIER_TYPE_SENTENCE;
     return {
       id: subTierMap.get(lower),
       name,
-      type: subTierTypeMap.get(lower) || SUB_TIER_TYPE_SENTENCE,
+      type,
+      stereotype:
+        subTierStereotypeMap.get(lower) ||
+        (type === SUB_TIER_TYPE_WORD
+          ? ELAN_STEREOTYPE_SYM_SUBDIV
+          : ELAN_STEREOTYPE_SYM_ASSOC),
+      elanTierType: subTierElanTypeMap.get(lower) || '',
       annotator: subTierAnnotatorMap.get(lower) || '',
     };
   });
 
   // 4. Build Tier Configuration List
-  const tierConfigs = tiers.map((t) => {
+  const unsortedTierConfigs = tiers.map((t) => {
     const annotationCount = t.annotations?.length || 0;
     const sampleText = t.sampleText || t.annotations?.[0]?.text || '';
     const isRoot = !t.parentRef;
@@ -231,29 +274,36 @@ export function detectTierDefaults(eafData) {
     let role = 'ignore';
     let speakerId = 1;
     let subTierId = null;
-    let included = annotationCount > 0 && !isIntermediarySubdivision;
+    let included = false;
+    let skipReason = '';
 
     if (isRoot) {
       // Root tier: check if it was assigned to a speaker
       if (rootTierToSpeakerId.has(t.tierId)) {
         role = 'speaker';
         speakerId = rootTierToSpeakerId.get(t.tierId);
+        included = true;
       } else {
-        role = 'speaker';
-        speakerId = 1;
+        role = 'ignore';
+        included = false;
+        skipReason = 'Max 5 speakers reached';
       }
     } else if (isIntermediarySubdivision) {
       role = 'ignore';
       subTierId = null;
+      included = false;
+      skipReason = 'Intermediary subdivision tier';
     } else {
       // Dependent tier: default to subtier if matched
       if (matchedSubId) {
         role = 'subtier';
         subTierId = matchedSubId;
+        included = true;
       } else {
-        // Unmatched dependent tier
-        role = 'subtier';
-        subTierId = subTiers[0]?.id || 1;
+        role = 'ignore';
+        subTierId = null;
+        included = false;
+        skipReason = `Max ${MAX_SUB_TIERS} sub-tiers reached`;
       }
     }
 
@@ -271,8 +321,47 @@ export function detectTierDefaults(eafData) {
       role,
       speakerId,
       subTierId,
+      skipReason,
     };
   });
+
+  // 5. Sort tierConfigs hierarchically so dependent tiers appear directly below their parent tier
+  const configById = new Map(unsortedTierConfigs.map((tc) => [tc.tierId, tc]));
+  const childrenByParent = new Map();
+  const rootConfigs = [];
+
+  for (const tc of unsortedTierConfigs) {
+    if (tc.parentRef && configById.has(tc.parentRef)) {
+      if (!childrenByParent.has(tc.parentRef)) {
+        childrenByParent.set(tc.parentRef, []);
+      }
+      childrenByParent.get(tc.parentRef).push(tc);
+    } else {
+      rootConfigs.push(tc);
+    }
+  }
+
+  const tierConfigs = [];
+  const visitedIds = new Set();
+
+  const visitTier = (tc) => {
+    if (!tc || visitedIds.has(tc.tierId)) return;
+    visitedIds.add(tc.tierId);
+    tierConfigs.push(tc);
+    const children = childrenByParent.get(tc.tierId) || [];
+    for (const child of children) {
+      visitTier(child);
+    }
+  };
+
+  for (const rootTc of rootConfigs) {
+    visitTier(rootTc);
+  }
+  for (const tc of unsortedTierConfigs) {
+    if (!visitedIds.has(tc.tierId)) {
+      visitTier(tc);
+    }
+  }
 
   return {
     suggestedTitle,
@@ -306,9 +395,14 @@ export function compileElanToProject({
   speakers = [],
   subTiers = [],
 }) {
-  const cleanSpeakers = Array.isArray(speakers) && speakers.length > 0
-    ? speakers
-    : [{ id: 1, name: 'Speaker 1', initials: 'S1' }];
+  const cleanSpeakers = (
+    Array.isArray(speakers) && speakers.length > 0
+      ? speakers
+      : [{ id: 1, name: 'Speaker 1', initials: 'S1', elanTierType: '' }]
+  ).map((spk) => ({
+    ...spk,
+    elanTierType: spk?.elanTierType != null ? String(spk.elanTierType).trim() : '',
+  }));
 
   const cleanSubTiers = normalizeSubTiers(subTiers, { sort: true });
 
@@ -318,7 +412,12 @@ export function compileElanToProject({
       speakerMap.set(Number(spk.id), spk);
     }
   }
-  const defaultSpeaker = cleanSpeakers[0] || { id: 1, name: 'Speaker 1', initials: 'S1' };
+  const defaultSpeaker = cleanSpeakers[0] || {
+    id: 1,
+    name: 'Speaker 1',
+    initials: 'S1',
+    elanTierType: '',
+  };
 
   // Map tierId -> parsed tier object
   const tierDataMap = new Map();
@@ -326,10 +425,33 @@ export function compileElanToProject({
     tierDataMap.set(t.tierId, t);
   }
 
+  // Ensure each speaker preserves its mapped ELAN tier's linguisticType if not explicitly set
+  for (const spk of cleanSpeakers) {
+    if (!spk.elanTierType) {
+      const mappedSpkCfg = tierConfigs.find(
+        (cfg) =>
+          cfg.included &&
+          cfg.role === 'speaker' &&
+          Number(cfg.speakerId) === Number(spk.id),
+      );
+      if (mappedSpkCfg) {
+        const tier = tierDataMap.get(mappedSpkCfg.tierId);
+        const lType = (
+          mappedSpkCfg.linguisticType ||
+          tier?.linguisticType ||
+          ''
+        ).trim();
+        if (lType) {
+          spk.elanTierType = lType;
+        }
+      }
+    }
+  }
+
   const isSubdivisionStereotype = (stereotype) =>
     stereotype === 'Symbolic_Subdivision' || stereotype === 'Time_Subdivision';
 
-  // Ensure each sub-tier's type reflects its mapped ELAN tiers' stereotypes (never tier names)
+  // Ensure each sub-tier's type, stereotype, and elanTierType reflect its mapped ELAN tiers
   for (const st of cleanSubTiers) {
     const mappedConfigs = tierConfigs.filter(
       (cfg) =>
@@ -338,18 +460,40 @@ export function compileElanToProject({
         String(cfg.subTierId) === String(st.id),
     );
     if (mappedConfigs.length > 0) {
-      const hasWordTier = mappedConfigs.some((cfg) => {
+      let detectedSubdivStereotype = null;
+      let detectedElanTierType = '';
+
+      for (const cfg of mappedConfigs) {
         const tier = tierDataMap.get(cfg.tierId);
-        if (!tier) return false;
+        if (!tier) continue;
+        if (!detectedElanTierType) {
+          detectedElanTierType = (
+            cfg.linguisticType ||
+            tier.linguisticType ||
+            ''
+          ).trim();
+        }
         const parentTier = tier.parentRef
           ? tierDataMap.get(tier.parentRef)
           : null;
-        return (
-          isSubdivisionStereotype(tier.stereotype) ||
-          isSubdivisionStereotype(parentTier?.stereotype)
-        );
-      });
-      st.type = hasWordTier ? SUB_TIER_TYPE_WORD : SUB_TIER_TYPE_SENTENCE;
+        if (isSubdivisionStereotype(tier.stereotype)) {
+          detectedSubdivStereotype = tier.stereotype;
+        } else if (isSubdivisionStereotype(parentTier?.stereotype)) {
+          detectedSubdivStereotype = parentTier.stereotype;
+        }
+      }
+
+      if (detectedSubdivStereotype) {
+        st.type = SUB_TIER_TYPE_WORD;
+        st.stereotype = detectedSubdivStereotype;
+      } else {
+        st.type = SUB_TIER_TYPE_SENTENCE;
+        st.stereotype = ELAN_STEREOTYPE_SYM_ASSOC;
+      }
+
+      if (!st.elanTierType && detectedElanTierType) {
+        st.elanTierType = detectedElanTierType;
+      }
     }
   }
 
