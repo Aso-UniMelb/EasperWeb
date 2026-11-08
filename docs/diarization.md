@@ -104,6 +104,10 @@ EasperWeb pins `onnxruntime-web` to **1.30.0** in `package.json` (`overrides` an
    - Global AHC clusters all sub-windows across all segments.
    - Each segment is assigned a speaker via multi-window majority voting (`majorityVoteSpeaker`), preserving existing boundaries and transcripts.
 
+3. **VAD Segment Boundary Trimming (`trimSegmentsWithVad` in `src/vad.js`)**
+   - Available via the **Trim in Segments** (or **Trim in Selection**) action in `SegmentationSettingsPanel.svelte`.
+   - Runs Silero VAD inside each existing segment's audio window to tighten leading and trailing silence boundaries while preserving the segment's ID, speaker attribution, main transcription text, and all dependent sub-tier annotations (and clamping against same-speaker neighbor overlap).
+
 ---
 
 ## 5. Parameter Reference & Defaults

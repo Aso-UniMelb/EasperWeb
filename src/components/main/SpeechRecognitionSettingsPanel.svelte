@@ -26,6 +26,9 @@
     transcriptState.segmentsInSelectedRange.length,
   );
   const totalCount = $derived(transcriptState.segments.length);
+  const targetCount = $derived(
+    transcriptState.asrOverwriteExisting ? rangeTotalCount : emptyCount,
+  );
 
   const selectedModel = $derived(
     modelState.models.find((m) => m.id === modelState.selectedModelId),
@@ -199,68 +202,19 @@
               </option>
             {/each}
           </select>
+
+          <label class="overwrite-check-label">
+            <input
+              type="checkbox"
+              bind:checked={transcriptState.asrOverwriteExisting}
+              disabled={appState.isProcessing || modelState.isModelLoading}
+            />
+            <span>Overwrite existing segments</span>
+          </label>
         </div>
 
-        <!-- Action & Live Status -->
+        <!-- Action -->
         <div class="action-container">
-          <div class="status-box">
-            {#if isTranscribing}
-              <span class="status-chip chip-info">
-                <i class="fa-solid fa-spinner fa-spin"></i>
-                <span
-                  >Transcribing{selectedTargetTier
-                    ? ` into ${selectedTargetTier.name}`
-                    : ''}{audioState.isIntervalSelected
-                    ? ' (selected range)'
-                    : ''}...{emptyCount > 0
-                    ? ` (${emptyCount} left)`
-                    : ''}</span
-                >
-              </span>
-            {:else if !hasAudio}
-              <span class="status-chip chip-warning">
-                <i class="fa-solid fa-triangle-exclamation"></i>
-                <span>Load audio file first</span>
-              </span>
-            {:else if totalCount === 0}
-              <span class="status-chip chip-neutral">
-                <i class="fa-solid fa-circle-info"></i>
-                <span>No segments &bull; run Auto Segmentation first</span>
-              </span>
-            {:else if audioState.isIntervalSelected && rangeTotalCount === 0}
-              <span class="status-chip chip-warning">
-                <i class="fa-solid fa-crop-simple"></i>
-                <span
-                  >No segments in selected range ({audioState.audioRangeStart.toFixed(
-                    1,
-                  )}s &ndash; {audioState.audioRangeEnd.toFixed(1)}s)</span
-                >
-              </span>
-            {:else if emptyCount === 0}
-              <span class="status-chip chip-success">
-                <i class="fa-solid fa-circle-check"></i>
-                <span
-                  >All {rangeTotalCount} segment{rangeTotalCount === 1
-                    ? ''
-                    : 's'}{audioState.isIntervalSelected ? ' in range' : ''} transcribed{selectedTargetTier
-                    ? ` in ${selectedTargetTier.name}`
-                    : ''}</span
-                >
-              </span>
-            {:else}
-              <span class="status-chip chip-info">
-                <span
-                  ><strong>{emptyCount}</strong> of {rangeTotalCount} segment{emptyCount ===
-                  1
-                    ? ''
-                    : 's'}{audioState.isIntervalSelected ? ' in range' : ''} empty{selectedTargetTier
-                    ? ` in ${selectedTargetTier.name}`
-                    : ''}</span
-                >
-              </span>
-            {/if}
-          </div>
-
           <div class="actions-cluster">
             {#if isTranscribing}
               <button
@@ -278,13 +232,13 @@
                 class="btn-run-action"
                 onclick={() => transcriptState.handleTranscribeEmptySegments()}
                 disabled={appState.isProcessing ||
-                  emptyCount === 0 ||
+                  targetCount === 0 ||
                   !hasAudio ||
                   (modelState.modelSource === 'folder' &&
                     modelState.localFileCount === 0)}
                 title={selectedTargetTier
-                  ? `Transcribe empty segments into ${selectedTargetTier.name} with selected Whisper model`
-                  : 'Transcribe empty segments with selected Whisper model'}
+                  ? `Transcribe ${transcriptState.asrOverwriteExisting ? 'all' : 'empty'} segments into ${selectedTargetTier.name} with selected Whisper model`
+                  : `Transcribe ${transcriptState.asrOverwriteExisting ? 'all' : 'empty'} segments with selected Whisper model`}
               >
                 {#if totalCount === 0}
                   <i class="fa-solid fa-triangle-exclamation"></i>
@@ -292,13 +246,13 @@
                 {:else if audioState.isIntervalSelected && rangeTotalCount === 0}
                   <i class="fa-solid fa-crop-simple"></i>
                   <span>No Segments in Range</span>
-                {:else if emptyCount === 0 && rangeTotalCount > 0}
+                {:else if targetCount === 0 && rangeTotalCount > 0}
                   <i class="fa-solid fa-circle-check"></i>
                   <span>All Done</span>
                 {:else}
                   <i class="fa-solid fa-play"></i>
                   <span
-                    >Transcribe {emptyCount} Segment{emptyCount === 1
+                    >Transcribe {targetCount} Segment{targetCount === 1
                       ? ''
                       : 's'}{audioState.isIntervalSelected
                       ? ' in Range'
@@ -549,6 +503,28 @@
     box-shadow: 0 0 0 2px rgba(167, 139, 250, 0.2);
   }
 
+  .overwrite-check-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 2px;
+    font-size: 0.75rem;
+    font-weight: 500;
+    color: var(--text-muted, #64748b);
+    cursor: pointer;
+    user-select: none;
+  }
+
+  .overwrite-check-label input[type='checkbox'] {
+    margin: 0;
+    accent-color: #7c3aed;
+    cursor: pointer;
+  }
+
+  :global([data-theme='dark']) .overwrite-check-label {
+    color: #94a3b8;
+  }
+
   .select-with-preload {
     display: flex;
     align-items: center;
@@ -592,70 +568,6 @@
     gap: 12px;
     flex-wrap: wrap;
     justify-content: flex-end;
-  }
-
-  .status-box {
-    display: flex;
-    align-items: center;
-  }
-
-  .status-chip {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 0.76rem;
-    font-weight: 600;
-    padding: 6px 11px;
-    border-radius: 6px;
-    white-space: nowrap;
-  }
-
-  .chip-info {
-    background: rgba(124, 58, 237, 0.1);
-    color: #7c3aed;
-    border: 1px solid rgba(124, 58, 237, 0.2);
-  }
-
-  :global([data-theme='dark']) .chip-info {
-    background: rgba(167, 139, 250, 0.15);
-    color: #c084fc;
-    border-color: rgba(167, 139, 250, 0.3);
-  }
-
-  .chip-success {
-    background: rgba(16, 185, 129, 0.12);
-    color: #059669;
-    border: 1px solid rgba(16, 185, 129, 0.25);
-  }
-
-  :global([data-theme='dark']) .chip-success {
-    background: rgba(16, 185, 129, 0.18);
-    color: #34d399;
-    border-color: rgba(16, 185, 129, 0.35);
-  }
-
-  .chip-warning {
-    background: rgba(245, 158, 11, 0.12);
-    color: #b45309;
-    border: 1px solid rgba(245, 158, 11, 0.25);
-  }
-
-  :global([data-theme='dark']) .chip-warning {
-    background: rgba(245, 158, 11, 0.15);
-    color: #fbbf24;
-    border-color: rgba(245, 158, 11, 0.3);
-  }
-
-  .chip-neutral {
-    background: rgba(100, 116, 139, 0.1);
-    color: #64748b;
-    border: 1px solid rgba(100, 116, 139, 0.2);
-  }
-
-  :global([data-theme='dark']) .chip-neutral {
-    background: rgba(100, 116, 139, 0.18);
-    color: #94a3b8;
-    border-color: rgba(100, 116, 139, 0.3);
   }
 
   .actions-cluster {
@@ -919,12 +831,6 @@
 
     :global([data-theme='dark']) .action-container {
       border-top-color: #334155;
-    }
-
-    .status-chip {
-      width: 100%;
-      box-sizing: border-box;
-      white-space: normal;
     }
 
     .actions-cluster {

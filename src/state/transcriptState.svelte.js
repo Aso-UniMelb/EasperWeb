@@ -214,6 +214,7 @@ class TranscriptState {
 
   // ASR Output destination: 'main' | tierId (string)
   asrOutputTarget = $state('main');
+  asrOverwriteExisting = $state(false);
 
   get effectiveAsrOutputTarget() {
     if (!this.asrOutputTarget || this.asrOutputTarget === 'main') {
@@ -3483,26 +3484,33 @@ class TranscriptState {
       return;
     }
 
-    const emptySegments = targetSegments.filter((s) => {
-      if (target !== 'main') {
-        const txt = getSubText(s, target);
-        return !txt || txt.trim() === '';
-      }
-      return !s.text || s.text.trim() === '';
-    });
+    const overwrite = Boolean(this.asrOverwriteExisting);
+    const segmentsToTranscribe = overwrite
+      ? targetSegments
+      : targetSegments.filter((s) => {
+          if (target !== 'main') {
+            const txt = getSubText(s, target);
+            return !txt || txt.trim() === '';
+          }
+          return !s.text || s.text.trim() === '';
+        });
 
-    if (emptySegments.length === 0) {
+    if (segmentsToTranscribe.length === 0) {
       const rangeNote = isInterval
         ? ` in selected range [${formatTimeSec1(rangeStart)} - ${formatTimeSec1(rangeEnd)}]`
         : '';
       appState.statusMessage =
         target !== 'main'
-          ? `All segments${rangeNote} are already transcribed in "${targetName}"! (Edit or clear any segment text to re-transcribe it).`
-          : `All segments${rangeNote} are already transcribed! (Edit or clear any segment text to re-transcribe it).`;
+          ? `All segments${rangeNote} are already transcribed in "${targetName}"! (Check "Overwrite existing" or clear any segment text to re-transcribe it).`
+          : `All segments${rangeNote} are already transcribed! (Check "Overwrite existing" or clear any segment text to re-transcribe it).`;
       return;
     }
 
     if (appState.isProcessing) return;
+
+    if (overwrite) {
+      this.pushUndo('Overwrite ASR transcription');
+    }
 
     appState.isProcessing = true;
     appState.activeAction = 'transcribe_empty';
@@ -3515,7 +3523,8 @@ class TranscriptState {
       const rangeSuffix = isInterval
         ? ` in range [${formatTimeSec1(rangeStart)} - ${formatTimeSec1(rangeEnd)}]`
         : '';
-      appState.statusMessage = `Preparing ${emptySegments.length} empty segments${rangeSuffix} for Whisper transcription${destSuffix}...`;
+      const segKindLabel = overwrite ? 'segments' : 'empty segments';
+      appState.statusMessage = `Preparing ${segmentsToTranscribe.length} ${segKindLabel}${rangeSuffix} for Whisper transcription${destSuffix}...`;
 
       if (!audioState.cachedDecodedAudio || audioState.cachedDecodedAudio.target !== audioTarget) {
         const decoded = await processAudioFile(audioTarget);
@@ -3558,12 +3567,12 @@ class TranscriptState {
         }, 40);
       }
 
-      appState.statusMessage = `Initializing Whisper model & transcribing ${emptySegments.length} empty segments${rangeSuffix}${destSuffix}...`;
+      appState.statusMessage = `Initializing Whisper model & transcribing ${segmentsToTranscribe.length} ${segKindLabel}${rangeSuffix}${destSuffix}...`;
 
       appState.worker.postMessage({
         type: 'transcribe_empty_segments',
         payload: {
-          segments: emptySegments.map((s) => {
+          segments: segmentsToTranscribe.map((s) => {
             const rawStart = Number(s.start ?? 0);
             const rawEnd = Number(s.end ?? 0);
             const clampedStart = isInterval ? Math.max(rangeStart, rawStart) : rawStart;

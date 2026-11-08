@@ -86,6 +86,8 @@ Easper provides one-click presets in `src/state/modelState.svelte.js` (`AVAILABL
 
 All presets support **offline caching**: once downloaded, they are permanently stored in the browser's CacheStorage (`transformers-cache` / `cactus-needle` cache) and require no further internet access.
 
+Users can also **rename** any preset or custom model inline in the Model Manager (`/models`, persisted via `easper_preset_model_titles` in `localStorage` for presets and IndexedDB `asr_models` for custom models). In the **Speech Recognition Settings** panel (`SpeechRecognitionSettingsPanel.svelte`), users can select the **Output Target Tier** (either `Main Transcription` or any sentence-level sub-tier) and toggle **Overwrite existing segments** (`asrOverwriteExisting`) to re-transcribe non-empty segments within the active range.
+
 ---
 
 ## 4. Custom Local Models via File System Access API

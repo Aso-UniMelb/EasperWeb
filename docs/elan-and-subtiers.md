@@ -17,9 +17,10 @@ Linguists can import existing `.eaf` files alongside paired audio directly into 
    - Time slots and time orders.
    - Speaker/participant tier definitions and alignments.
    - Linguistic types and stereotype constraints.
-4. **Interactive Tier Mapping (`src/utils/elanImporter.js`)**:
-   - The user selects which tiers represent primary speech transcriptions for each speaker (`role: 'speech'`) and which represent dependent analytical sub-tiers (`role: 'subtier'`).
-   - Easper detects root speaker tiers, common main-tier prefixes (e.g., `BIS@Speaker1` $\rightarrow$ main tier prefix `BIS`), custom ELAN tier types (`LINGUISTIC_TYPE_ID` / `LINGUISTIC_TYPE_REF`), and `ANNOTATOR` attributes for both the main transcriber and individual sub-tiers.
+4. **Automatic Hierarchical Tier Summary (`src/utils/elanImporter.js`, `ElanImportModal.svelte`)**:
+   - Easper automatically analyzes all tiers in the `.eaf` file and presents a read-only hierarchical summary table (`Tier Name`, `Parent Tier`, `Participant`, `Annotator`, `Type & Stereotype`, `Segments`, and `Sample`) where dependent child tiers appear directly below their parent speaker tier.
+   - Root tiers are mapped to project speakers (`role: 'speech'`) and direct child tiers are mapped to project sub-tiers (`role: 'subtier'`), even if a tier currently has `0` annotation segments. Any deeper nested tiers that cannot be mapped to the two-level speaker/sub-tier structure are listed in a separate warning summary.
+   - Easper detects common main-tier prefixes (e.g., `BIS@Speaker1` $\rightarrow$ main tier prefix `BIS`), custom ELAN tier types (`LINGUISTIC_TYPE_ID` / `LINGUISTIC_TYPE_REF`), and `ANNOTATOR` attributes for both the main transcriber and individual sub-tiers.
    - Dependent sub-tier types (`'sentence'` vs. `'word'`) and stereotypes (`Symbolic_Association`, `Symbolic_Subdivision`, or `Time_Subdivision`) are determined strictly from the ELAN linguistic stereotype rather than guessing from tier names, and custom ELAN tier type names (`elanTierType`) are preserved per speaker and per sub-tier.
 5. On import, all segment boundaries, speaker tags, and transcripts are populated into the Vertical Waveform Timeline and stored in IndexedDB.
 
@@ -30,23 +31,24 @@ Linguists can import existing `.eaf` files alongside paired audio directly into 
 Field recordings rarely consist of a single layer of transcription. Linguists typically annotate utterances across multiple parallel layers—such as free translation, morphological breakdown, and linguistic glossing.
 
 ### The Sub-Tier System (`src/utils/subTiers.js`)
-In EasperWeb, each project can define up to **3 dependent sub-tiers** that align one-to-one with parent utterance segments. Two distinct sub-tier types are supported:
+In EasperWeb, each project can define up to **5 dependent sub-tiers** (`MAX_SUB_TIERS = 5`) that align one-to-one with parent utterance segments. Two distinct sub-tier types are supported:
 
 1. **Sentence-level Sub-Tiers (`type: 'sentence'`)**:
    - Straightforward, single-field text per segment (e.g., free translation, phonetic transcription, or general notes).
+   - Can also be selected as the direct output target in the **Speech Recognition** panel.
 2. **Word / Morpheme-level Sub-Tiers (`type: 'word'`)**:
-   - Token-level annotations where for each segment containing $N$ words/morphemes (split by whitespace and configurable custom `splitters` such as `-`, `=`, or `~`), $N$ spaces are provided for annotations.
+   - Token-level annotations where for each segment containing $N$ words/morphemes (split by whitespace and configurable space-separated single- or multi-character `splitters` such as `-`, `=`, `((E`, or `))`, matched longest-first), $N$ spaces are provided for annotations.
    - For each word or morpheme, annotators have a token label and an annotation input (`WordSubTierEditor.svelte`) for POS tags, morphological glosses, or etymology.
    - Configurable **Lexicon / Valid Values** list with auto-complete suggestions and presets (Common POS, Universal POS, Leipzig Glossing).
    - **Lexicon Auto-Tagging (`autoTagField`, [`src/utils/autoTagging.js`](../src/utils/autoTagging.js))**: Each word sub-tier can map to a field (e.g. `POS`, `Gloss`, `Meaning`) in the project's active Lexicon to automatically populate tags across segments by matching headwords.
 - **Per-Tier ELAN Tier Type & Stereotype Preservation**:
-  Each speaker has an optional `elanTierType` (`LINGUISTIC_TYPE_REF`, defaulting to `default-lt`) and each sub-tier stores both its `elanTierType` (defaulting to `dependent-lt`, `sym-subdivision-lt`, or `words-lt`) and its exact ELAN `stereotype` (`Symbolic_Association` [Undivided], `Symbolic_Subdivision` [Divided], or `Time_Subdivision` [Divided]). Both can be edited in **Project Settings** and the **ELAN Import Modal**.
+  Each speaker has an optional `elanTierType` (`LINGUISTIC_TYPE_REF`, defaulting to `default-lt`) and each sub-tier stores both its `elanTierType` (defaulting to `dependent-lt`, `sym-subdivision-lt`, or `words-lt`) and its exact ELAN `stereotype` (`Symbolic_Association` [Undivided], `Symbolic_Subdivision` [Divided], or `Time_Subdivision` [Divided]). Both are preserved automatically during **ELAN Import** and can be edited in **Project Settings**.
 - **Per-Tier Annotator Metadata**:
   Both the primary transcription tier (`transcriber`) and each dependent sub-tier (`annotator`) store optional annotator names that round-trip cleanly with ELAN `ANNOTATOR` tier attributes.
 - **UI Editing**:
   In each Segment card, input fields are provided for the primary orthographic transcription as well as each active sub-tier (either sentence textarea or per-word/morpheme annotation stack with auto-complete).
 - **Data Model**:
-  Each segment object maintains a `subTexts` dictionary keyed by the stable numeric sub-tier ID (`1`, `2`, `3`), storing either string values (`type: 'sentence'`) or token annotation arrays (`type: 'word'`).
+  Each segment object maintains a `subTexts` dictionary keyed by the stable numeric sub-tier ID (`1` to `5`), storing either string values (`type: 'sentence'`) or token annotation arrays (`type: 'word'`).
 
 ---
 

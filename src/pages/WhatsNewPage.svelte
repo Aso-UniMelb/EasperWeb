@@ -17,7 +17,52 @@
     </div>
   </header>
 
+  <div class="refresh-notice" role="note">
+    <i class="fa-solid fa-rotate-right"></i>
+    <span>
+      To make sure you are seeing the newest version of the app, hold
+      <kbd>Shift</kbd> and click <strong>Refresh</strong> (or press
+      <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>R</kbd>).
+    </span>
+  </div>
+
   <div class="updates-list">
+    <!-- November 8, 2026 -->
+    <section class="update-section">
+      <h2 class="update-date">
+        <span>November 8, 2026</span>
+        <span class="sub-app-badge badge-transcriber">
+          <i class="fa-solid fa-microphone"></i> Transcriber
+        </span>
+      </h2>
+      <ul class="update-bullets">
+        <li>
+          <strong>VAD Segment Trimming:</strong> Added a "Trim in Segments" option
+          to automatically tighten segment boundaries and remove leading/trailing
+          silence using Silero VAD, plus draggable segment boundary handles on the
+          waveform.
+        </li>
+        <li>
+          <strong>ELAN Import &amp; Export:</strong> Simplified the ELAN import dialog
+          with a hierarchical tier table, and preserved original ELAN tier types
+          and stereotypes on export.
+        </li>
+        <li>
+          <strong>Sub-Tiers:</strong> Increased the sub-tier limit per project from
+          3 to 5 and added support for multi-character word splitters.
+        </li>
+        <li>
+          <strong>Speech Recognition &amp; Models:</strong> Added an option to overwrite
+          existing segments during batch transcription, and added inline renaming
+          for models in the Model Library.
+        </li>
+        <li>
+          <strong>Waveform &amp; UI:</strong> Fixed horizontal zoom anchoring around
+          the cursor and refreshed the layout across settings and automation panels.
+        </li>
+      </ul>
+    </section>
+
     <!-- November 5, 2026 -->
     <section class="update-section">
       <h2 class="update-date">
@@ -221,6 +266,26 @@
     margin: 0;
   }
 
+  .refresh-notice {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 16px;
+    margin-bottom: 28px;
+    border-radius: 10px;
+    background: rgba(59, 130, 246, 0.08);
+    border: 1px solid rgba(59, 130, 246, 0.25);
+    color: var(--text-base, #334155);
+    font-size: 0.92rem;
+    line-height: 1.5;
+  }
+
+  .refresh-notice i {
+    color: var(--primary, #3b82f6);
+    font-size: 1rem;
+    flex-shrink: 0;
+  }
+
   .updates-list {
     display: flex;
     flex-direction: column;
@@ -336,6 +401,16 @@
   }
 
   /* Dark Theme */
+  :global([data-theme='dark']) .refresh-notice {
+    background: rgba(59, 130, 246, 0.14);
+    border-color: rgba(59, 130, 246, 0.32);
+    color: #e2e8f0;
+  }
+
+  :global([data-theme='dark']) .refresh-notice i {
+    color: #60a5fa;
+  }
+
   :global([data-theme='dark']) .update-section {
     background: #1e293b;
     border-color: #334155;

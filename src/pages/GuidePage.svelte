@@ -9,6 +9,8 @@
     { id: 'waveform', title: 'Waveform & Boundaries' },
     { id: 'speakers', title: 'Speaker Diarization' },
     { id: 'subtiers', title: 'Translations & Sub-Tiers' },
+    { id: 'lexicons', title: 'Lexicons, Spellcheck & Auto-Tagging' },
+    { id: 'models', title: 'Models & Runtimes' },
     { id: 'elan-guidelines', title: 'ELAN Guidelines for ASR' },
     { id: 'dataset-builder', title: 'Dataset Builder' },
     { id: 'field-audio', title: 'Field Recording Tips' },
@@ -88,6 +90,20 @@
         >
           Open Dataset Builder
         </button>
+        <button
+          type="button"
+          class="sidebar-action-link"
+          onclick={() => router.navigate('/lexicon')}
+        >
+          Open Lexicon Manager
+        </button>
+        <button
+          type="button"
+          class="sidebar-action-link"
+          onclick={() => router.navigate('/models')}
+        >
+          Open Model Library
+        </button>
       </div>
     </aside>
 
@@ -103,26 +119,30 @@
               <h3 class="topic-title">The Two-Step Workflow</h3>
               <p class="topic-text">
                 Transcribing in Easper follows two structured stages to give you
-                full control over timing boundaries and text:
+                full control over timing boundaries, speaker turns, and text:
               </p>
               <div class="clean-steps-grid">
                 <div class="clean-step-card">
-                  <h4 class="step-card-title">Step 1: Speech Detection</h4>
+                  <h4 class="step-card-title">
+                    Step 1: Speech Detection &amp; Diarization
+                  </h4>
                   <p class="step-card-text">
-                    Easper scans the audio and automatically identifies where
-                    speech occurs, filtering out background pauses and silence.
-                    You can adjust the sensitivity slider to match recording
-                    conditions—higher for noisy field settings, or lower for
-                    quiet speech.
+                    Easper scans the audio (or a selected time interval) using
+                    Silero VAD to detect speech and filter out silence. You can
+                    also use <strong>Trim in Segments</strong> to automatically
+                    tighten leading and trailing silence on existing segments
+                    without losing your text or sub-tiers.
                   </p>
                 </div>
                 <div class="clean-step-card">
                   <h4 class="step-card-title">Step 2: AI Transcription</h4>
                   <p class="step-card-text">
-                    The speech recognition model transcribes the detected
-                    segments into text directly on your device. You can
-                    transcribe the entire file at once, or transcribe individual
-                    segments one by one as you review.
+                    Run Whisper or Whistle models directly on your device. Choose
+                    whether to output into the <strong>Main Transcription</strong>
+                    or a sentence-level <strong>Sub-Tier</strong>, restrict
+                    transcription to a selected time interval, and optionally
+                    check <strong>Overwrite existing segments</strong> to
+                    re-transcribe non-empty turns.
                   </p>
                 </div>
               </div>
@@ -130,66 +150,69 @@
 
             <div class="topic-block">
               <h3 class="topic-title">
-                Editing Text &amp; Speaker Attribution
+                Editing, Automation &amp; Quality Control
               </h3>
               <p class="topic-text">
-                Speech recognition models provide a helpful initial draft, but
-                human verification remains essential:
+                Speech recognition models provide a helpful initial draft, and
+                Easper includes built-in tools to speed up human verification:
               </p>
               <ul class="guide-text-list">
                 <li>
-                  <strong>Inline Editing</strong>: Click into any transcript
-                  card to correct spellings, insert phonemic diacritics, or
-                  adjust phrasing. All revisions save automatically.
+                  <strong>Inline Editing &amp; Undo/Redo</strong>: Click into
+                  any segment card to edit text, speaker attribution, or
+                  sub-tiers. All changes save automatically and support fast
+                  Undo (<kbd>Ctrl</kbd> + <kbd>Z</kbd>) and Redo (<kbd>Ctrl</kbd>
+                  + <kbd>Y</kbd>).
                 </li>
                 <li>
-                  <strong>Speaker Assignment</strong>: Click the speaker label
-                  on any segment to assign the utterance to a different speaker
-                  or rename the speaker profile.
+                  <strong>Find &amp; Replace</strong>: Search and batch-replace
+                  text across the main transcription or specific sub-tiers using
+                  literal strings or Regular Expressions (Regex), with full
+                  whitespace preservation.
                 </li>
                 <li>
-                  <strong>Word Alignment</strong>: Switch to the Word Alignment
-                  view to review individual words alongside their exact acoustic
-                  timestamps.
+                  <strong>Validation Rules &amp; Issue Stepper</strong>:
+                  Automatically flag formatting issues, unclosed paralinguistic
+                  tags, invalid characters, or custom regex rules. Filter the
+                  segment list to view only segments with issues and jump
+                  between errors using the Previous/Next issue buttons.
+                </li>
+                <li>
+                  <strong>Right-to-Left (RTL) Scripts</strong>: Toggle the LTR /
+                  RTL direction switch for languages written in Arabic, Hebrew,
+                  Sorani Kurdish, or other right-to-left scripts.
                 </li>
               </ul>
             </div>
 
             <div class="topic-block">
-              <h3 class="topic-title">
-                Writing in Right-to-Left (RTL) Scripts
-              </h3>
+              <h3 class="topic-title">Importing &amp; Exporting Your Work</h3>
               <p class="topic-text">
-                For languages using Arabic, Hebrew, Sorani Kurdish, or other
-                right-to-left scripts, click the LTR / RTL button in the
-                toolbar. The text input areas, cursors, and punctuation align
-                immediately to right-to-left reading order.
-              </p>
-            </div>
-
-            <div class="topic-block">
-              <h3 class="topic-title">Exporting Your Work</h3>
-              <p class="topic-text">
-                When your review is complete, export your transcript into
-                standard formats:
+                Move seamlessly between Easper and standard linguistic archiving
+                tools:
               </p>
               <ul class="guide-text-list">
                 <li>
-                  <strong>ELAN (.eaf)</strong>: An XML annotation document with
-                  linked audio, speaker tiers, and sub-tiers, ready to open in
-                  ELAN.
+                  <strong>Import ELAN (.eaf)</strong>: Import an existing
+                  <code>.eaf</code> file into your project. Easper automatically
+                  displays a hierarchical summary of root speaker tiers and
+                  dependent sub-tiers—preserving tier types, linguistic
+                  stereotypes, and annotator metadata.
                 </li>
                 <li>
-                  <strong>Subtitles (.srt)</strong>: Standard timed subtitles
-                  for video presentations or sharing with speakers.
+                  <strong>ELAN Export (.eaf)</strong>: Exports a standards-compliant
+                  ELAN XML file with linked audio, speaker tiers, sentence and
+                  word/morpheme sub-tiers, and preserved linguistic types.
                 </li>
                 <li>
-                  <strong>Plain Text (.txt)</strong>: A readable transcript
-                  document with speaker tags and timestamps.
+                  <strong>Subtitles (.srt) &amp; Plain Text (.txt)</strong>:
+                  Export timed subtitles for video or readable transcripts with
+                  speaker labels and timestamps.
                 </li>
                 <li>
-                  <strong>Audio (.wav)</strong>: A standardized 16 kHz mono
-                  audio file of your recording.
+                  <strong>Structured JSON (.json) &amp; Audio (.wav)</strong>:
+                  Save full project state as JSON or export a standardized 16
+                  kHz mono WAV file to your chosen destination folder.
                 </li>
               </ul>
             </div>
@@ -230,69 +253,92 @@
 
           <div class="guide-body-content">
             <div class="topic-block">
-              <h3 class="topic-title">The Vertical Timeline</h3>
+              <h3 class="topic-title">
+                The Vertical Timeline &amp; Resizable Sidebar
+              </h3>
               <p class="topic-text">
                 Easper presents audio using a vertical waveform that scrolls
-                downward alongside your transcript cards. This arrangement
-                mirrors how linguists read interlinear glosses and narrative
-                texts, allowing seamless visual synchronization between sound
-                and transcription.
+                downward alongside your transcript cards. Multi-speaker turns
+                are organized into color-coded vertical speaker pillars, and you
+                can drag the right edge of the waveform sidebar at any time to
+                widen or narrow the timeline view.
               </p>
             </div>
 
             <div class="topic-block">
-              <h3 class="topic-title">Listening &amp; Playback Speed</h3>
+              <h3 class="topic-title">
+                Playback, Interval Selection &amp; Shortcuts
+              </h3>
               <p class="topic-text">
-                You can interact directly with the waveform at any point:
+                Control audio playback and select time ranges directly on the
+                waveform:
               </p>
               <ul class="guide-text-list">
                 <li>
-                  <strong>Seek Playback</strong>: Click anywhere on the waveform
-                  or timeline bar to begin playback from that moment.
+                  <strong>Cursor &amp; Quick Stop</strong>: Clicking or
+                  right-clicking anywhere on the waveform stops playback
+                  immediately and places the red cursor at that timestamp.
                 </li>
                 <li>
-                  <strong>Play Single Utterance</strong>: Click the play button
-                  on any segment box or card to hear only that sentence.
+                  <strong>Play from Cursor (<kbd>Ctrl</kbd> + <kbd>Space</kbd>)</strong>:
+                  Press <kbd>Ctrl</kbd> + <kbd>Space</kbd> to toggle playback
+                  starting directly from the red waveform cursor.
                 </li>
                 <li>
-                  <strong>Adjust Speed</strong>: Use the playback speed selector
-                  (0.5x to 1.5x) to slow down fast conversational passages or
-                  unfamiliar phonetic sequences.
+                  <strong>Waveform Interval Selection (<kbd>Shift</kbd> + <kbd>Space</kbd>)</strong>:
+                  Drag on the waveform to select a custom time range. Press
+                  <kbd>Shift</kbd> + <kbd>Space</kbd> (matching ELAN behavior)
+                  or click the selection play button to listen to that interval,
+                  or run segmentation, VAD trimming, and ASR strictly within the
+                  selected range.
+                </li>
+                <li>
+                  <strong>Playback Speed</strong>: Adjust the speed selector
+                  (0.5x to 1.5x) to slow down rapid speech or phonetic sequences.
                 </li>
               </ul>
             </div>
 
             <div class="topic-block">
-              <h3 class="topic-title">Adjusting Boundaries by Hand</h3>
+              <h3 class="topic-title">
+                Adjusting Boundaries, VAD Trimming &amp; Zoom
+              </h3>
               <p class="topic-text">
-                Speech segments appear as colored boxes over the waveform. Hover
-                over the top edge to drag the start time, or the bottom edge to
-                adjust the end time. Use the zoom slider to magnify the waveform
-                for precise placement around consonant bursts and breath onsets.
+                Drag the top or bottom edge of any segment box on the waveform
+                to adjust its start or end time with a live high-resolution
+                <strong>Boundary Magnifier</strong> popup. To automatically
+                tighten boundaries across many segments at once, open the
+                Segmentation panel and click <strong>Trim in Segments</strong>.
+              </p>
+              <p class="topic-text">
+                Use the vertical zoom controls to magnify time around the active
+                cursor position, and use the horizontal amplitude zoom controls
+                to inspect quiet voices or subtle consonant bursts.
               </p>
             </div>
 
             <div class="topic-block">
               <h3 class="topic-title">Splitting &amp; Merging Turns</h3>
               <p class="topic-text">
-                Right-click anywhere on a segment to open the editing menu:
+                Right-click anywhere on the waveform or a segment box to open
+                the context menu:
               </p>
               <ul class="guide-text-list">
                 <li>
-                  <strong>Split Segment</strong>: Divide a single utterance into
-                  two separate segments at the current playhead position.
+                  <strong>Split Segment</strong>: Divide an utterance into two
+                  separate segments at the clicked timestamp.
                 </li>
                 <li>
-                  <strong>Merge with Next</strong>: Join two adjacent segments
-                  into one continuous sentence.
+                  <strong>Merge with Next</strong>: Join two consecutive
+                  segments from the same speaker into a single turn.
                 </li>
                 <li>
-                  <strong>Delete Segment</strong>: Remove false detections
-                  caused by coughs or external noises.
+                  <strong>Add Segment Here</strong>: Insert a new speech segment
+                  at any silent gap on the waveform.
                 </li>
                 <li>
-                  <strong>Add Segment</strong>: Drag across empty space on the
-                  waveform to manually define a new speech box.
+                  <strong>Delete Segment</strong>: Remove false detections or
+                  background noise segments.
                 </li>
               </ul>
             </div>
@@ -333,11 +379,16 @@
 
           <div class="guide-body-content">
             <div class="topic-block">
-              <h3 class="topic-title">Identifying Voices</h3>
+              <h3 class="topic-title">
+                Identifying Voices &amp; Overlapping Speech
+              </h3>
               <p class="topic-text">
-                Speaker diarization addresses the question of who spoke when.
-                Easper analyzes voice acoustic patterns across the recording and
-                groups speech intervals into distinct speaker profiles.
+                Speaker diarization determines who spoke when. Easper combines
+                <strong>PyAnnote Segmentation 3.0</strong> (for 17 ms frame-level
+                turn-taking and overlapping cross-talk detection) with
+                <strong>3D-Speaker CAM++</strong> 512-dimensional voice
+                embeddings to cluster speech intervals into consistent speaker
+                profiles—100% locally in your browser.
               </p>
             </div>
 
@@ -347,9 +398,9 @@
                 <div class="clean-step-card">
                   <h4 class="step-card-title">Fresh Diarization</h4>
                   <p class="step-card-text">
-                    Best suited for new recordings. Easper detects speech and
-                    reconstructs boundary segments whenever conversational turns
-                    change between speakers.
+                    Best suited for new recordings. Easper detects speech,
+                    splits intra-segment speaker handoffs, detects overlapping
+                    turns, and assigns each segment to a speaker profile.
                   </p>
                 </div>
                 <div class="clean-step-card">
@@ -357,7 +408,8 @@
                   <p class="step-card-text">
                     Best suited when you already have custom boundaries or
                     imported an ELAN file. It assigns speaker labels to your
-                    existing segments without shifting any boundary timestamps.
+                    existing segments via multi-window majority voting without
+                    altering boundary timestamps.
                   </p>
                 </div>
               </div>
@@ -367,19 +419,21 @@
               <h3 class="topic-title">Practical Recommendations</h3>
               <ul class="guide-text-list">
                 <li>
-                  <strong>Set the Known Speaker Count</strong>: Specify the
-                  expected number of speakers (2 to 5) in the settings panel
-                  before running diarization.
+                  <strong>Set the Speaker Count</strong>: Specify the expected
+                  number of speakers (2 to 5) in the Segmentation &amp;
+                  Diarization panel before running diarization. Setting speaker
+                  count to 1 disables clustering.
                 </li>
                 <li>
-                  <strong>Fast Conversational Overlap</strong>: When speakers
-                  interrupt each other frequently, select a shorter diarization
-                  window (0.8 seconds) in Settings to capture brief turns.
+                  <strong>Detect Overlapping Speech</strong>: Enable the overlap
+                  detection toggle when participants speak simultaneously so
+                  overlapping turns are placed on separate speaker pillars.
                 </li>
                 <li>
-                  <strong>Noisy Field Conditions</strong>: For recordings made
-                  outdoors or in rooms with reverberation, use a longer window
-                  (1.5 seconds) for more reliable voice clustering.
+                  <strong>Voice Separation Sensitivity</strong>: Increase
+                  sensitivity if two similar-sounding speakers are merged into
+                  one profile; decrease sensitivity if a single expressive
+                  speaker gets split across multiple profiles.
                 </li>
               </ul>
             </div>
@@ -422,37 +476,56 @@
             <div class="topic-block">
               <h3 class="topic-title">Multi-Layered Documentation</h3>
               <p class="topic-text">
-                Field documentation typically requires multiple analytical
-                layers: a vernacular transcription, a free translation,
-                morphological breakdown, and field notes.
+                Field documentation often requires multiple analytical layers
+                aligned to each utterance: a vernacular transcription, a free
+                translation, morphological glossing, part-of-speech tags, and
+                field notes.
               </p>
               <p class="topic-text">
-                In Easper, each project can define up to three dependent
-                sub-tiers that remain aligned one-to-one with every utterance.
-              </p>
-            </div>
-
-            <div class="topic-block">
-              <h3 class="topic-title">Configuring Sub-Tiers</h3>
-              <p class="topic-text">
-                Open Project Settings to configure your tiers. You can choose
-                from standard presets—such as Translation, Morphology, Gloss,
-                Notes, or Phonetic—or provide custom names tailored to your
-                community's archiving standards.
-              </p>
-              <p class="topic-text">
-                Each segment card displays input fields for your active
-                sub-tiers directly beneath the primary transcription.
+                In Easper, each project can define up to <strong>5 dependent
+                sub-tiers</strong> aligned to every segment.
               </p>
             </div>
 
             <div class="topic-block">
-              <h3 class="topic-title">Archival Compatibility</h3>
+              <h3 class="topic-title">Sentence vs. Word/Morpheme Sub-Tiers</h3>
+              <div class="clean-steps-grid">
+                <div class="clean-step-card">
+                  <h4 class="step-card-title">
+                    Sentence Sub-Tiers (Undivided)
+                  </h4>
+                  <p class="step-card-text">
+                    Provides a single text field per utterance (ELAN
+                    <em>Symbolic Association</em>)—ideal for free translations,
+                    phonetic transcriptions, or commentary. Sentence sub-tiers
+                    can also be targeted directly by Speech Recognition.
+                  </p>
+                </div>
+                <div class="clean-step-card">
+                  <h4 class="step-card-title">
+                    Word / Morpheme Sub-Tiers (Divided)
+                  </h4>
+                  <p class="step-card-text">
+                    Tokenizes the main transcription by whitespace and custom
+                    single- or multi-character splitters (e.g., <code>-</code>,
+                    <code>=</code>, <code>((E</code>, <code>))</code>) to create
+                    per-token annotation boxes with controlled-vocabulary
+                    autocomplete (ELAN <em>Symbolic Subdivision</em> or
+                    <em>Time Subdivision</em>).
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div class="topic-block">
+              <h3 class="topic-title">ELAN Round-Trip Fidelity</h3>
               <p class="topic-text">
-                When exporting to ELAN, sub-tiers are written as dependent
-                reference tiers linked to the primary transcription tier. You
-                can open exported files in ELAN or process them using linguistic
-                packages like pympi without reformatting.
+                Open <strong>Project Settings</strong> to configure each tier's
+                name, annotator, ELAN Tier Type (<code>LINGUISTIC_TYPE_ID</code>),
+                and stereotype constraint. When importing and exporting
+                <code>.eaf</code> files, Easper preserves your exact tier
+                hierarchy, custom linguistic types, and per-tier annotator
+                attributes without inserting extra synthetic tiers.
               </p>
             </div>
           </div>
@@ -485,7 +558,180 @@
           </nav>
         </article>
 
-        <!-- 5. ELAN GUIDELINES FOR ASR -->
+        <!-- 5. LEXICONS, SPELLCHECK & AUTO-TAGGING -->
+      {:else if activeSection === 'lexicons'}
+        <article class="guide-card">
+          <h2 class="section-title">
+            Lexicons, Spellcheck &amp; Auto-Tagging
+          </h2>
+
+          <div class="guide-body-content">
+            <div class="topic-block">
+              <h3 class="topic-title">Managing Project Lexicons</h3>
+              <p class="topic-text">
+                The <strong>Lexicon Manager</strong> lets you build and maintain
+                structured dictionaries for low-resource and endangered
+                languages directly in the browser. Each lexicon includes a
+                mandatory <code>Headword</code> field alongside customizable
+                fields such as <code>POS</code>, <code>Gloss</code>,
+                <code>Meaning</code>, and <code>Etymology</code>. You can import
+                and export wordlists at any time as Tab-Separated Values
+                (<code>.tsv</code>) files.
+              </p>
+            </div>
+
+            <div class="topic-block">
+              <h3 class="topic-title">Hunspell WebAssembly Spellchecking</h3>
+              <p class="topic-text">
+                When you link a lexicon to your project in Project Settings,
+                Easper compiles its headwords and optional Hunspell affix rules
+                (<code>.aff</code>) into an in-memory WebAssembly spellchecker:
+              </p>
+              <ul class="guide-text-list">
+                <li>
+                  <strong>Real-Time Underlines &amp; Suggestions</strong>:
+                  Unrecognized words in segment cards are highlighted with
+                  orthographic replacement suggestions on click.
+                </li>
+                <li>
+                  <strong>One-Click Dictionary Growth</strong>: Add newly
+                  encountered inflected forms or headwords from a segment card
+                  straight into your active lexicon.
+                </li>
+              </ul>
+            </div>
+
+            <div class="topic-block">
+              <h3 class="topic-title">Word Sub-Tier Auto-Tagging</h3>
+              <p class="topic-text">
+                Link any word/morpheme sub-tier (such as <code>POS</code> or
+                <code>Gloss</code>) to a corresponding field in your active
+                lexicon. Using the <strong>Auto-Tagging</strong> panel in the
+                Transcriber Studio, Easper matches tokens across your segments
+                against lexicon headwords to populate morphological glosses or
+                part-of-speech tags in bulk—either filling only empty tag slots
+                or overwriting existing tags.
+              </p>
+            </div>
+          </div>
+
+          <!-- Bottom Article Navigation -->
+          <nav class="guide-nav-footer" aria-label="Article navigation">
+            {#if prevSection}
+              <button
+                type="button"
+                class="nav-page-btn nav-btn-prev"
+                onclick={() => setSection(prevSection.id)}
+              >
+                <span class="nav-dir-label">Previous</span>
+                <span class="nav-target-title">{prevSection.title}</span>
+              </button>
+            {:else}
+              <div></div>
+            {/if}
+
+            {#if nextSection}
+              <button
+                type="button"
+                class="nav-page-btn nav-btn-next"
+                onclick={() => setSection(nextSection.id)}
+              >
+                <span class="nav-dir-label">Next</span>
+                <span class="nav-target-title">{nextSection.title}</span>
+              </button>
+            {/if}
+          </nav>
+        </article>
+
+        <!-- 6. MODELS & RUNTIMES -->
+      {:else if activeSection === 'models'}
+        <article class="guide-card">
+          <h2 class="section-title">Models &amp; Runtimes</h2>
+
+          <div class="guide-body-content">
+            <div class="topic-block">
+              <h3 class="topic-title">Official Models: Whistle &amp; Whisper</h3>
+              <p class="topic-text">
+                In the <strong>Model Library</strong>, you can download and cache
+                speech recognition models for 100% offline use in your browser:
+              </p>
+              <div class="clean-steps-grid">
+                <div class="clean-step-card">
+                  <h4 class="step-card-title">Whistle (CPU WebAssembly)</h4>
+                  <p class="step-card-text">
+                    An ultra-compact (~17 MB) speech recognition model
+                    (<code>Cactus-Compute/whistle</code>) that runs entirely on
+                    CPU WebAssembly with word-level timestamps and zero GPU
+                    requirements.
+                  </p>
+                </div>
+                <div class="clean-step-card">
+                  <h4 class="step-card-title">
+                    OpenAI Whisper (WebGPU &amp; WASM)
+                  </h4>
+                  <p class="step-card-text">
+                    Multilingual <code>whisper-base</code> and
+                    <code>whisper-small</code> models accelerated via WebGPU
+                    shaders (or multi-threaded CPU WASM SIMD fallback) across
+                    nearly 100 languages.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div class="topic-block">
+              <h3 class="topic-title">
+                Custom Hugging Face &amp; Local Folder Models
+              </h3>
+              <ul class="guide-text-list">
+                <li>
+                  <strong>Hugging Face Hub</strong>: Add any compatible ONNX
+                  Whisper repository or <code>.cact</code> Whistle model from
+                  Hugging Face Hub by its repository ID.
+                </li>
+                <li>
+                  <strong>Local Model Folder</strong>: Load fine-tuned ONNX
+                  Whisper folders or local <code>.cact</code> archives directly
+                  from your computer's disk without uploading weights anywhere.
+                </li>
+                <li>
+                  <strong>Inline Model Renaming</strong>: Click the edit button
+                  next to any preset or custom model in your library to give it
+                  a clear project- or language-specific display name.
+                </li>
+              </ul>
+            </div>
+          </div>
+
+          <!-- Bottom Article Navigation -->
+          <nav class="guide-nav-footer" aria-label="Article navigation">
+            {#if prevSection}
+              <button
+                type="button"
+                class="nav-page-btn nav-btn-prev"
+                onclick={() => setSection(prevSection.id)}
+              >
+                <span class="nav-dir-label">Previous</span>
+                <span class="nav-target-title">{prevSection.title}</span>
+              </button>
+            {:else}
+              <div></div>
+            {/if}
+
+            {#if nextSection}
+              <button
+                type="button"
+                class="nav-page-btn nav-btn-next"
+                onclick={() => setSection(nextSection.id)}
+              >
+                <span class="nav-dir-label">Next</span>
+                <span class="nav-target-title">{nextSection.title}</span>
+              </button>
+            {/if}
+          </nav>
+        </article>
+
+        <!-- 7. ELAN GUIDELINES FOR ASR -->
       {:else if activeSection === 'elan-guidelines'}
         <article class="guide-card">
           <h2 class="section-title">Preparing ELAN Files for Model Training</h2>
@@ -1010,6 +1256,26 @@
   .guide-text-list li strong {
     color: var(--text-heading, #0f172a);
     font-weight: 600;
+  }
+
+  kbd {
+    display: inline-block;
+    padding: 2px 6px;
+    font-family: inherit;
+    font-size: 0.78rem;
+    font-weight: 600;
+    line-height: 1;
+    color: var(--text-heading, #1e293b);
+    background-color: var(--bg-hover, #f1f5f9);
+    border: 1px solid var(--border-color, #cbd5e1);
+    border-radius: 4px;
+    box-shadow: 0 1px 1px rgba(0, 0, 0, 0.08);
+  }
+
+  :global([data-theme='dark']) kbd {
+    background-color: #334155;
+    color: #f1f5f9;
+    border-color: #475569;
   }
 
   /* Article Navigation Footer */
