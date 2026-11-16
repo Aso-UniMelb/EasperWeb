@@ -15,7 +15,11 @@ import {
 } from '../services/db.js';
 import { normalizeSubTiers } from '../utils/subTiers.js';
 import { normalizeValidationRules } from '../utils/segmentValidator.js';
-import { processAudioFile, encodeWavBlob } from '../audio.js';
+import {
+  processAudioFile,
+  encodeWavBlob,
+  encodeWavBlobAsync,
+} from '../audio.js';
 import { audioState } from './audioState.svelte.js';
 import { transcriptState } from './transcriptState.svelte.js';
 import { appState } from './appState.svelte.js';
@@ -37,6 +41,7 @@ class ProjectState {
   // Conversion / Processing state
   isConverting = $state(false);
   convertingMessage = $state('');
+  convertingProgress = $state(0);
 
   // Modals visibility
   isProjectManagerOpen = $state(false);
@@ -198,18 +203,29 @@ class ProjectState {
     }
 
     this.isConverting = true;
+    this.convertingProgress = 2;
     this.convertingMessage =
       'Converting audio to 16kHz mono WAV (Whisper standard)...';
 
     try {
       // 1. Convert to 16kHz mono Float32Array via high-performance fast-path / resampler
       console.log('[ProjectState] Converting input audio file:', audioFileName);
-      const { audioData, duration } = await processAudioFile(audioFileOrBlob);
+      const { audioData, duration, isStandard16kMonoWav } =
+        await processAudioFile(audioFileOrBlob, (pct, msg) => {
+          this.convertingProgress = Math.max(2, Math.round(5 + pct * 0.6));
+          if (msg) this.convertingMessage = msg;
+        });
 
+      this.convertingProgress = 66;
       this.convertingMessage = 'Encoding standard 16-bit PCM WAV...';
-      // 2. Encode to standard 16-bit PCM 16kHz mono WAV Blob
-      const wavBlob = encodeWavBlob(audioData, 16000);
+      // 2. Encode to standard 16-bit PCM 16kHz mono WAV Blob (or reuse if already 16kHz mono WAV)
+      const wavBlob = isStandard16kMonoWav
+        ? audioFileOrBlob
+        : await encodeWavBlobAsync(audioData, 16000, (pct) => {
+            this.convertingProgress = Math.round(66 + pct * 0.24);
+          });
 
+      this.convertingProgress = 92;
       this.convertingMessage =
         'Saving project to browser storage (IndexedDB)...';
       const projectId = `proj_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
@@ -252,8 +268,10 @@ class ProjectState {
       localStorage.setItem('easper_last_transcriber', cleanTranscriber);
 
       // 5. Reload list & Open project
+      this.convertingProgress = 96;
+      this.convertingMessage = 'Building waveform visualization...';
       await this.loadProjects();
-      await this.openProject(projectId);
+      await this.openProject(projectId, { audioData, duration });
 
       this.isNewProjectOpen = false;
       // A new project has no segments and no settings yet, so start with the setup
@@ -269,6 +287,7 @@ class ProjectState {
     } finally {
       this.isConverting = false;
       this.convertingMessage = '';
+      this.convertingProgress = 0;
     }
   }
 
@@ -294,16 +313,27 @@ class ProjectState {
     }
 
     this.isConverting = true;
+    this.convertingProgress = 2;
     this.convertingMessage =
       'Converting audio to 16kHz mono WAV (Whisper standard)...';
 
     try {
       console.log('[ProjectState] Converting input audio file for ELAN import:', audioFileName);
-      const { audioData, duration } = await processAudioFile(audioFileOrBlob);
+      const { audioData, duration, isStandard16kMonoWav } =
+        await processAudioFile(audioFileOrBlob, (pct, msg) => {
+          this.convertingProgress = Math.max(2, Math.round(5 + pct * 0.6));
+          if (msg) this.convertingMessage = msg;
+        });
 
+      this.convertingProgress = 66;
       this.convertingMessage = 'Encoding standard 16-bit PCM WAV...';
-      const wavBlob = encodeWavBlob(audioData, 16000);
+      const wavBlob = isStandard16kMonoWav
+        ? audioFileOrBlob
+        : await encodeWavBlobAsync(audioData, 16000, (pct) => {
+            this.convertingProgress = Math.round(66 + pct * 0.24);
+          });
 
+      this.convertingProgress = 92;
       this.convertingMessage =
         'Saving ELAN project to browser storage (IndexedDB)...';
       const projectId = `proj_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
@@ -349,8 +379,10 @@ class ProjectState {
 
       localStorage.setItem('easper_last_transcriber', cleanTranscriber);
 
+      this.convertingProgress = 96;
+      this.convertingMessage = 'Building waveform visualization...';
       await this.loadProjects();
-      await this.openProject(projectId);
+      await this.openProject(projectId, { audioData, duration });
 
       this.isImportElanOpen = false;
       appState.statusMessage = `Project #${numericId} "${cleanTitle}" imported from ELAN with ${projectDoc.segments.length} utterances!`;
@@ -363,6 +395,7 @@ class ProjectState {
     } finally {
       this.isConverting = false;
       this.convertingMessage = '';
+      this.convertingProgress = 0;
     }
   }
 
@@ -370,7 +403,7 @@ class ProjectState {
    * Opens and activates a project by ID or numericId, loading its 16kHz WAV audio
    * and dialogue segments into the main UI.
    */
-  async openProject(projectIdOrNumericId) {
+  async openProject(projectIdOrNumericId, preDecodedAudio = null) {
     try {
       this.isConverting = true;
       this.convertingMessage =
@@ -403,7 +436,11 @@ class ProjectState {
       localStorage.setItem('easper_active_project_id', projectId);
 
       // Load audio and segments into transcriptState and audioState
-      await transcriptState.loadProjectState(projectDoc, audioBlob);
+      await transcriptState.loadProjectState(
+        projectDoc,
+        audioBlob,
+        preDecodedAudio,
+      );
 
       // Sync project's chosen lexicon with Hunspell spellchecker
       await this.syncProjectLexiconToHunspell(projectDoc.lexiconId);
@@ -700,7 +737,6 @@ class ProjectState {
     }
 
     if (added) {
-      currentSpeakers.sort((a, b) => a.id - b.id);
       await this.updateProjectSettings(this.activeProject.id, {
         speakers: currentSpeakers,
       });
@@ -728,7 +764,7 @@ class ProjectState {
    * drag, so it stays a narrow patch of two fields.
    *
    * @param {string} projectId
-   * @param {{ columnOrder?: Array<string>, hiddenColumns?: Array<string> }} patch
+   * @param {{ columnOrder?: Array<string>, hiddenColumns?: Array<string>, tierLayout?: 'columns'|'rows' }} patch
    */
   async setColumnLayout(projectId, patch) {
     try {
@@ -745,6 +781,14 @@ class ProjectState {
           patch.hiddenColumns !== undefined
             ? patch.hiddenColumns.map(String)
             : proj.hiddenColumns || [],
+        tierLayout:
+          patch.tierLayout !== undefined
+            ? patch.tierLayout === 'rows'
+              ? 'rows'
+              : 'columns'
+            : proj.tierLayout === 'rows'
+              ? 'rows'
+              : 'columns',
         updatedAt: new Date().toISOString(),
       };
 
@@ -756,6 +800,15 @@ class ProjectState {
       console.error('[ProjectState] Failed to save column layout:', err);
       appState.errorMessage = `Could not save the column layout: ${err.message || err}`;
     }
+  }
+
+  /** Toggles between showing sub-tiers side-by-side ('columns') or stacked ('rows'). */
+  async toggleTierLayout() {
+    if (!this.activeProjectId) return;
+    const current =
+      this.activeProject?.tierLayout === 'rows' ? 'rows' : 'columns';
+    const next = current === 'rows' ? 'columns' : 'rows';
+    await this.setColumnLayout(this.activeProjectId, { tierLayout: next });
   }
 
   /** Moves one column to a new index in the display order. */
@@ -878,6 +931,7 @@ class ProjectState {
               subTiers: proj.subTiers || [],
               columnOrder: proj.columnOrder || [],
               hiddenColumns: proj.hiddenColumns || [],
+              tierLayout: proj.tierLayout || 'columns',
               segments: currentSegments,
               transcript:
                 (this.activeProjectId === proj.id
@@ -1058,9 +1112,22 @@ class ProjectState {
       }
 
       // Check if audio needs conversion or if it's already 16kHz PCM WAV
+      this.convertingProgress = 10;
       this.convertingMessage = 'Verifying and processing audio...';
-      const { audioData, duration } = await processAudioFile(audioBlob);
-      const finalAudioBlob = encodeWavBlob(audioData, 16000);
+      const { audioData, duration } = await processAudioFile(
+        audioBlob,
+        (pct, msg) => {
+          this.convertingProgress = Math.max(10, Math.round(10 + pct * 0.55));
+          if (msg) this.convertingMessage = msg;
+        },
+      );
+      const finalAudioBlob = await encodeWavBlobAsync(
+        audioData,
+        16000,
+        (pct) => {
+          this.convertingProgress = Math.round(65 + pct * 0.25);
+        },
+      );
       const audioDuration = Number(duration.toFixed(2));
 
       // Generate fresh unique ID and sequential numericId so it doesn't collide with existing projects
@@ -1103,8 +1170,9 @@ class ProjectState {
       await saveProject(projectDoc);
 
       // Reload project list & open the imported project
+      this.convertingProgress = 96;
       await this.loadProjects();
-      await this.openProject(newProjectId);
+      await this.openProject(newProjectId, { audioData, duration });
 
       appState.statusMessage = `Project #${newNumericId} "${projectTitle}" opened successfully!`;
       router.navigate(`/transcriber/${newNumericId}`);
@@ -1116,6 +1184,7 @@ class ProjectState {
     } finally {
       this.isConverting = false;
       this.convertingMessage = '';
+      this.convertingProgress = 0;
     }
   }
 
@@ -1186,6 +1255,10 @@ class ProjectState {
     }
     if (Array.isArray(projectData.hiddenColumns)) {
       this.activeProject.hiddenColumns = projectData.hiddenColumns;
+    }
+    if (projectData.tierLayout) {
+      this.activeProject.tierLayout =
+        projectData.tierLayout === 'rows' ? 'rows' : 'columns';
     }
 
     // 4. Update segments if present

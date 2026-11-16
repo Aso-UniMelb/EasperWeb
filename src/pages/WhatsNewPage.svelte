@@ -27,6 +27,46 @@
   </div>
 
   <div class="updates-list">
+    <!-- November 17, 2026 -->
+    <section class="update-section">
+      <h2 class="update-date">
+        <span>November 17, 2026</span>
+        <span class="sub-app-badge badge-transcriber">
+          <i class="fa-solid fa-microphone"></i> Transcriber
+        </span>
+      </h2>
+      <ul class="update-bullets">
+        <li>
+          <strong>Main Tiers &amp; Speaker Ordering:</strong> Added a "Has Sub-tiers"
+          option per main tier (allowing standalone note or annotation tiers without
+          sub-tiers), per-tier ELAN prefix (<code>&lt;prefix&gt;@&lt;speaker&gt;</code>)
+          and transcriber inputs, and custom speaker reordering that also controls
+          the tier order on the waveform.
+        </li>
+        <li>
+          <strong>Columns / Rows Sub-Tier Layout:</strong> Added a toggle in the
+          tier legend to switch segment cards between side-by-side Columns and
+          stacked Rows, including a dedicated <strong>Tokens</strong> row above
+          divided sub-tiers.
+        </li>
+        <li>
+          <strong>ELAN Token Hierarchy:</strong> Divided sub-tiers now export to
+          ELAN under an intermediate <code>Tokens@&lt;speaker&gt;</code> subdivision
+          tier with 1-to-1 <em>Symbolic Association</em> child tiers, with full
+          round-trip support on import.
+        </li>
+        <li>
+          <strong>Audio Conversion Progress:</strong> Added a live progress bar
+          when converting large audio files to 16 kHz mono WAV, and bypassed
+          re-encoding for files already in 16 kHz mono PCM WAV format.
+        </li>
+        <li>
+          <strong>Large ELAN Import Fix:</strong> Resolved a crash when importing
+          large ELAN (<code>.eaf</code>) files with hundreds of segments.
+        </li>
+      </ul>
+    </section>
+
     <!-- November 8, 2026 -->
     <section class="update-section">
       <h2 class="update-date">

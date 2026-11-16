@@ -84,31 +84,52 @@ export function detectTierDefaults(eafData) {
     }
   }
 
-  // 2. Derive Speakers from Root Tiers (up to 5)
+  // 2. Derive Speakers & Note Tiers from Root Tiers (up to 5)
   const speakers = [];
   const rootTierToSpeakerId = new Map();
+  const rootTiersWithChildren = new Set(
+    dependentTiers.map((d) => d.parentRef).filter(Boolean),
+  );
 
   let nextSpeakerId = 1;
   for (const t of rootTiers) {
     if (nextSpeakerId > 5) break;
 
-    // If tierId is like "BIS@Speaker1", strip the prefix if participant is empty
+    const hasChildren = rootTiersWithChildren.has(t.tierId);
+    const lType = (t.linguisticType || '').trim();
+    const isNoteLike =
+      lType.toLowerCase() === 'note-lt' ||
+      lType.toLowerCase() === 'notes-lt' ||
+      (!t.participant?.trim() &&
+        /^(notes?|comments?|remarques?|field\s*notes?)(?:[\s_-]*\d+)?$/i.test(
+          t.tierId.trim(),
+        ));
+    const isNoteTier = !hasChildren && isNoteLike && rootTiers.length > 1;
+
+    // If tierId is like "BIS@Speaker1", extract prefix and strip it if participant is empty
+    const atMatch = t.tierId.match(/^([^@]+)@(.*)$/);
+    const tierPrefix = atMatch ? atMatch[1].trim() : '';
+    const tierTranscriber = (t.annotator || '').trim();
     let rawName = t.participant?.trim();
     if (!rawName) {
-      const atMatch = t.tierId.match(/^([^@]+)@(.*)$/);
       rawName =
         atMatch && atMatch[2].trim() ? atMatch[2].trim() : t.tierId.trim();
     }
     if (!rawName) {
-      rawName = `Speaker ${nextSpeakerId}`;
+      rawName = isNoteTier ? 'Notes' : `Speaker ${nextSpeakerId}`;
     }
-    const initials = getSpeakerInitials(rawName, nextSpeakerId);
+    const initials = isNoteTier
+      ? getSpeakerInitials(rawName, nextSpeakerId) || 'NT'
+      : getSpeakerInitials(rawName, nextSpeakerId);
 
     speakers.push({
       id: nextSpeakerId,
       name: rawName,
       initials,
-      elanTierType: (t.linguisticType || '').trim(),
+      tierPrefix,
+      transcriber: tierTranscriber,
+      elanTierType: lType === 'note-lt' ? '' : lType,
+      ...(isNoteTier ? { isNoteTier: true } : {}),
     });
     rootTierToSpeakerId.set(t.tierId, nextSpeakerId);
     nextSpeakerId++;
@@ -289,10 +310,10 @@ export function detectTierDefaults(eafData) {
         skipReason = 'Max 5 speakers reached';
       }
     } else if (isIntermediarySubdivision) {
-      role = 'ignore';
+      role = 'token';
       subTierId = null;
-      included = false;
-      skipReason = 'Intermediary subdivision tier';
+      included = true;
+      skipReason = '';
     } else {
       // Dependent tier: default to subtier if matched
       if (matchedSubId) {
@@ -401,7 +422,14 @@ export function compileElanToProject({
       : [{ id: 1, name: 'Speaker 1', initials: 'S1', elanTierType: '' }]
   ).map((spk) => ({
     ...spk,
+    ...(spk?.tierPrefix !== undefined
+      ? { tierPrefix: String(spk.tierPrefix).trim().replace(/@+$/, '') }
+      : {}),
+    ...(spk?.transcriber !== undefined
+      ? { transcriber: String(spk.transcriber).trim() }
+      : {}),
     elanTierType: spk?.elanTierType != null ? String(spk.elanTierType).trim() : '',
+    ...(spk?.isNoteTier ? { isNoteTier: true } : {}),
   }));
 
   const cleanSubTiers = normalizeSubTiers(subTiers, { sort: true });
@@ -546,6 +574,43 @@ export function compileElanToProject({
           subdivisionTokenIndex: tokenIndex >= 0 ? tokenIndex : 0,
           totalTokens: siblings.length,
         };
+      }
+
+      // If parent is a Time_Subdivision token tier (no parentAid on ALIGNABLE_ANNOTATION),
+      // match parent token to its containing root segment by time interval and tier parentRef.
+      if (!parent.parentAid && parent.stereotype === 'Time_Subdivision') {
+        const parentTier = tierDataMap.get(parent.tierId);
+        const rootTierId = parentTier?.parentRef;
+        const pStartSec = (parent.start || 0) / 1000;
+        const pEndSec = (parent.end || 0) / 1000;
+
+        let bestSeg = null;
+        let bestOverlap = 0;
+        for (const seg of rawSegments) {
+          if (rootTierId && seg._tierId !== rootTierId) continue;
+          const overlap = Math.max(
+            0,
+            Math.min(seg.end, pEndSec) - Math.max(seg.start, pStartSec),
+          );
+          if (overlap > bestOverlap) {
+            bestOverlap = overlap;
+            bestSeg = seg;
+          }
+        }
+        if (bestSeg && parentTier) {
+          const segStartMs = Math.round(bestSeg.start * 1000) - 5;
+          const segEndMs = Math.round(bestSeg.end * 1000) + 5;
+          const siblings = (parentTier.annotations || []).filter(
+            (a) => a.start >= segStartMs && a.end <= segEndMs,
+          );
+          const tokenIndex = siblings.findIndex((a) => a.id === parent.id);
+          return {
+            segment: bestSeg,
+            isDirectChild: false,
+            subdivisionTokenIndex: tokenIndex >= 0 ? tokenIndex : 0,
+            totalTokens: siblings.length,
+          };
+        }
       }
       curr = parent;
     }

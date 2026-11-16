@@ -130,6 +130,26 @@
               {projectState.convertingMessage ||
                 'Converting audio into 16kHz mono 16-bit PCM WAV for Whisper and storing locally...'}
             </p>
+            <div
+              class="converting-progress-wrap"
+              role="progressbar"
+              aria-valuemin="0"
+              aria-valuemax="100"
+              aria-valuenow={projectState.convertingProgress}
+            >
+              <div class="converting-progress-track">
+                <div
+                  class="converting-progress-fill"
+                  style="width: {Math.max(
+                    3,
+                    projectState.convertingProgress || 0,
+                  )}%;"
+                ></div>
+              </div>
+              <span class="converting-progress-pct">
+                {projectState.convertingProgress || 0}%
+              </span>
+            </div>
           </div>
         {:else}
           {#if errorMessage}

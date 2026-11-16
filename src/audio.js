@@ -109,12 +109,22 @@ export function resampleFloat32Array(sourceData, sourceRate, targetRate = 16000)
  * completely bypassing Web Audio decodeAudioData and OfflineAudioContext memory allocation.
  *
  * @param {Blob|File} fileOrBlob - The audio file or Blob to process
+ * @param {(percent: number, stageMessage?: string) => void} [onProgress] - Optional progress callback (0-100)
  * @returns {Promise<{ audioData: Float32Array, duration: number }>}
  */
-export async function processAudioFile(fileOrBlob) {
+export async function processAudioFile(fileOrBlob, onProgress = null) {
   if (!fileOrBlob) {
     throw new Error('No audio file or blob provided');
   }
+
+  const report = (pct, msg) => {
+    if (typeof onProgress === 'function') {
+      onProgress(Math.max(0, Math.min(100, Math.round(pct))), msg);
+    }
+  };
+  const yieldToUi = () => new Promise((r) => setTimeout(r, 0));
+
+  report(2, 'Inspecting audio header...');
 
   // 1. Direct PCM Fast-Path for standard 16-bit PCM WAV (any sample rate, mono or stereo)
   const wavInfo = await parseWavInfo(fileOrBlob);
@@ -129,34 +139,59 @@ export async function processAudioFile(fileOrBlob) {
   ) {
     try {
       console.log(`[Audio] Fast direct PCM processing for ${wavInfo.sampleRate}Hz ${wavInfo.channels}ch WAV (${wavInfo.duration}s)...`);
+      report(8, 'Reading WAV audio data...');
+      await yieldToUi();
+
       const pcmBytes = await fileOrBlob.slice(wavInfo.dataOffset, wavInfo.dataOffset + wavInfo.dataSize).arrayBuffer();
       const int16View = new Int16Array(pcmBytes);
       const channels = wavInfo.channels;
       const numFrames = Math.floor(int16View.length / channels);
 
       const targetSampleRate = 16000;
+      const CHUNK_SIZE = 600000;
+
       if (wavInfo.sampleRate === targetSampleRate) {
         const audioData = new Float32Array(numFrames);
-        for (let i = 0; i < numFrames; i++) {
-          audioData[i] = int16View[i * channels] / 32768.0;
+        for (let start = 0; start < numFrames; start += CHUNK_SIZE) {
+          const end = Math.min(numFrames, start + CHUNK_SIZE);
+          for (let i = start; i < end; i++) {
+            audioData[i] = int16View[i * channels] / 32768.0;
+          }
+          if (numFrames > CHUNK_SIZE) {
+            report(15 + (end / numFrames) * 85, 'Converting 16kHz PCM samples...');
+            await yieldToUi();
+          }
         }
-        return { audioData, duration: wavInfo.duration };
+        report(100, 'Audio resampled to 16kHz mono.');
+        return {
+          audioData,
+          duration: wavInfo.duration,
+          isStandard16kMonoWav: channels === 1,
+        };
       }
 
-      // Resample directly from int16 PCM to 16kHz Float32Array
+      // Resample directly from int16 PCM to 16kHz Float32Array in chunks so UI stays responsive
       const ratio = wavInfo.sampleRate / targetSampleRate;
       const targetLength = Math.max(1, Math.round(numFrames / ratio));
       const audioData = new Float32Array(targetLength);
 
-      for (let i = 0; i < targetLength; i++) {
-        const srcPos = i * ratio;
-        const srcIdx = Math.floor(srcPos);
-        const frac = srcPos - srcIdx;
-        const s0 = int16View[srcIdx * channels] / 32768.0;
-        const s1 = (srcIdx + 1 < numFrames) ? (int16View[(srcIdx + 1) * channels] / 32768.0) : s0;
-        audioData[i] = s0 + frac * (s1 - s0);
+      for (let start = 0; start < targetLength; start += CHUNK_SIZE) {
+        const end = Math.min(targetLength, start + CHUNK_SIZE);
+        for (let i = start; i < end; i++) {
+          const srcPos = i * ratio;
+          const srcIdx = Math.floor(srcPos);
+          const frac = srcPos - srcIdx;
+          const s0 = int16View[srcIdx * channels] / 32768.0;
+          const s1 = (srcIdx + 1 < numFrames) ? (int16View[(srcIdx + 1) * channels] / 32768.0) : s0;
+          audioData[i] = s0 + frac * (s1 - s0);
+        }
+        if (targetLength > CHUNK_SIZE) {
+          report(15 + (end / targetLength) * 85, 'Resampling WAV audio to 16kHz mono...');
+          await yieldToUi();
+        }
       }
 
+      report(100, 'Audio resampled to 16kHz mono.');
       return {
         audioData,
         duration: wavInfo.duration,
@@ -175,7 +210,11 @@ export async function processAudioFile(fileOrBlob) {
   const audioCtx = new AudioContextClass();
   let decodedBuffer;
   try {
+    report(12, 'Reading audio file into memory...');
+    await yieldToUi();
     const arrayBuffer = await fileOrBlob.arrayBuffer();
+    report(30, 'Decoding audio stream...');
+    await yieldToUi();
     decodedBuffer = await audioCtx.decodeAudioData(arrayBuffer);
   } finally {
     try {
@@ -187,8 +226,39 @@ export async function processAudioFile(fileOrBlob) {
 
   const originalDuration = decodedBuffer.duration;
   const channel0Data = decodedBuffer.getChannelData(0);
-  const audioData = resampleFloat32Array(channel0Data, decodedBuffer.sampleRate, 16000);
+  const sourceRate = decodedBuffer.sampleRate;
+  const targetRate = 16000;
 
+  if (sourceRate === targetRate) {
+    report(100, 'Audio decoded at 16kHz mono.');
+    return {
+      audioData: new Float32Array(channel0Data),
+      duration: originalDuration,
+    };
+  }
+
+  const ratio = sourceRate / targetRate;
+  const targetLength = Math.max(1, Math.round(channel0Data.length / ratio));
+  const audioData = new Float32Array(targetLength);
+  const CHUNK_SIZE = 600000;
+
+  for (let start = 0; start < targetLength; start += CHUNK_SIZE) {
+    const end = Math.min(targetLength, start + CHUNK_SIZE);
+    for (let i = start; i < end; i++) {
+      const srcPos = i * ratio;
+      const srcIdx = Math.floor(srcPos);
+      const frac = srcPos - srcIdx;
+      const s0 = channel0Data[srcIdx] || 0;
+      const s1 = srcIdx + 1 < channel0Data.length ? channel0Data[srcIdx + 1] : s0;
+      audioData[i] = s0 + frac * (s1 - s0);
+    }
+    if (targetLength > CHUNK_SIZE) {
+      report(55 + (end / targetLength) * 45, 'Resampling audio to 16kHz mono...');
+      await yieldToUi();
+    }
+  }
+
+  report(100, 'Audio resampled to 16kHz mono.');
   return {
     audioData,
     duration: originalDuration,
@@ -240,6 +310,54 @@ export function encodeWavBlob(samples, sampleRate = 16000) {
     view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7fff, true);
   }
 
+  return new Blob([view], { type: 'audio/wav' });
+}
+
+/**
+ * Asynchronous version of encodeWavBlob that yields to the UI thread in chunks
+ * and reports progress (0-100) so large audio files don't freeze the browser.
+ *
+ * @param {Float32Array} samples - Audio samples in range [-1.0, 1.0]
+ * @param {number} [sampleRate=16000]
+ * @param {(percent: number) => void} [onProgress]
+ * @returns {Promise<Blob>}
+ */
+export async function encodeWavBlobAsync(samples, sampleRate = 16000, onProgress = null) {
+  const buffer = new ArrayBuffer(44 + samples.length * 2);
+  const view = new DataView(buffer);
+
+  writeString(view, 0, 'RIFF');
+  view.setUint32(4, 36 + samples.length * 2, true);
+  writeString(view, 8, 'WAVE');
+  writeString(view, 12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  writeString(view, 36, 'data');
+  view.setUint32(40, samples.length * 2, true);
+
+  const CHUNK_SIZE = 600000;
+  for (let start = 0; start < samples.length; start += CHUNK_SIZE) {
+    const end = Math.min(samples.length, start + CHUNK_SIZE);
+    let offset = 44 + start * 2;
+    for (let i = start; i < end; i++, offset += 2) {
+      const s = Math.max(-1, Math.min(1, samples[i]));
+      view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+    }
+    if (samples.length > CHUNK_SIZE) {
+      if (typeof onProgress === 'function') {
+        onProgress(Math.round((end / samples.length) * 100));
+      }
+      await new Promise((r) => setTimeout(r, 0));
+    }
+  }
+  if (typeof onProgress === 'function') {
+    onProgress(100);
+  }
   return new Blob([view], { type: 'audio/wav' });
 }
 

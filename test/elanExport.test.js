@@ -3,7 +3,7 @@ import { exportToEaf } from '../src/elan.js';
 import { parseEaf } from '../src/utils/elanParser.js';
 
 describe('ELAN export with word/morpheme sub-tiers', () => {
-  it('exports word sub-tiers with equal durations on Time_Subdivision tier directly under speaker tier', () => {
+  it('exports word sub-tiers with equal durations on Time_Subdivision Tokens@<speaker> tier and POS@<speaker> under Tokens@<speaker>', () => {
     // 4 seconds segment with 4 morphemes
     const segments = [
       {
@@ -38,20 +38,21 @@ describe('ELAN export with word/morpheme sub-tiers', () => {
     // Verify XML contains linguistic types
     expect(xml).toContain('LINGUISTIC_TYPE_ID="default-lt" TIME_ALIGNABLE="true"');
     expect(xml).toContain('LINGUISTIC_TYPE_ID="words-lt" CONSTRAINTS="Time_Subdivision" TIME_ALIGNABLE="true"');
+    expect(xml).toContain('LINGUISTIC_TYPE_ID="dependent-lt" CONSTRAINTS="Symbolic_Association" TIME_ALIGNABLE="false"');
 
-    // Verify tier hierarchy (no unintended morphs@Speaker1 tier)
-    expect(xml).not.toContain('morphs@');
+    // Verify tier hierarchy: Speaker1 -> Tokens@Speaker1 -> POS@Speaker1
     expect(xml).toContain('<TIER TIER_ID="Speaker1" PARTICIPANT="Speaker1" LINGUISTIC_TYPE_REF="default-lt">');
-    expect(xml).toContain('<TIER TIER_ID="POS@Speaker1" PARENT_REF="Speaker1" LINGUISTIC_TYPE_REF="words-lt">');
+    expect(xml).toContain('<TIER TIER_ID="Tokens@Speaker1" PARENT_REF="Speaker1" LINGUISTIC_TYPE_REF="words-lt">');
+    expect(xml).toContain('<TIER TIER_ID="POS@Speaker1" PARENT_REF="Tokens@Speaker1" LINGUISTIC_TYPE_REF="dependent-lt">');
 
     // Parse the generated XML to verify time intervals and references
     const parsed = parseEaf(xml, 'test.eaf');
     const speakerTier = parsed.tiers.find((t) => t.tierId === 'Speaker1');
-    const morphTier = parsed.tiers.find((t) => t.tierId === 'morphs@Speaker1');
+    const tokensTier = parsed.tiers.find((t) => t.tierId === 'Tokens@Speaker1');
     const posTier = parsed.tiers.find((t) => t.tierId === 'POS@Speaker1');
 
     expect(speakerTier).toBeDefined();
-    expect(morphTier).toBeUndefined();
+    expect(tokensTier).toBeDefined();
     expect(posTier).toBeDefined();
 
     // Speaker utterance duration is 4 seconds (0 to 4000 ms)
@@ -60,7 +61,13 @@ describe('ELAN export with word/morpheme sub-tiers', () => {
     expect(speakerTier.annotations[0].end).toBe(4000);
     expect(speakerTier.annotations[0].text).toBe('book-s are here');
 
-    // POS annotations are subdivided into 4 equal 1-second intervals directly on POS@Speaker1
+    // Tokens@Speaker1 contains the 4 split tokens in equal 1-second intervals
+    expect(tokensTier.annotations).toHaveLength(4);
+    expect(tokensTier.annotations.map((a) => a.text)).toEqual(['book', 's', 'are', 'here']);
+    expect(tokensTier.annotations[0]).toMatchObject({ start: 0, end: 1000, text: 'book' });
+    expect(tokensTier.annotations[3]).toMatchObject({ start: 3000, end: 4000, text: 'here' });
+
+    // POS@Speaker1 contains the 4 tags referencing Tokens@Speaker1
     expect(posTier.annotations).toHaveLength(4);
     expect(posTier.annotations[0]).toMatchObject({
       start: 0,
@@ -84,7 +91,7 @@ describe('ELAN export with word/morpheme sub-tiers', () => {
     });
   });
 
-  it('exports word sub-tiers with Symbolic_Subdivision and chained PREVIOUS_ANNOTATION directly under speaker tier by default', () => {
+  it('exports word sub-tiers with Symbolic_Subdivision on Tokens@<speaker> and Symbolic_Association on POS@<speaker> by default', () => {
     const segments = [
       {
         id: 'seg-1',
@@ -115,14 +122,19 @@ describe('ELAN export with word/morpheme sub-tiers', () => {
     expect(xml).toContain(
       'LINGUISTIC_TYPE_ID="sym-subdivision-lt" CONSTRAINTS="Symbolic_Subdivision" TIME_ALIGNABLE="false"',
     );
-
-    // Check Tier Types (no morphs@Speaker1 tier created)
-    expect(xml).not.toContain('morphs@');
     expect(xml).toContain(
-      '<TIER TIER_ID="POS@Speaker1" PARENT_REF="Speaker1" LINGUISTIC_TYPE_REF="sym-subdivision-lt">',
+      'LINGUISTIC_TYPE_ID="dependent-lt" CONSTRAINTS="Symbolic_Association" TIME_ALIGNABLE="false"',
     );
 
-    // Check PREVIOUS_ANNOTATION chaining directly on POS@Speaker1 tier
+    // Check Tier Types: Speaker1 -> Tokens@Speaker1 -> POS@Speaker1
+    expect(xml).toContain(
+      '<TIER TIER_ID="Tokens@Speaker1" PARENT_REF="Speaker1" LINGUISTIC_TYPE_REF="sym-subdivision-lt">',
+    );
+    expect(xml).toContain(
+      '<TIER TIER_ID="POS@Speaker1" PARENT_REF="Tokens@Speaker1" LINGUISTIC_TYPE_REF="dependent-lt">',
+    );
+
+    // Check PREVIOUS_ANNOTATION chaining on Tokens@Speaker1 tier
     expect(xml).toContain('<REF_ANNOTATION ANNOTATION_ID="a2" ANNOTATION_REF="a1">');
     expect(xml).toContain(
       '<REF_ANNOTATION ANNOTATION_ID="a3" ANNOTATION_REF="a1" PREVIOUS_ANNOTATION="a2">',
@@ -136,11 +148,15 @@ describe('ELAN export with word/morpheme sub-tiers', () => {
 
     // Parse back and verify extracted data
     const parsed = parseEaf(xml, 'sym-test.eaf');
-    const morphTier = parsed.tiers.find((t) => t.tierId === 'morphs@Speaker1');
+    const tokensTier = parsed.tiers.find((t) => t.tierId === 'Tokens@Speaker1');
     const posTier = parsed.tiers.find((t) => t.tierId === 'POS@Speaker1');
 
-    expect(morphTier).toBeUndefined();
-    expect(posTier.stereotype).toBe('Symbolic_Subdivision');
+    expect(tokensTier).toBeDefined();
+    expect(tokensTier.stereotype).toBe('Symbolic_Subdivision');
+    expect(tokensTier.annotations.map((a) => a.text)).toEqual(['book', 's', 'are', 'here']);
+
+    expect(posTier.stereotype).toBe('Symbolic_Association');
+    expect(posTier.parentRef).toBe('Tokens@Speaker1');
     expect(posTier.isTimeAlignable).toBe(false);
     expect(posTier.annotations).toHaveLength(4);
     expect(posTier.annotations.map((a) => a.text)).toEqual(['N', 'SUF', 'V', 'ADV']);
@@ -211,14 +227,15 @@ describe('ELAN export with word/morpheme sub-tiers', () => {
     const parsed = parseEaf(xml, 'mixed.eaf');
 
     const aliceTier = parsed.tiers.find((t) => t.tierId === 'Alice');
-    const morphTier = parsed.tiers.find((t) => t.tierId === 'morphs@Alice');
+    const tokensTier = parsed.tiers.find((t) => t.tierId === 'Tokens@Alice');
     const transTier = parsed.tiers.find((t) => t.tierId === 'Translation@Alice');
     const posTier = parsed.tiers.find((t) => t.tierId === 'POS@Alice');
 
     expect(aliceTier).toBeDefined();
-    expect(morphTier).toBeUndefined();
+    expect(tokensTier).toBeDefined();
     expect(transTier).toBeDefined();
     expect(posTier).toBeDefined();
+    expect(posTier.parentRef).toBe('Tokens@Alice');
 
     // Translation hangs off Alice (full utterance 1000 to 3500)
     expect(transTier.annotations).toHaveLength(1);
@@ -228,7 +245,10 @@ describe('ELAN export with word/morpheme sub-tiers', () => {
       text: 'A greeting to the world',
     });
 
-    // POS tags are subdivided directly under Alice: 1000 to 2250, 2250 to 3500
+    // Tokens@Alice is subdivided into 2 equal intervals: 1000 to 2250 ('hello'), 2250 to 3500 ('world')
+    expect(tokensTier.annotations.map((a) => a.text)).toEqual(['hello', 'world']);
+
+    // POS tags hang off Tokens@Alice: 1000 to 2250 ('INTJ'), 2250 to 3500 ('NOUN')
     expect(posTier.annotations).toHaveLength(2);
     expect(posTier.annotations[0]).toMatchObject({
       start: 1000,
@@ -242,7 +262,7 @@ describe('ELAN export with word/morpheme sub-tiers', () => {
     });
   });
 
-  it('does not create morphs tier when there are only sentence-level sub-tiers', () => {
+  it('does not create Tokens tier when there are only sentence-level sub-tiers', () => {
     const segments = [
       {
         id: 'seg-1',
@@ -261,7 +281,7 @@ describe('ELAN export with word/morpheme sub-tiers', () => {
     ];
 
     const xml = exportToEaf({ segments, subTiers });
-    expect(xml).not.toContain('morphs@');
+    expect(xml).not.toContain('Tokens@');
     expect(xml).not.toContain('words-lt');
     expect(xml).toContain('Translation@Speaker1');
   });
@@ -287,11 +307,18 @@ describe('ELAN export with word/morpheme sub-tiers', () => {
 
     const xml = exportToEaf({ segments, subTiers });
     const parsed = parseEaf(xml, 'custom-splitters.eaf');
-    const morphTier = parsed.tiers.find((t) => t.tierId === 'morphs@Speaker1');
+    const tokensTier = parsed.tiers.find((t) => t.tierId === 'Tokens@Speaker1');
     const glossTier = parsed.tiers.find((t) => t.tierId === 'Gloss@Speaker1');
 
-    expect(morphTier).toBeUndefined();
+    expect(tokensTier).toBeDefined();
+    expect(tokensTier.annotations.map((a) => a.text)).toEqual([
+      'kitab',
+      'i',
+      'man',
+      'hat',
+    ]);
     expect(glossTier).toBeDefined();
+    expect(glossTier.parentRef).toBe('Tokens@Speaker1');
 
     expect(glossTier.annotations).toHaveLength(4);
     expect(glossTier.annotations.map((a) => a.text)).toEqual([
@@ -485,11 +512,15 @@ describe('ELAN export with word/morpheme sub-tiers', () => {
 
     expect(xml).toContain('<LINGUISTIC_TYPE LINGUISTIC_TYPE_ID="speech-root-type" TIME_ALIGNABLE="true" GRAPHIC_REFERENCES="false" />');
     expect(xml).toContain('<LINGUISTIC_TYPE LINGUISTIC_TYPE_ID="trans-assoc-type" CONSTRAINTS="Symbolic_Association" TIME_ALIGNABLE="false" GRAPHIC_REFERENCES="false" />');
-    expect(xml).toContain('<LINGUISTIC_TYPE LINGUISTIC_TYPE_ID="pos-subdiv-type" CONSTRAINTS="Symbolic_Subdivision" TIME_ALIGNABLE="false" GRAPHIC_REFERENCES="false" />');
-    expect(xml).toContain('<LINGUISTIC_TYPE LINGUISTIC_TYPE_ID="phon-timesub-type" CONSTRAINTS="Time_Subdivision" TIME_ALIGNABLE="true" GRAPHIC_REFERENCES="false" />');
+    expect(xml).toContain('<LINGUISTIC_TYPE LINGUISTIC_TYPE_ID="sym-subdivision-lt" CONSTRAINTS="Symbolic_Subdivision" TIME_ALIGNABLE="false" GRAPHIC_REFERENCES="false" />');
+    expect(xml).toContain('<LINGUISTIC_TYPE LINGUISTIC_TYPE_ID="words-lt" CONSTRAINTS="Time_Subdivision" TIME_ALIGNABLE="true" GRAPHIC_REFERENCES="false" />');
+    expect(xml).toContain('<LINGUISTIC_TYPE LINGUISTIC_TYPE_ID="pos-subdiv-type" CONSTRAINTS="Symbolic_Association" TIME_ALIGNABLE="false" GRAPHIC_REFERENCES="false" />');
+    expect(xml).toContain('<LINGUISTIC_TYPE LINGUISTIC_TYPE_ID="phon-timesub-type" CONSTRAINTS="Symbolic_Association" TIME_ALIGNABLE="false" GRAPHIC_REFERENCES="false" />');
 
     const parsed = parseEaf(xml, 'mixed-stereotypes.eaf');
     const rootTier = parsed.tiers.find((t) => t.tierId === 'Spk@Alice');
+    const tokensSymTier = parsed.tiers.find((t) => t.tierId === 'Tokens@Alice');
+    const tokensTimeTier = parsed.tiers.find((t) => t.tierId === 'Tokens_Phonetic@Alice');
     const transTier = parsed.tiers.find((t) => t.tierId === 'Translation@Alice');
     const posTier = parsed.tiers.find((t) => t.tierId === 'POS@Alice');
     const phonTier = parsed.tiers.find((t) => t.tierId === 'Phonetic@Alice');
@@ -497,16 +528,87 @@ describe('ELAN export with word/morpheme sub-tiers', () => {
     expect(rootTier?.linguisticType).toBe('speech-root-type');
     expect(rootTier?.stereotype).toBe('None');
 
+    expect(tokensSymTier?.stereotype).toBe('Symbolic_Subdivision');
+    expect(tokensSymTier?.annotations.map((a) => a.text)).toEqual(['hello', 'world']);
+
+    expect(tokensTimeTier?.stereotype).toBe('Time_Subdivision');
+    expect(tokensTimeTier?.annotations.map((a) => a.text)).toEqual(['hello', 'world']);
+
     expect(transTier?.linguisticType).toBe('trans-assoc-type');
     expect(transTier?.stereotype).toBe('Symbolic_Association');
 
     expect(posTier?.linguisticType).toBe('pos-subdiv-type');
-    expect(posTier?.stereotype).toBe('Symbolic_Subdivision');
+    expect(posTier?.parentRef).toBe('Tokens@Alice');
+    expect(posTier?.stereotype).toBe('Symbolic_Association');
     expect(posTier?.annotations.map((a) => a.text)).toEqual(['INTJ', 'NOUN']);
 
     expect(phonTier?.linguisticType).toBe('phon-timesub-type');
-    expect(phonTier?.stereotype).toBe('Time_Subdivision');
+    expect(phonTier?.parentRef).toBe('Tokens_Phonetic@Alice');
+    expect(phonTier?.stereotype).toBe('Symbolic_Association');
     expect(phonTier?.annotations[0]).toMatchObject({ start: 0, end: 1000, text: 'hɛloʊ' });
     expect(phonTier?.annotations[1]).toMatchObject({ start: 1000, end: 2000, text: 'wɜrld' });
+  });
+
+  it('exports Note main tiers (isNoteTier: true) without sub-tiers and roundtrips them cleanly', () => {
+    const segments = [
+      {
+        id: 'seg-1',
+        start: 0,
+        end: 2.0,
+        speaker: 'Alice',
+        speakerId: 1,
+        text: 'hello world',
+        subTexts: {
+          '1': 'Bonjour le monde',
+          '2': ['INTJ', 'NOUN'],
+        },
+      },
+      {
+        id: 'seg-2',
+        start: 0.5,
+        end: 1.5,
+        speaker: 'Notes',
+        speakerId: 2,
+        text: 'Loud door slam in background',
+        subTexts: {},
+      },
+    ];
+
+    const subTiers = [
+      { id: 1, name: 'Translation', type: 'sentence' },
+      { id: 2, name: 'POS', type: 'word' },
+    ];
+
+    const speakers = [
+      { id: 1, name: 'Alice', initials: 'AL' },
+      { id: 2, name: 'Notes', initials: 'NT', isNoteTier: true },
+    ];
+
+    const xml = exportToEaf({
+      segments,
+      subTiers,
+      speakers,
+      mainTierTitle: 'BIS',
+    });
+
+    // Speaker tier gets BIS@Alice and sub-tiers
+    expect(xml).toContain('TIER_ID="BIS@Alice"');
+    expect(xml).toContain('TIER_ID="Tokens@Alice"');
+    expect(xml).toContain('TIER_ID="Translation@Alice"');
+    expect(xml).toContain('TIER_ID="POS@Alice"');
+
+    // Note tier is exported as root tier "Notes" (no BIS@ prefix, no Tokens@Notes, no sub-tiers)
+    expect(xml).toContain('TIER_ID="Notes" LINGUISTIC_TYPE_REF="note-lt"');
+    expect(xml).not.toContain('BIS@Notes');
+    expect(xml).not.toContain('Tokens@Notes');
+    expect(xml).not.toContain('Translation@Notes');
+    expect(xml).not.toContain('POS@Notes');
+
+    const parsed = parseEaf(xml, 'notes-tier.eaf');
+    const notesTier = parsed.tiers.find((t) => t.tierId === 'Notes');
+    expect(notesTier).toBeDefined();
+    expect(notesTier?.parentRef).toBeNull();
+    expect(notesTier?.annotations).toHaveLength(1);
+    expect(notesTier?.annotations[0].text).toBe('Loud door slam in background');
   });
 });

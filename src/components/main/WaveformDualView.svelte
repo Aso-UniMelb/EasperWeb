@@ -656,9 +656,6 @@
           ? 'fa-align-right'
           : 'fa-align-left'}"
       ></i>
-      <span class="dir-badge"
-        >{transcriptState.textDirection.toUpperCase()}</span
-      >
     </button>
 
     {#if appState.isProcessing}

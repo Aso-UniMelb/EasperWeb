@@ -441,17 +441,21 @@ describe('ELAN import with annotators and main tier title', () => {
     expect(exportedXml).toContain('<LINGUISTIC_TYPE LINGUISTIC_TYPE_ID="utterance-lt" TIME_ALIGNABLE="true" GRAPHIC_REFERENCES="false" />');
     expect(exportedXml).toContain('<LINGUISTIC_TYPE LINGUISTIC_TYPE_ID="utterance-b-lt" TIME_ALIGNABLE="true" GRAPHIC_REFERENCES="false" />');
     expect(exportedXml).toContain('<LINGUISTIC_TYPE LINGUISTIC_TYPE_ID="free-trans-lt" CONSTRAINTS="Symbolic_Association" TIME_ALIGNABLE="false" GRAPHIC_REFERENCES="false" />');
-    expect(exportedXml).toContain('<LINGUISTIC_TYPE LINGUISTIC_TYPE_ID="pos-sym-lt" CONSTRAINTS="Symbolic_Subdivision" TIME_ALIGNABLE="false" GRAPHIC_REFERENCES="false" />');
-    expect(exportedXml).toContain('<LINGUISTIC_TYPE LINGUISTIC_TYPE_ID="morph-time-lt" CONSTRAINTS="Time_Subdivision" TIME_ALIGNABLE="true" GRAPHIC_REFERENCES="false" />');
+    expect(exportedXml).toContain('<LINGUISTIC_TYPE LINGUISTIC_TYPE_ID="sym-subdivision-lt" CONSTRAINTS="Symbolic_Subdivision" TIME_ALIGNABLE="false" GRAPHIC_REFERENCES="false" />');
+    expect(exportedXml).toContain('<LINGUISTIC_TYPE LINGUISTIC_TYPE_ID="words-lt" CONSTRAINTS="Time_Subdivision" TIME_ALIGNABLE="true" GRAPHIC_REFERENCES="false" />');
+    expect(exportedXml).toContain('<LINGUISTIC_TYPE LINGUISTIC_TYPE_ID="pos-sym-lt" CONSTRAINTS="Symbolic_Association" TIME_ALIGNABLE="false" GRAPHIC_REFERENCES="false" />');
+    expect(exportedXml).toContain('<LINGUISTIC_TYPE LINGUISTIC_TYPE_ID="morph-time-lt" CONSTRAINTS="Symbolic_Association" TIME_ALIGNABLE="false" GRAPHIC_REFERENCES="false" />');
 
     expect(exportedXml).toContain('<TIER TIER_ID="tx@SpkA" PARTICIPANT="SpkA" LINGUISTIC_TYPE_REF="utterance-lt">');
     expect(exportedXml).toContain('<TIER TIER_ID="tx@SpkB" PARTICIPANT="SpkB" LINGUISTIC_TYPE_REF="utterance-b-lt">');
+    expect(exportedXml).toContain('<TIER TIER_ID="Tokens@SpkA" PARENT_REF="tx@SpkA" LINGUISTIC_TYPE_REF="sym-subdivision-lt">');
+    expect(exportedXml).toContain('<TIER TIER_ID="Tokens_morph@SpkA" PARENT_REF="tx@SpkA" LINGUISTIC_TYPE_REF="words-lt">');
     expect(exportedXml).toContain('<TIER TIER_ID="ft@SpkA" PARENT_REF="tx@SpkA" LINGUISTIC_TYPE_REF="free-trans-lt">');
-    expect(exportedXml).toContain('<TIER TIER_ID="pos@SpkA" PARENT_REF="tx@SpkA" LINGUISTIC_TYPE_REF="pos-sym-lt">');
-    expect(exportedXml).toContain('<TIER TIER_ID="morph@SpkA" PARENT_REF="tx@SpkA" LINGUISTIC_TYPE_REF="morph-time-lt">');
+    expect(exportedXml).toContain('<TIER TIER_ID="pos@SpkA" PARENT_REF="Tokens@SpkA" LINGUISTIC_TYPE_REF="pos-sym-lt">');
+    expect(exportedXml).toContain('<TIER TIER_ID="morph@SpkA" PARENT_REF="Tokens_morph@SpkA" LINGUISTIC_TYPE_REF="morph-time-lt">');
   });
 
-  it('roundtrips word sub-tiers cleanly without creating an intermediary morphs@ tier', () => {
+  it('roundtrips word sub-tiers with Tokens@<speaker> tier cleanly', () => {
     const initialSegments = [
       {
         id: 1,
@@ -479,8 +483,8 @@ describe('ELAN import with annotators and main tier title', () => {
       mainTierTitle: 'BIS',
     });
 
-    expect(xml).not.toContain('morphs@');
-    expect(xml).not.toContain('morphemes@');
+    expect(xml).toContain('Tokens@Speaker1');
+    expect(xml).toContain('PARENT_REF="Tokens@Speaker1"');
 
     const parsed = parseEaf(xml, 'word-roundtrip.eaf');
     const detected = detectTierDefaults(parsed);

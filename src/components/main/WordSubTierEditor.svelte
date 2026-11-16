@@ -2,7 +2,7 @@
   import { transcriptState } from '../../state/transcriptState.svelte.js';
   import { tokenizeWords, getWordAnnotations } from '../../utils/subTiers.js';
 
-  let { seg, col, textDirection = 'ltr' } = $props();
+  let { seg, col, textDirection = 'ltr', hideWordHeader = false } = $props();
 
   let words = $derived(tokenizeWords(seg.text, col.splitters));
   let annotations = $derived(getWordAnnotations(seg, col.key, words.length));
@@ -198,13 +198,15 @@
         {@const val = annotations[idx] || ''}
         {@const isWarning = isInvalidTag(val)}
         <div class="word-annotation-item">
-          <label
-            for="word-annot-{seg.id}-{col.key}-{idx}"
-            class="word-annotation-label"
-            title="Word {idx + 1}: {word}"
-          >
-            {word}
-          </label>
+          {#if !hideWordHeader}
+            <label
+              for="word-annot-{seg.id}-{col.key}-{idx}"
+              class="word-annotation-label"
+              title="Word {idx + 1}: {word}"
+            >
+              {word}
+            </label>
+          {/if}
           <div class="word-annotation-box">
             <div class="word-annotation-input-wrapper">
               <textarea
@@ -214,9 +216,7 @@
                 rows="1"
                 spellcheck="false"
                 class="word-annotation-textarea {isWarning ? 'is-warning' : ''}"
-                placeholder={col.lexicon && col.lexicon.length > 0
-                  ? 'tag'
-                  : '...'}
+                placeholder={col.lexicon && col.lexicon.length > 0 ? 'tag' : ''}
                 value={val}
                 onfocus={() => handleFocus(idx)}
                 onblur={() => handleBlur(idx)}
@@ -226,8 +226,7 @@
                 aria-label="{col.name} for {word}"
                 title={isWarning
                   ? `Warning: "${val}" is not in the valid lexicon for ${col.name}`
-                  : `${col.name} for ${word}`}
-              ></textarea>
+                  : `${col.name} for ${word}`}></textarea>
 
               {#if activeWordIndex === idx && filteredSuggestions.length > 0}
                 <div class="word-autocomplete-dropdown" role="listbox">
@@ -297,8 +296,8 @@
     display: flex;
     flex-direction: row;
     flex-wrap: wrap;
-    column-gap: 8px;
-    row-gap: 6px;
+    column-gap: 5px;
+    row-gap: 5px;
     align-items: flex-start;
     width: 100%;
     padding: 2px 0;
@@ -309,8 +308,9 @@
     flex-direction: column;
     align-items: stretch;
     gap: 3px;
-    min-width: 50px;
-    max-width: 70px;
+    width: 68px;
+    min-width: 68px;
+    max-width: 68px;
   }
 
   .word-annotation-label {
@@ -323,7 +323,7 @@
     user-select: none;
     cursor: default;
     line-height: 1.3;
-    text-align: left;
+    text-align: center;
     max-width: 100%;
     padding: 0 2px;
   }
@@ -359,6 +359,7 @@
       monospace;
     font-size: 0.78rem;
     font-weight: 600;
+    text-align: center;
     line-height: 1.4;
     padding: 1px 6px;
     border-radius: 4px;

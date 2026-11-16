@@ -37,6 +37,7 @@ import {
   getWaveformPillarLayout,
   calculateStaggeredSegmentPositions,
   sortSegmentsChronologically,
+  isNoteTierSegment,
 } from '../utils/speakers.js';
 import {
   getTileCanvas as renderGetTileCanvas,
@@ -262,10 +263,16 @@ class TranscriptState {
     );
   }
 
+  isNoteSegment(seg) {
+    if (!seg) return false;
+    return isNoteTierSegment(seg, projectState.activeProject?.speakers || []);
+  }
+
   get segmentsInSelectedRange() {
     if (!Array.isArray(this.segments)) return [];
-    if (!audioState.isIntervalSelected) return this.segments;
-    return this.segments.filter((s) => this.isSegmentInSelectedRange(s));
+    const speechSegs = this.segments.filter((s) => !this.isNoteSegment(s));
+    if (!audioState.isIntervalSelected) return speechSegs;
+    return speechSegs.filter((s) => this.isSegmentInSelectedRange(s));
   }
 
   get emptySegmentsInSelectedRangeCount() {
@@ -281,24 +288,26 @@ class TranscriptState {
 
   get emptySegmentsCount() {
     if (!Array.isArray(this.segments)) return 0;
+    const speechSegs = this.segments.filter((s) => !this.isNoteSegment(s));
     const target = this.effectiveAsrOutputTarget;
     if (target !== 'main') {
-      return this.segments.filter(
+      return speechSegs.filter(
         (s) => !getSubText(s, target) || getSubText(s, target).trim() === '',
       ).length;
     }
-    return this.segments.filter((s) => !s.text || s.text.trim() === '').length;
+    return speechSegs.filter((s) => !s.text || s.text.trim() === '').length;
   }
 
   get transcribedSegmentsCount() {
     if (!Array.isArray(this.segments)) return 0;
+    const speechSegs = this.segments.filter((s) => !this.isNoteSegment(s));
     const target = this.effectiveAsrOutputTarget;
     if (target !== 'main') {
-      return this.segments.filter(
+      return speechSegs.filter(
         (s) => getSubText(s, target) && getSubText(s, target).trim() !== '',
       ).length;
     }
-    return this.segments.filter((s) => s.text && s.text.trim() !== '').length;
+    return speechSegs.filter((s) => s.text && s.text.trim() !== '').length;
   }
 
   setWorkflowStep(step) {
@@ -804,21 +813,49 @@ class TranscriptState {
     return Math.max(0, Math.round(ratio * height));
   }
 
-  // Measured card heights map (plain non-reactive object to avoid rendering feedback loops)
+  // Measured card heights map (plain non-reactive object; updates batched via RAF)
   cardHeights = {};
+  cardHeightsVersion = $state(0);
+  _cardHeightsTick = 0;
+  _cardHeightsRaf = null;
 
   registerCardHeight(segmentId, height) {
     if (!segmentId || !height || height <= 0) return;
-    this.cardHeights[segmentId] = Math.round(height);
+    const rounded = Math.round(height);
+    const prev = this.cardHeights[segmentId] || 34;
+    if (Math.abs(prev - rounded) > 2) {
+      this.cardHeights[segmentId] = rounded;
+      if (
+        !this._cardHeightsRaf &&
+        typeof requestAnimationFrame !== 'undefined'
+      ) {
+        this._cardHeightsRaf = requestAnimationFrame(() => {
+          this._cardHeightsRaf = null;
+          this.cardHeightsVersion = ++this._cardHeightsTick;
+        });
+      }
+    }
   }
 
   unregisterCardHeight(segmentId) {
     if (!segmentId) return;
-    delete this.cardHeights[segmentId];
+    if (this.cardHeights[segmentId] !== undefined) {
+      delete this.cardHeights[segmentId];
+      if (
+        !this._cardHeightsRaf &&
+        typeof requestAnimationFrame !== 'undefined'
+      ) {
+        this._cardHeightsRaf = requestAnimationFrame(() => {
+          this._cardHeightsRaf = null;
+          this.cardHeightsVersion = ++this._cardHeightsTick;
+        });
+      }
+    }
   }
 
-  get segmentLayoutPositions() {
+  #segmentLayoutPositions = $derived.by(() => {
     if (!this.waveformState || !this.waveformState.duration) return {};
+    const _v = this.cardHeightsVersion;
     return calculateStaggeredSegmentPositions(this.segments, {
       startTime: this.waveformState.startTime || 0,
       duration: this.waveformState.duration || 1,
@@ -827,6 +864,10 @@ class TranscriptState {
       defaultCardHeight: 34,
       gap: 2,
     });
+  });
+
+  get segmentLayoutPositions() {
+    return this.#segmentLayoutPositions;
   }
 
   get staggeredTrackHeight() {
@@ -2516,12 +2557,15 @@ class TranscriptState {
       }
       const spkIdMap = new Map();
       const projectSpeakers = projectState.activeProject?.speakers || [];
-      const defaultSpk = projectSpeakers[0] || { id: 1, name: 'Speaker 1', initials: 'S1' };
-      for (const spk of projectSpeakers) {
+      const nonNoteSpeakers = projectSpeakers.filter((spk) => !spk?.isNoteTier);
+      const defaultSpk = nonNoteSpeakers[0] ||
+        projectSpeakers[0] || { id: 1, name: 'Speaker 1', initials: 'S1' };
+      for (const spk of nonNoteSpeakers) {
         if (spk && spk.id != null) spkIdMap.set(Number(spk.id), spk);
       }
 
-      this.segments = payload.segments.map((s) => {
+      const preservedNotes = this.segments.filter((s) => this.isNoteSegment(s));
+      const diarizedSpeech = payload.segments.map((s) => {
         let spkId = Number(s.speakerId) || 1;
         const matched = spkIdMap.get(spkId) || defaultSpk;
         return {
@@ -2530,6 +2574,11 @@ class TranscriptState {
           speaker: matched.name || `Speaker ${matched.id}`,
         };
       });
+
+      this.segments = sortSegmentsChronologically([
+        ...diarizedSpeech,
+        ...preservedNotes,
+      ]);
 
       if (this.fullResult?.segments) {
         this.fullResult.segments = this.segments;
@@ -3411,11 +3460,10 @@ class TranscriptState {
         return;
       }
 
-      const targetCount = isSingleSubset
-        ? targetSegmentIds.length
-        : isInterval
-          ? this.segmentsInSelectedRange.length
-          : this.segments.length;
+      const targetIds = isSingleSubset
+        ? targetSegmentIds
+        : this.segmentsInSelectedRange.map((s) => s.id);
+      const targetCount = targetIds.length;
 
       appState.statusMessage = `Scanning and trimming non-speech silence in ${targetCount} segment(s) with Silero VAD...`;
 
@@ -3427,7 +3475,7 @@ class TranscriptState {
           files: modelState.rawLocalFiles,
           rangeStart,
           rangeEnd,
-          targetSegmentIds: isSingleSubset ? targetSegmentIds : null,
+          targetSegmentIds: targetIds,
           vadOptions: {
             threshold: Number(this.vadThreshold),
             speechPadMs: Number(this.vadSpeechPadMs),
@@ -3874,7 +3922,7 @@ class TranscriptState {
     }
   }
 
-  async loadProjectState(projectDoc, audioBlob) {
+  async loadProjectState(projectDoc, audioBlob, preDecodedAudio = null) {
     if (!projectDoc || !audioBlob) return;
 
     // 1. Load audio file into audioState player
@@ -3885,7 +3933,10 @@ class TranscriptState {
     );
 
     // 2. Process audio to extract waveform visualization peaks
-    const { audioData, duration } = await processAudioFile(audioBlob);
+    const { audioData, duration } =
+      preDecodedAudio && preDecodedAudio.audioData
+        ? preDecodedAudio
+        : await processAudioFile(audioBlob);
     audioState.cachedDecodedAudio = {
       target: audioState.selectedFile,
       audioData,

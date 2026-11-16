@@ -11,6 +11,7 @@
   import {
     buildColumns,
     getSubText,
+    tokenizeWords,
     SUB_TIER_TYPE_WORD,
   } from '../../utils/subTiers.js';
   import WordSubTierEditor from './WordSubTierEditor.svelte';
@@ -47,6 +48,7 @@
   );
 
   let isSpeakerPickerOpen = $state(false);
+  let cardEl = $state(null);
   let cellEl = $state(null);
   let textareaEl = $state(null);
   let activeSpellMenu = $state(null); // { word, start, end, x, y, suggestions }
@@ -154,9 +156,7 @@
     return tokens;
   });
 
-  const hasMisspelledWords = $derived(
-    spellTokens.some((t) => t.isMisspelled),
-  );
+  const hasMisspelledWords = $derived(spellTokens.some((t) => t.isMisspelled));
 
   const hasValidationIssues = $derived(
     spellTokens.some((t) => t.isValidationIssue),
@@ -321,23 +321,6 @@
     }
   }
 
-  // Sub-tiers are a project-level setting; each adds one text column to every
-  // segment. Order and visibility are arranged from the legend in the header bar.
-  let columns = $derived(
-    buildColumns(projectState.activeProject?.subTiers, {
-      columnOrder: projectState.activeProject?.columnOrder,
-      hiddenColumns: projectState.activeProject?.hiddenColumns,
-    }),
-  );
-
-  let visibleColumns = $derived(columns.filter((c) => !c.hidden));
-
-  // The transcription keeps a little more room than the dependent columns, which
-  // usually hold shorter glosses or translations.
-  let columnTemplate = $derived(
-    visibleColumns.map((c) => (c.isMain ? '1.3fr' : '1fr')).join(' ') || '1fr',
-  );
-
   let projectSpeakers = $derived(
     projectState.activeProject?.speakers || [
       { id: 1, name: 'Speaker 1', initials: 'S1' },
@@ -350,6 +333,45 @@
   // Find matching configured speaker in project to get custom initials if configured
   let configuredSpeaker = $derived(
     projectSpeakers.find((s) => Number(s.id) === activeSpeakerId) || null,
+  );
+
+  let isNoteSegment = $derived(Boolean(configuredSpeaker?.isNoteTier));
+
+  // Sub-tiers are a project-level setting; each adds one text column to every
+  // speaker segment. Note-tier segments have no sub-tiers and show only the main text.
+  let columns = $derived(
+    buildColumns(projectState.activeProject?.subTiers, {
+      columnOrder: projectState.activeProject?.columnOrder,
+      hiddenColumns: projectState.activeProject?.hiddenColumns,
+    }),
+  );
+
+  let visibleColumns = $derived(
+    isNoteSegment
+      ? [
+          {
+            key: 'main',
+            name: configuredSpeaker?.name || 'Notes',
+            isMain: true,
+            hidden: false,
+          },
+        ]
+      : columns.filter((c) => !c.hidden),
+  );
+
+  let isRowsLayout = $derived(
+    !isNoteSegment &&
+      projectState.activeProject?.tierLayout === 'rows' &&
+      visibleColumns.length > 1,
+  );
+
+  // The transcription keeps a little more room than the dependent columns, which
+  // usually hold shorter glosses or translations.
+  let columnTemplate = $derived(
+    isRowsLayout || isNoteSegment
+      ? '1fr'
+      : visibleColumns.map((c) => (c.isMain ? '1.3fr' : '1fr')).join(' ') ||
+          '1fr',
   );
 
   let speakerInitials = $derived(
@@ -402,9 +424,24 @@
   );
   let isStaggered = $derived(Boolean(layoutInfo?.isPushed));
   let staggerOffset = $derived(layoutInfo?.offset ?? 0);
+
+  $effect(() => {
+    const el = cardEl;
+    const id = seg.id;
+    if (!el || !id || typeof ResizeObserver === 'undefined') return;
+
+    const ro = new ResizeObserver(() => {
+      if (el.offsetHeight > 0) {
+        transcriptState.registerCardHeight(id, el.offsetHeight);
+      }
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  });
 </script>
 
 <div
+  bind:this={cardEl}
   id="segment-item-{seg.id}"
   class="segment-card {getSpeakerClass(
     seg.speakerId || seg.speaker,
@@ -437,7 +474,9 @@
     <div
       class="stagger-connector"
       style="height: {staggerOffset}px; top: -{staggerOffset}px; --stagger-color: {speakerColor.primary};"
-      title="Starts at {formatTimeSec(seg.start)} (staggered below overlapping segment)"
+      title="Starts at {formatTimeSec(
+        seg.start,
+      )} (staggered below overlapping segment)"
     >
       <div class="stagger-tick-top"></div>
       <div class="stagger-stem"></div>
@@ -452,10 +491,13 @@
       class="segment-speaker-badge"
       style="background: {speakerColor.primary}; color: #ffffff;"
       onclick={toggleSpeakerPicker}
-      title="Click to change speaker (Speaker #{activeSpeakerId}: {seg.speaker ||
+      title="Click to change tier ({isNoteSegment ? 'Note Tier' : `Speaker #${activeSpeakerId}`}: {seg.speaker ||
         'Speaker ' + activeSpeakerId})"
-      aria-label="Change speaker"
+      aria-label="Change speaker or tier"
     >
+      {#if isNoteSegment}
+        <i class="fa-solid fa-note-sticky spk-note-icon"></i>
+      {/if}
       <span>{speakerInitials}</span>
       <i class="fa-solid fa-chevron-down spk-caret"></i>
     </button>
@@ -470,7 +512,7 @@
         role="menu"
         tabindex="-1"
       >
-        <div class="speaker-picker-title">Assign Speaker</div>
+        <div class="speaker-picker-title">Assign Tier</div>
         {#each projectSpeakers as spk (spk.id)}
           {@const col = getSpeakerColor(spk.id)}
           <button
@@ -487,6 +529,12 @@
             <span class="speaker-picker-name"
               >{spk.name || `Speaker ${spk.id}`}</span
             >
+            {#if spk.isNoteTier}
+              <i
+                class="fa-solid fa-note-sticky spk-picker-note-icon"
+                title="Note tier (no sub-tiers)"
+              ></i>
+            {/if}
             {#if activeSpeakerId === Number(spk.id)}
               <i
                 class="fa-solid fa-check check-icon"
@@ -535,158 +583,224 @@
     <i class="fa-solid fa-repeat"></i>
   </button>
 
-  <div class="segment-content" style="grid-template-columns: {columnTemplate};">
-    {#each visibleColumns as col (col.key)}
-      {#if col.isMain}
-        <div class="main-tier-cell" bind:this={cellEl}>
-          {#if (hasSpellcheck && hasMisspelledWords) || (hasValidation && hasValidationIssues)}
-            <div
-              class="spell-backdrop"
-              aria-hidden="true"
-              dir={transcriptState.textDirection}
-            >
-              {#each spellTokens as tok}
-                {#if tok.isValidationIssue}
-                  <mark class="validation-wavy-underline">{tok.text}</mark>
-                {:else if tok.isMisspelled}
-                  <mark class="spell-wavy-underline">{tok.text}</mark>
-                {:else}
-                  <span>{tok.text}</span>
-                {/if}
-              {/each}
-            </div>
-          {/if}
+  <div
+    class="segment-content"
+    class:segment-content-rows={isRowsLayout}
+    style="grid-template-columns: {columnTemplate};"
+  >
+    {#each visibleColumns as col, colIdx (col.key)}
+      {@const prevCol = colIdx > 0 ? visibleColumns[colIdx - 1] : null}
+      {@const sharesPrevTokens =
+        isRowsLayout &&
+        col.type === SUB_TIER_TYPE_WORD &&
+        prevCol?.type === SUB_TIER_TYPE_WORD &&
+        (prevCol?.splitters ?? '') === (col.splitters ?? '')}
 
-          <textarea
-            bind:this={textareaEl}
-            use:autoResize
-            class="segment-text-input"
-            data-tier="main"
-            dir={transcriptState.textDirection}
-            bind:value={seg.text}
-            spellcheck={isLexiconSelected || hasValidation ? 'false' : 'true'}
-            onfocus={() => transcriptState.selectSegment(seg.id, false)}
-            onclick={handleTextareaClick}
-            oncontextmenu={handleTextareaContextMenu}
-            onkeydown={(e) => handleTextareaKeyDown(e, 'main')}
-            oninput={(e) => {
-              transcriptState.updateSegmentText(seg.id, e.target.value);
-              if (activeSpellMenu) activeSpellMenu = null;
-            }}
-            placeholder={isTranscribing ? 'Transcribing...' : '...'}
-            rows="1"
-            aria-label="Transcribed utterance text"
-          ></textarea>
-
-          {#if activeSpellMenu}
-            <div
-              class="spell-menu-scrim"
-              onclick={(e) => {
-                e.stopPropagation();
-                activeSpellMenu = null;
-              }}
-              role="presentation"
-            ></div>
-
-            <div
-              class="spell-suggestion-menu"
-              style="left: {activeSpellMenu.x}px; top: {activeSpellMenu.y}px;"
-              onclick={(e) => e.stopPropagation()}
-              onkeydown={(e) => {
-                if (e.key === 'Escape') activeSpellMenu = null;
-              }}
-              role="menu"
-              tabindex="-1"
-            >
-              <div class="spell-menu-header">
-                <div class="spell-menu-header-info">
-                  <span
-                    class="spell-menu-typo {activeSpellMenu.kind ===
-                    'validation'
-                      ? 'validation-menu-typo'
-                      : ''}"
-                  >
-                    "{activeSpellMenu.word}"
-                  </span>
-                  {#if activeSpellMenu.label}
-                    <span class="spell-menu-reason">
-                      {activeSpellMenu.label}
-                    </span>
-                  {/if}
-                </div>
-                <button
-                  type="button"
-                  class="spell-menu-close"
-                  onclick={() => (activeSpellMenu = null)}
-                  title="Close suggestions"
-                >
-                  <i class="fa-solid fa-xmark"></i>
-                </button>
+      {#if isRowsLayout && col.type === SUB_TIER_TYPE_WORD && !sharesPrevTokens}
+        {@const rowTokens = tokenizeWords(seg.text, col.splitters)}
+        <div class="tier-cell-item tier-row-line tier-tokens-row">
+          <span class="tier-row-badge badge-tokens" title="Tokens">
+            Tokens
+          </span>
+          <div class="tier-cell-body">
+            {#if rowTokens.length === 0}
+              <div class="tokens-row-empty">
+                <span class="empty-bullet">&bull;</span>
+                <span class="empty-text">No words to annotate</span>
               </div>
+            {:else}
+              <div class="tokens-row-list" dir={transcriptState.textDirection}>
+                {#each rowTokens as token, tIdx (tIdx)}
+                  <span
+                    class="tokens-row-item"
+                    title="Token {tIdx + 1}: {token}"
+                  >
+                    {token}
+                  </span>
+                {/each}
+              </div>
+            {/if}
+          </div>
+        </div>
+      {/if}
 
-              {#if activeSpellMenu.suggestions && activeSpellMenu.suggestions.length > 0}
-                <div class="spell-menu-section-title">Suggestions</div>
-                <div class="spell-menu-suggestions-list">
-                  {#each activeSpellMenu.suggestions as sugg}
-                    <button
-                      type="button"
-                      class="spell-menu-item suggestion-item"
-                      onclick={() => handleApplySuggestion(sugg)}
-                      role="menuitem"
-                    >
-                      <i class="fa-solid fa-check sugg-icon"></i>
-                      <span>{sugg === ' ' ? 'Single space (" ")' : sugg === '' ? '(Delete)' : sugg}</span>
-                    </button>
+      <div class="tier-cell-item" class:tier-row-line={isRowsLayout}>
+        {#if isRowsLayout}
+          <span
+            class="tier-row-badge"
+            class:badge-main={col.isMain}
+            title={col.name}
+          >
+            {col.name}
+          </span>
+        {/if}
+
+        <div class="tier-cell-body">
+          {#if col.isMain}
+            <div class="main-tier-cell" bind:this={cellEl}>
+              {#if (hasSpellcheck && hasMisspelledWords) || (hasValidation && hasValidationIssues)}
+                <div
+                  class="spell-backdrop"
+                  aria-hidden="true"
+                  dir={transcriptState.textDirection}
+                >
+                  {#each spellTokens as tok}
+                    {#if tok.isValidationIssue}
+                      <mark class="validation-wavy-underline">{tok.text}</mark>
+                    {:else if tok.isMisspelled}
+                      <mark class="spell-wavy-underline">{tok.text}</mark>
+                    {:else}
+                      <span>{tok.text}</span>
+                    {/if}
                   {/each}
                 </div>
-              {:else}
-                <div class="spell-menu-empty">No suggestions found</div>
               {/if}
 
-              {#if activeSpellMenu.kind !== 'validation' && isLexiconSelected}
-                <div class="spell-menu-divider"></div>
+              <textarea
+                bind:this={textareaEl}
+                use:autoResize
+                class="segment-text-input"
+                data-tier="main"
+                dir={transcriptState.textDirection}
+                bind:value={seg.text}
+                spellcheck={isLexiconSelected || hasValidation
+                  ? 'false'
+                  : 'true'}
+                onfocus={() => transcriptState.selectSegment(seg.id, false)}
+                onclick={handleTextareaClick}
+                oncontextmenu={handleTextareaContextMenu}
+                onkeydown={(e) => handleTextareaKeyDown(e, 'main')}
+                oninput={(e) => {
+                  transcriptState.updateSegmentText(seg.id, e.target.value);
+                  if (activeSpellMenu) activeSpellMenu = null;
+                }}
+                placeholder={isTranscribing
+                  ? 'Transcribing...'
+                  : isNoteSegment
+                    ? 'Add note...'
+                    : '...'}
+                rows="1"
+                aria-label={isNoteSegment
+                  ? 'Note text'
+                  : 'Transcribed utterance text'}></textarea>
 
-                <button
-                  type="button"
-                  class="spell-menu-item add-item"
-                  onclick={handleAddActiveToLexicon}
-                  role="menuitem"
+              {#if activeSpellMenu}
+                <div
+                  class="spell-menu-scrim"
+                  onclick={(e) => {
+                    e.stopPropagation();
+                    activeSpellMenu = null;
+                  }}
+                  role="presentation"
+                ></div>
+
+                <div
+                  class="spell-suggestion-menu"
+                  style="left: {activeSpellMenu.x}px; top: {activeSpellMenu.y}px;"
+                  onclick={(e) => e.stopPropagation()}
+                  onkeydown={(e) => {
+                    if (e.key === 'Escape') activeSpellMenu = null;
+                  }}
+                  role="menu"
+                  tabindex="-1"
                 >
-                  <i class="fa-solid fa-plus add-icon"></i>
-                  <span>Add "{activeSpellMenu.word}" to Lexicon</span>
-                </button>
+                  <div class="spell-menu-header">
+                    <div class="spell-menu-header-info">
+                      <span
+                        class="spell-menu-typo {activeSpellMenu.kind ===
+                        'validation'
+                          ? 'validation-menu-typo'
+                          : ''}"
+                      >
+                        "{activeSpellMenu.word}"
+                      </span>
+                      {#if activeSpellMenu.label}
+                        <span class="spell-menu-reason">
+                          {activeSpellMenu.label}
+                        </span>
+                      {/if}
+                    </div>
+                    <button
+                      type="button"
+                      class="spell-menu-close"
+                      onclick={() => (activeSpellMenu = null)}
+                      title="Close suggestions"
+                    >
+                      <i class="fa-solid fa-xmark"></i>
+                    </button>
+                  </div>
+
+                  {#if activeSpellMenu.suggestions && activeSpellMenu.suggestions.length > 0}
+                    <div class="spell-menu-section-title">Suggestions</div>
+                    <div class="spell-menu-suggestions-list">
+                      {#each activeSpellMenu.suggestions as sugg}
+                        <button
+                          type="button"
+                          class="spell-menu-item suggestion-item"
+                          onclick={() => handleApplySuggestion(sugg)}
+                          role="menuitem"
+                        >
+                          <i class="fa-solid fa-check sugg-icon"></i>
+                          <span
+                            >{sugg === ' '
+                              ? 'Single space (" ")'
+                              : sugg === ''
+                                ? '(Delete)'
+                                : sugg}</span
+                          >
+                        </button>
+                      {/each}
+                    </div>
+                  {:else}
+                    <div class="spell-menu-empty">No suggestions found</div>
+                  {/if}
+
+                  {#if activeSpellMenu.kind !== 'validation' && isLexiconSelected}
+                    <div class="spell-menu-divider"></div>
+
+                    <button
+                      type="button"
+                      class="spell-menu-item add-item"
+                      onclick={handleAddActiveToLexicon}
+                      role="menuitem"
+                    >
+                      <i class="fa-solid fa-plus add-icon"></i>
+                      <span>Add "{activeSpellMenu.word}" to Lexicon</span>
+                    </button>
+                  {/if}
+                </div>
               {/if}
             </div>
+          {:else if col.type === SUB_TIER_TYPE_WORD}
+            <WordSubTierEditor
+              {seg}
+              {col}
+              hideWordHeader={isRowsLayout}
+              textDirection={transcriptState.textDirection}
+            />
+          {:else}
+            <textarea
+              use:autoResize
+              class="segment-text-input segment-subtier-input"
+              data-tier={col.key}
+              dir={transcriptState.textDirection}
+              value={getSubText(seg, col.key)}
+              spellcheck={isLexiconSelected ? 'false' : 'true'}
+              onfocus={() => transcriptState.selectSegment(seg.id, false)}
+              onclick={(e) => e.stopPropagation()}
+              onkeydown={(e) => handleTextareaKeyDown(e, col.key)}
+              oninput={(e) =>
+                transcriptState.updateSegmentSubText(
+                  seg.id,
+                  col.key,
+                  e.target.value,
+                )}
+              placeholder={col.name}
+              rows="1"
+              aria-label="{col.name} for this utterance"></textarea>
           {/if}
         </div>
-      {:else if col.type === SUB_TIER_TYPE_WORD}
-        <WordSubTierEditor
-          {seg}
-          {col}
-          textDirection={transcriptState.textDirection}
-        />
-      {:else}
-        <textarea
-          use:autoResize
-          class="segment-text-input segment-subtier-input"
-          data-tier={col.key}
-          dir={transcriptState.textDirection}
-          value={getSubText(seg, col.key)}
-          spellcheck={isLexiconSelected ? 'false' : 'true'}
-          onfocus={() => transcriptState.selectSegment(seg.id, false)}
-          onclick={(e) => e.stopPropagation()}
-          onkeydown={(e) => handleTextareaKeyDown(e, col.key)}
-          oninput={(e) =>
-            transcriptState.updateSegmentSubText(
-              seg.id,
-              col.key,
-              e.target.value,
-            )}
-          placeholder={col.name}
-          rows="1"
-          aria-label="{col.name} for this utterance"
-        ></textarea>
-      {/if}
+      </div>
     {/each}
   </div>
 </div>
@@ -726,6 +840,17 @@
   .spk-caret {
     font-size: 0.55rem;
     opacity: 0.85;
+  }
+
+  .spk-note-icon {
+    font-size: 0.58rem;
+    opacity: 0.9;
+  }
+
+  .spk-picker-note-icon {
+    font-size: 0.68rem;
+    color: var(--text-muted, #64748b);
+    opacity: 0.8;
   }
 
   .speaker-picker-popover {
@@ -832,6 +957,125 @@
 
   .check-icon {
     font-size: 0.72rem;
+  }
+
+  .tier-cell-item {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .tier-cell-body {
+    flex: 1;
+    min-width: 0;
+    width: 100%;
+  }
+
+  .segment-content-rows {
+    gap: 0;
+  }
+
+  .tier-row-line {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding-top: 0px;
+  }
+
+  .tier-row-line + .tier-row-line {
+    border-top: 1px dashed rgba(148, 163, 184, 0.25);
+  }
+
+  :global([data-theme='dark']) .tier-row-line + .tier-row-line {
+    border-top-color: rgba(148, 163, 184, 0.16);
+  }
+
+  .tier-row-badge {
+    flex-shrink: 0;
+    width: 68px;
+    max-width: 68px;
+    font-size: 0.7rem;
+    font-weight: 600;
+    font-style: italic;
+    color: var(--text-muted, #64748b);
+    background: rgba(148, 163, 184, 0.12);
+    border-radius: 4px;
+    padding: 2px 5px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    text-align: center;
+    line-height: 1.3;
+    user-select: none;
+  }
+
+  .tier-row-badge.badge-main {
+    font-style: normal;
+    color: var(--primary-color, #0284c7);
+    background: rgba(2, 132, 199, 0.1);
+  }
+
+  :global([data-theme='dark']) .tier-row-badge {
+    color: #94a3b8;
+    background: rgba(255, 255, 255, 0.06);
+  }
+
+  :global([data-theme='dark']) .tier-row-badge.badge-main {
+    color: #7dd3fc;
+    background: rgba(56, 189, 248, 0.14);
+  }
+
+  .tier-row-badge.badge-tokens {
+    font-style: normal;
+    color: var(--text-color, #475569);
+    background: rgba(148, 163, 184, 0.16);
+  }
+
+  :global([data-theme='dark']) .tier-row-badge.badge-tokens {
+    color: #cbd5e1;
+    background: rgba(255, 255, 255, 0.08);
+  }
+
+  .tokens-row-list {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: wrap;
+    column-gap: 8px;
+    row-gap: 4px;
+    align-items: center;
+    width: 100%;
+    padding: 1px 0;
+  }
+
+  .tokens-row-item {
+    width: 68px;
+    min-width: 68px;
+    max-width: 68px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--text-color, #334155);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    line-height: 1.35;
+    padding: 0 2px;
+    box-sizing: border-box;
+    user-select: none;
+    text-align: center;
+  }
+
+  :global([data-theme='dark']) .tokens-row-item {
+    color: #cbd5e1;
+  }
+
+  .tokens-row-empty {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 2px 6px;
+    font-size: 0.72rem;
+    font-style: italic;
+    color: var(--text-muted, #94a3b8);
+    opacity: 0.85;
   }
 
   /* Dependent-tier columns read as secondary to the transcription they annotate */

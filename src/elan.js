@@ -31,6 +31,7 @@ function cleanSpeechText(str) {
 }
 
 export const ALIGNED_TYPE = 'default-lt';
+export const NOTE_TYPE = 'note-lt';
 export const DEPENDENT_TYPE = 'dependent-lt';
 export const SUBDIVISION_TYPE = 'words-lt';
 export const SYM_SUBDIVISION_TYPE = 'sym-subdivision-lt';
@@ -668,13 +669,46 @@ export function exportToEaf({
   const getSubTierTypeRef = (st) => {
     const custom = (st.elanTierType || '').trim();
     if (custom) return custom;
-    if (st.type === SUB_TIER_TYPE_WORD) {
-      return getWordSubTierStereotype(st) === 'Time_Subdivision'
-        ? SUBDIVISION_TYPE
-        : SYM_SUBDIVISION_TYPE;
-    }
     return DEPENDENT_TYPE;
   };
+
+  // Order is the caller's: dependent tiers are written in the order the user
+  // arranged the columns, which is the order ELAN then shows them in.
+  const cleanSubTiers = normalizeSubTiers(subTiers, { sort: false });
+
+  // Build token tier descriptors for divided ('word') sub-tiers.
+  // Word sub-tiers sharing the same stereotype and splitters share a single Tokens@<speaker> tier.
+  const hasTokensNameCollision = cleanSubTiers.some(
+    (st) => (st.name || '').trim().toLowerCase() === 'tokens',
+  );
+  const defaultTokenTierBase = hasTokensNameCollision ? 'Words' : 'Tokens';
+  const tokenGroupMap = new Map(); // groupKey -> { baseName, stereotype, splitters, typeRef }
+  const subTierToTokenGroup = new Map(); // st.id -> group descriptor
+
+  for (const st of cleanSubTiers) {
+    if (st.type !== SUB_TIER_TYPE_WORD) continue;
+    const wordStereotype = getWordSubTierStereotype(st);
+    const splitters = st.splitters ?? DEFAULT_SPLITTERS;
+    const groupKey = `${wordStereotype}::${splitters}`;
+    if (!tokenGroupMap.has(groupKey)) {
+      const isFirstGroup = tokenGroupMap.size === 0;
+      const baseName = isFirstGroup
+        ? defaultTokenTierBase
+        : `${defaultTokenTierBase}_${st.name.trim()}`;
+      const typeRef =
+        wordStereotype === 'Time_Subdivision'
+          ? SUBDIVISION_TYPE
+          : SYM_SUBDIVISION_TYPE;
+      tokenGroupMap.set(groupKey, {
+        groupKey,
+        baseName,
+        stereotype: wordStereotype,
+        splitters,
+        typeRef,
+      });
+    }
+    subTierToTokenGroup.set(st.id, tokenGroupMap.get(groupKey));
+  }
 
   const mainAnnotator = (
     transcriber ||
@@ -703,16 +737,29 @@ export function exportToEaf({
     }
   }
 
-  // Order is the caller's: dependent tiers are written in the order the user
-  // arranged the columns, which is the order ELAN then shows them in.
-  const cleanSubTiers = normalizeSubTiers(subTiers, { sort: false });
-
   const cleanMainTier = (mainTierTitle || '').trim().replace(/@+$/, '');
 
-  const getSpeakerRootTierId = (spkName) => {
-    if (!cleanMainTier) return spkName;
-    if (spkName.startsWith(`${cleanMainTier}@`)) return spkName;
-    return `${cleanMainTier}@${spkName}`;
+  const getSpeakerRootTierId = (spkName, spkObj = null) => {
+    const isNoteTier = Boolean(spkObj?.isNoteTier);
+    const rawPrefix =
+      spkObj && spkObj.tierPrefix !== undefined
+        ? spkObj.tierPrefix
+        : isNoteTier
+          ? ''
+          : cleanMainTier;
+    const prefix = String(rawPrefix || '')
+      .trim()
+      .replace(/@+$/, '');
+    if (!prefix) return spkName;
+    if (spkName.startsWith(`${prefix}@`)) return spkName;
+    return `${prefix}@${spkName}`;
+  };
+
+  const getSpeakerAnnotator = (spkObj = null) => {
+    if (spkObj && spkObj.transcriber && String(spkObj.transcriber).trim()) {
+      return String(spkObj.transcriber).trim();
+    }
+    return mainAnnotator;
   };
 
   // ELAN convention: a dependent tier is named `<layer>@<participant>` so the same
@@ -721,27 +768,50 @@ export function exportToEaf({
     `${subTierName}@${spkName}`;
 
   // Pre-create tiers for all configured speakers in the project, plus dependent
-  // sub-tiers per speaker, so layers arrive in ELAN ready to type into.
+  // sub-tiers per speaker (excluding Note tiers, which have no sub-tiers).
   if (Array.isArray(speakers) && speakers.length > 0) {
     for (const spk of speakers) {
-      const spkLabel = spk.name ? spk.name.trim() : `Speaker ${spk.id}`;
-      const rootTierId = getSpeakerRootTierId(spkLabel);
-      const spkTypeRef = (spk.elanTierType || '').trim() || ALIGNED_TYPE;
-      eaf.addTier(rootTierId, spk.name || `Speaker ${spk.id}`, {
+      const isNote = Boolean(spk.isNoteTier);
+      const spkLabel = spk.name
+        ? spk.name.trim()
+        : isNote
+          ? 'Notes'
+          : `Speaker ${spk.id}`;
+      const rootTierId = getSpeakerRootTierId(spkLabel, spk);
+      const spkAnnotator = getSpeakerAnnotator(spk);
+      const spkTypeRef =
+        (spk.elanTierType || '').trim() || (isNote ? NOTE_TYPE : ALIGNED_TYPE);
+      eaf.addTier(rootTierId, isNote ? '' : spk.name || `Speaker ${spk.id}`, {
         typeRef: spkTypeRef,
         stereotype: 'None',
-        annotator: mainAnnotator,
+        annotator: spkAnnotator,
       });
+
+      if (isNote) continue;
+
+      // Pre-create token subdivision tiers (e.g. Tokens@Speaker1) for divided sub-tiers
+      for (const group of tokenGroupMap.values()) {
+        eaf.addTier(dependentTierId(group.baseName, spkLabel), '', {
+          parentRef: rootTierId,
+          typeRef: group.typeRef,
+          stereotype: group.stereotype,
+          annotator: spkAnnotator,
+        });
+      }
 
       for (const st of cleanSubTiers) {
         const subTierAnnotator = (st.annotator || '').trim();
         const subTypeRef = getSubTierTypeRef(st);
         if (st.type === SUB_TIER_TYPE_WORD) {
-          const wordStereotype = getWordSubTierStereotype(st);
+          const tokenGroup = subTierToTokenGroup.get(st.id);
+          const tokenTierId = dependentTierId(
+            tokenGroup?.baseName || defaultTokenTierBase,
+            spkLabel,
+          );
           eaf.addTier(dependentTierId(st.name, spkLabel), '', {
-            parentRef: rootTierId,
+            parentRef: tokenTierId,
             typeRef: subTypeRef,
-            stereotype: wordStereotype,
+            stereotype: 'Symbolic_Association',
             annotator: subTierAnnotator,
           });
         } else {
@@ -786,13 +856,16 @@ export function exportToEaf({
         speakerObj = speakers[0];
       }
 
+      const isNote = Boolean(speakerObj?.isNoteTier);
       let spkLabel = '';
       let participant = '';
       if (speakerObj) {
         spkLabel = speakerObj.name
           ? speakerObj.name.trim()
-          : `Speaker ${speakerObj.id}`;
-        participant = speakerObj.name || spkLabel;
+          : isNote
+            ? 'Notes'
+            : `Speaker ${speakerObj.id}`;
+        participant = isNote ? '' : speakerObj.name || spkLabel;
       } else if (seg.speaker) {
         spkLabel = seg.speaker.trim();
         participant = spkLabel;
@@ -800,8 +873,11 @@ export function exportToEaf({
         spkLabel = 'Speaker 1';
         participant = 'Speaker 1';
       }
-      const rootTierId = getSpeakerRootTierId(spkLabel);
-      const spkTypeRef = (speakerObj?.elanTierType || '').trim() || ALIGNED_TYPE;
+      const rootTierId = getSpeakerRootTierId(spkLabel, speakerObj);
+      const spkAnnotator = getSpeakerAnnotator(speakerObj);
+      const spkTypeRef =
+        (speakerObj?.elanTierType || '').trim() ||
+        (isNote ? NOTE_TYPE : ALIGNED_TYPE);
 
       const startMs = Math.round(seg.start * 1000);
       const endMs = Math.round(seg.end * 1000);
@@ -813,57 +889,84 @@ export function exportToEaf({
         endMs,
         text,
         participant,
-        { annotator: mainAnnotator, typeRef: spkTypeRef },
+        { annotator: spkAnnotator, typeRef: spkTypeRef },
       );
-      if (!parentLocalId) continue;
+      if (!parentLocalId || isNote) continue;
+
+      // Create subdivided token annotations on Tokens@<speaker> for each distinct token group
+      const tokenGroupLocalIds = new Map(); // groupKey -> { tokenTierId, words, localIds }
+      for (const group of tokenGroupMap.values()) {
+        const words = tokenizeWords(seg.text, group.splitters);
+        const tokenTierId = dependentTierId(group.baseName, spkLabel);
+        let localIds = [];
+        if (words.length > 0) {
+          if (group.stereotype === 'Time_Subdivision') {
+            const durationMs = endMs - startMs;
+            const tokenItems = words.map((w, idx) => {
+              const mStart =
+                startMs + Math.round((idx * durationMs) / words.length);
+              const mEnd =
+                idx === words.length - 1
+                  ? endMs
+                  : startMs +
+                    Math.round(((idx + 1) * durationMs) / words.length);
+              return {
+                value: w,
+                startMs: mStart,
+                endMs: mEnd,
+              };
+            });
+            localIds = eaf.addSubdividedAnnotations(
+              tokenTierId,
+              rootTierId,
+              parentLocalId,
+              tokenItems,
+              { annotator: spkAnnotator, typeRef: group.typeRef },
+            );
+          } else {
+            localIds = eaf.addSymbolicSubdivisionAnnotations(
+              tokenTierId,
+              rootTierId,
+              parentLocalId,
+              words,
+              { annotator: spkAnnotator, typeRef: group.typeRef },
+            );
+          }
+        }
+        tokenGroupLocalIds.set(group.groupKey, {
+          tokenTierId,
+          words,
+          localIds,
+        });
+      }
 
       for (const st of cleanSubTiers) {
         const subTierAnnotator = (st.annotator || '').trim();
         const subTypeRef = getSubTierTypeRef(st);
         if (st.type === SUB_TIER_TYPE_WORD) {
-          const words = tokenizeWords(
-            seg.text,
-            st.splitters ?? DEFAULT_SPLITTERS,
-          );
-          if (words.length > 0) {
+          const tokenGroup = subTierToTokenGroup.get(st.id);
+          const tokenData = tokenGroup
+            ? tokenGroupLocalIds.get(tokenGroup.groupKey)
+            : null;
+          if (tokenData && tokenData.localIds.length > 0) {
+            const { tokenTierId, words, localIds } = tokenData;
             const tags = getWordAnnotations(seg, st.id, words.length);
-            const cleanTags = tags.map((t) => (t ? String(t).trim() : ''));
             const subTierId = dependentTierId(st.name, spkLabel);
-            const isTimeSubdiv =
-              getWordSubTierStereotype(st) === 'Time_Subdivision';
-
-            if (isTimeSubdiv) {
-              const durationMs = endMs - startMs;
-              const tagItems = cleanTags.map((tagVal, idx) => {
-                const mStart =
-                  startMs + Math.round((idx * durationMs) / words.length);
-                const mEnd =
-                  idx === words.length - 1
-                    ? endMs
-                    : startMs +
-                      Math.round(((idx + 1) * durationMs) / words.length);
-                return {
-                  value: tagVal,
-                  startMs: mStart,
-                  endMs: mEnd,
-                };
-              });
-
-              eaf.addSubdividedAnnotations(
-                subTierId,
-                rootTierId,
-                parentLocalId,
-                tagItems,
-                { annotator: subTierAnnotator, typeRef: subTypeRef },
-              );
-            } else {
-              eaf.addSymbolicSubdivisionAnnotations(
-                subTierId,
-                rootTierId,
-                parentLocalId,
-                cleanTags,
-                { annotator: subTierAnnotator, typeRef: subTypeRef },
-              );
+            for (let i = 0; i < words.length; i++) {
+              const tagVal = tags[i] ? String(tags[i]).trim() : '';
+              if (localIds[i]) {
+                eaf.addRefAnnotation(
+                  subTierId,
+                  tokenTierId,
+                  localIds[i],
+                  tagVal,
+                  {
+                    allowEmpty: true,
+                    annotator: subTierAnnotator,
+                    typeRef: subTypeRef,
+                  },
+                );
+              }
             }
           }
         } else {

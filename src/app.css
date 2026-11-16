@@ -462,17 +462,17 @@ body {
     column-gap: 12px;
   }
 
-  .container-studio .waveform-dual-wrapper.has-automation-panel > .waveform-dual-header-bar {
+  .container-studio .waveform-dual-wrapper.has-automation-panel>.waveform-dual-header-bar {
     grid-column: 1;
     grid-row: 1;
   }
 
-  .container-studio .waveform-dual-wrapper.has-automation-panel > .transcript-dual-container {
+  .container-studio .waveform-dual-wrapper.has-automation-panel>.transcript-dual-container {
     grid-column: 1;
     grid-row: 2;
   }
 
-  .container-studio .waveform-dual-wrapper.has-automation-panel > .automation-panel-slot {
+  .container-studio .waveform-dual-wrapper.has-automation-panel>.automation-panel-slot {
     grid-column: 2;
     grid-row: 1 / span 2;
     height: 100%;
@@ -1399,22 +1399,8 @@ progress {
   box-shadow: 0 1px 2px rgba(29, 78, 216, 0.08);
 }
 
-.btn-dir-toggle .dir-badge {
-  display: inline-block;
-  padding: 1px 4px;
-  border-radius: 4px;
-  font-size: 0.68rem;
-  font-weight: 700;
-  letter-spacing: 0.5px;
-  background: #e2e8f0;
-  color: #475569;
-  transition: all 0.15s ease;
-}
 
-.btn-dir-toggle.is-rtl .dir-badge {
-  background: #bfdbfe;
-  color: #1e40af;
-}
+
 
 .header-action-divider {
   width: 1px;
@@ -3391,10 +3377,6 @@ progress {
     font-size: 0.72rem;
   }
 
-  .btn-dir-toggle .dir-badge {
-    padding: 1px 3px;
-    font-size: 0.65rem;
-  }
 
   .transcribing-live-badge {
     height: 28px;
@@ -4292,6 +4274,47 @@ code {
   font-size: 0.82rem;
   color: #64748b;
   max-width: 420px;
+}
+
+.converting-progress-wrap {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  max-width: 340px;
+  margin-top: 12px;
+}
+
+.converting-progress-track {
+  flex: 1;
+  height: 8px;
+  background: #e2e8f0;
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+[data-theme='dark'] .converting-progress-track {
+  background: #334155;
+}
+
+.converting-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #0284c7 0%, #38bdf8 100%);
+  border-radius: 999px;
+  transition: width 0.15s ease;
+}
+
+.converting-progress-pct {
+  font-size: 0.78rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-heading, #0f172a);
+  min-width: 36px;
+  text-align: right;
+}
+
+[data-theme='dark'] .converting-progress-pct {
+  color: #f8fafc;
 }
 
 /* Projects Library Grid */
@@ -6444,10 +6467,6 @@ code {
   background-color: #334155;
   border-color: #475569;
   color: #ffffff;
-}
-
-[data-theme='dark'] .btn-dir-toggle .dir-badge {
-  color: var(--text-muted);
 }
 
 [data-theme='dark'] .btn-segment-play {

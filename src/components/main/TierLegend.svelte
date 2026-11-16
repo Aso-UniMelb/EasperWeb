@@ -22,6 +22,9 @@
   const hiddenKeys = $derived(
     columns.filter((c) => c.hidden).map((c) => c.key),
   );
+  const isRowsLayout = $derived(
+    projectState.activeProject?.tierLayout === 'rows',
+  );
 
   function onDragStart(e, key) {
     dragKey = key;
@@ -69,8 +72,20 @@
   }
 </script>
 
-<div class="tier-legend" role="group" aria-label="Segment text columns">
-  <span class="tier-legend-label">Columns</span>
+<div class="tier-legend" role="group" aria-label="Segment text tiers">
+  <button
+    type="button"
+    class="tier-layout-btn"
+    class:is-rows={isRowsLayout}
+    onclick={() => projectState.toggleTierLayout()}
+    title={isRowsLayout
+      ? 'Tiers are shown horizontally as rows (Interlinear view) — click to switch to side-by-side Columns'
+      : 'Tiers are shown side-by-side as columns — click to switch to horizontal Rows (Interlinear view)'}
+    aria-label="Toggle tier layout between columns and rows"
+  >
+    <i class="fa-solid {isRowsLayout ? 'fa-bars' : 'fa-table-columns'}"></i>
+    <span>{isRowsLayout ? 'Rows' : 'Columns'}</span>
+  </button>
 
   {#each columns as col, i (col.key)}
     <button
@@ -93,7 +108,7 @@
       aria-pressed={!col.hidden}
       title={(col.hidden
         ? `${col.name} is hidden — click to show it again`
-        : `Click to hide the ${col.name} column`) +
+        : `Click to hide the ${col.name} ${isRowsLayout ? 'row' : 'column'}`) +
         `\nDrag, or Alt+← / Alt+→, to move it (position ${i + 1} of ${columns.length})`}
     >
       <i class="fa-solid fa-grip-vertical grip"></i>
@@ -123,12 +138,54 @@
     min-width: 0;
   }
 
-  .tier-legend-label {
+  .tier-layout-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 2px 8px;
+    border-radius: 6px;
+    border: 1px solid var(--border-color, #cbd5e1);
+    background: var(--bg-card, #ffffff);
+    color: var(--text-heading, #334155);
     font-size: 0.65rem;
     font-weight: 700;
     text-transform: uppercase;
-    letter-spacing: 0.5px;
-    color: var(--text-muted, #64748b);
+    letter-spacing: 0.4px;
+    cursor: pointer;
+    transition:
+      background 0.12s ease,
+      border-color 0.12s ease,
+      color 0.12s ease;
+  }
+
+  .tier-layout-btn:hover {
+    background: var(--bg-hover, #f1f5f9);
+    border-color: var(--primary-color, #0284c7);
+    color: var(--primary-color, #0284c7);
+  }
+
+  .tier-layout-btn.is-rows {
+    background: rgba(2, 132, 199, 0.1);
+    border-color: rgba(2, 132, 199, 0.35);
+    color: var(--primary-color, #0284c7);
+  }
+
+  :global([data-theme='dark']) .tier-layout-btn {
+    background: #1e293b;
+    border-color: #334155;
+    color: #cbd5e1;
+  }
+
+  :global([data-theme='dark']) .tier-layout-btn:hover {
+    background: #334155;
+    border-color: #38bdf8;
+    color: #38bdf8;
+  }
+
+  :global([data-theme='dark']) .tier-layout-btn.is-rows {
+    background: rgba(56, 189, 248, 0.16);
+    border-color: rgba(56, 189, 248, 0.4);
+    color: #7dd3fc;
   }
 
   .tier-chip {

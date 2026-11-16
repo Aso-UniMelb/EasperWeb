@@ -127,6 +127,26 @@ export function getSpeakerById(speakers, speakerId) {
 }
 
 /**
+ * Returns true if the given speaker or segment belongs to a Note main tier (no sub-tiers).
+ * @param {Object|number|string} segOrSpeaker
+ * @param {Array} [speakers=[]]
+ * @returns {boolean}
+ */
+export function isNoteTierSegment(segOrSpeaker, speakers = []) {
+  if (!segOrSpeaker) return false;
+  if (typeof segOrSpeaker === 'object' && 'isNoteTier' in segOrSpeaker) {
+    return Boolean(segOrSpeaker.isNoteTier);
+  }
+  if (!Array.isArray(speakers) || speakers.length === 0) return false;
+  const spkId =
+    typeof segOrSpeaker === 'object'
+      ? getSegmentSpeakerId(segOrSpeaker)
+      : Number(segOrSpeaker);
+  const matched = speakers.find((s) => Number(s.id) === spkId);
+  return Boolean(matched?.isNoteTier);
+}
+
+/**
  * Ensures a project has at least Speaker 1 configured.
  * @param {Array} [speakers]
  * @returns {Array}

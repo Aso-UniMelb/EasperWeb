@@ -43,6 +43,8 @@
   let showValidationHelp = $state(false);
   let expandedWordTierIds = $state({});
   let speakerRowUid = 0;
+  let draggedSpeakerIdx = $state(null);
+  let dragOverSpeakerIdx = $state(null);
 
   const SPEAKER_COLOR_LIST = [
     { ...SPEAKER_COLORS[1], label: 'Sky Blue' },
@@ -90,12 +92,24 @@
           transcriber = projectState.activeProject.transcriber || '';
           mainTierTitle = projectState.activeProject.mainTierTitle || '';
           lexiconId = projectState.activeProject.lexiconId || '';
+          const fallbackPrefix = projectState.activeProject.mainTierTitle || '';
+          const fallbackTranscriber =
+            projectState.activeProject.transcriber || '';
           const existingSpeakers = projectState.activeProject.speakers;
           speakers = ensureDefaultSpeakers(existingSpeakers).map((s) => ({
             ...s,
             id: Number(s.id) || 1,
             originalId: Number(s.id) || 1,
+            tierPrefix:
+              s.tierPrefix !== undefined
+                ? s.tierPrefix
+                : s.isNoteTier
+                  ? ''
+                  : fallbackPrefix,
+            transcriber:
+              s.transcriber !== undefined ? s.transcriber : fallbackTranscriber,
             elanTierType: s.elanTierType || '',
+            isNoteTier: Boolean(s.isNoteTier),
             _uid: ++speakerRowUid,
           }));
           subTiers = normalizeSubTiers(projectState.activeProject.subTiers).map(
@@ -173,10 +187,10 @@
     return counts;
   });
 
-  function handleAddSpeaker() {
+  function handleAddSpeaker(isNote = false) {
     errorMessage = '';
     if (speakers.length >= 5) {
-      errorMessage = 'Maximum of 5 speakers allowed per project.';
+      errorMessage = 'Maximum of 5 main tiers allowed per project.';
       return;
     }
 
@@ -188,19 +202,35 @@
     }
 
     if (nextId > 5) {
-      errorMessage = 'Maximum of 5 speakers reached.';
+      errorMessage = 'Maximum of 5 main tiers reached.';
       return;
     }
 
+    const noteCount = speakers.filter((s) => s.isNoteTier).length;
+    const defaultName = isNote
+      ? noteCount === 0
+        ? 'Notes'
+        : `Notes ${noteCount + 1}`
+      : `Speaker ${nextId}`;
+    const defaultInitials = isNote
+      ? noteCount === 0
+        ? 'NT'
+        : `N${noteCount + 1}`
+      : `S${nextId}`;
+
+    const firstSpk = speakers[0];
     speakers = [
       ...speakers,
       {
         id: nextId,
         originalId: null,
         _uid: ++speakerRowUid,
-        name: `Speaker ${nextId}`,
-        initials: `S${nextId}`,
+        name: defaultName,
+        initials: defaultInitials,
+        tierPrefix: isNote ? '' : firstSpk?.tierPrefix || '',
+        transcriber: firstSpk?.transcriber || transcriber || '',
         elanTierType: '',
+        isNoteTier: Boolean(isNote),
       },
     ];
   }
@@ -213,6 +243,51 @@
     );
     if (isTaken) return;
     speaker.id = targetId;
+  }
+
+  function moveSpeaker(fromIdx, toIdx) {
+    if (
+      fromIdx < 0 ||
+      fromIdx >= speakers.length ||
+      toIdx < 0 ||
+      toIdx >= speakers.length ||
+      fromIdx === toIdx
+    ) {
+      return;
+    }
+    const next = [...speakers];
+    const [moved] = next.splice(fromIdx, 1);
+    next.splice(toIdx, 0, moved);
+    speakers = next;
+  }
+
+  function handleSpeakerDragStart(e, idx) {
+    draggedSpeakerIdx = idx;
+    e.dataTransfer.effectAllowed = 'move';
+    try {
+      e.dataTransfer.setData('text/plain', String(idx));
+    } catch {}
+  }
+
+  function handleSpeakerDragOver(e, idx) {
+    if (draggedSpeakerIdx === null) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    dragOverSpeakerIdx = idx;
+  }
+
+  function handleSpeakerDrop(e, idx) {
+    e.preventDefault();
+    if (draggedSpeakerIdx !== null && draggedSpeakerIdx !== idx) {
+      moveSpeaker(draggedSpeakerIdx, idx);
+    }
+    draggedSpeakerIdx = null;
+    dragOverSpeakerIdx = null;
+  }
+
+  function handleSpeakerDragEnd() {
+    draggedSpeakerIdx = null;
+    dragOverSpeakerIdx = null;
   }
 
   function handleRemoveSpeaker(idToRemove) {
@@ -302,10 +377,7 @@
     let newStereotype = ELAN_STEREOTYPE_SYM_ASSOC;
     let newType = SUB_TIER_TYPE_SENTENCE;
 
-    if (
-      val === ELAN_STEREOTYPE_SYM_SUBDIV ||
-      val === SUB_TIER_TYPE_WORD
-    ) {
+    if (val === ELAN_STEREOTYPE_SYM_SUBDIV || val === SUB_TIER_TYPE_WORD) {
       newStereotype = ELAN_STEREOTYPE_SYM_SUBDIV;
       newType = SUB_TIER_TYPE_WORD;
     } else if (val === ELAN_STEREOTYPE_TIME_SUBDIV) {
@@ -418,19 +490,27 @@
       if (s.originalId != null && Number(s.originalId) !== spkId) {
         speakerIdRemap[Number(s.originalId)] = spkId;
       }
-      const cleanName = (s.name || `Speaker ${spkId}`).trim();
+      const isNoteTier = Boolean(s.isNoteTier);
+      const cleanName = (
+        s.name || (isNoteTier ? 'Notes' : `Speaker ${spkId}`)
+      ).trim();
       let cleanInitials = (s.initials || '')
         .toUpperCase()
         .replace(/[^A-Z0-9]/g, '')
         .slice(0, 3);
       if (!cleanInitials) {
-        cleanInitials = `S${spkId}`;
+        cleanInitials = isNoteTier ? 'NT' : `S${spkId}`;
       }
+      const cleanPrefix = (s.tierPrefix || '').trim().replace(/@+$/, '');
+      const cleanTranscriber = (s.transcriber || '').trim();
       return {
         id: spkId,
         name: cleanName,
         initials: cleanInitials,
+        tierPrefix: cleanPrefix,
+        transcriber: cleanTranscriber,
         elanTierType: (s.elanTierType || '').trim(),
+        ...(isNoteTier ? { isNoteTier: true } : {}),
       };
     });
 
@@ -508,11 +588,19 @@
       customRules,
     });
 
+    const primarySpkWithPrefix = sanitizedSpeakers.find(
+      (s) => !s.isNoteTier && s.tierPrefix,
+    );
+    const primarySpkWithTranscriber = sanitizedSpeakers.find(
+      (s) => s.transcriber,
+    );
+
     try {
       await projectState.updateProjectSettings(projectState.activeProject.id, {
         title: cleanTitle,
-        transcriber: transcriber.trim(),
-        mainTierTitle: mainTierTitle.trim(),
+        transcriber:
+          primarySpkWithTranscriber?.transcriber || transcriber.trim(),
+        mainTierTitle: primarySpkWithPrefix?.tierPrefix || '',
         speakers: sanitizedSpeakers,
         speakerIdRemap,
         subTiers: sanitizedSubTiers,
@@ -641,50 +729,23 @@
                   {/each}
                 </select>
               </div>
-
-              <div class="form-group">
-                <label
-                  for="project-settings-main-tier"
-                  class="form-label"
-                  title="Title prefix for root transcription tiers in ELAN export (e.g. BIS@Speaker1)"
-                >
-                  Main Tier Title
-                </label>
-                <input
-                  id="project-settings-main-tier"
-                  type="text"
-                  class="form-input"
-                  bind:value={mainTierTitle}
-                  placeholder="e.g. BIS (outputs BIS@Speaker1)"
-                  title="When exporting to ELAN, root tiers will be named '{mainTierTitle.trim() ||
-                    'Title'}@Speaker'"
-                />
-              </div>
-
-              <div class="form-group">
-                <label for="project-settings-transcriber" class="form-label"
-                  >Transcriber</label
-                >
-                <input
-                  id="project-settings-transcriber"
-                  type="text"
-                  class="form-input"
-                  bind:value={transcriber}
-                  placeholder="e.g., Alice Smith"
-                  title="Transcriber name added to ANNOTATOR attribute of main transcription tiers"
-                />
-              </div>
             </div>
           </div>
 
           <div class="form-section">
             <div class="section-header-row">
-              <h4 class="section-title">Speakers</h4>
+              <div class="section-title-group">
+                <h4 class="section-title">Speakers / Main Tiers</h4>
+                <span class="elan-naming-hint">
+                  ELAN tier name: <code>&lt;prefix&gt;@&lt;speaker&gt;</code>
+                  &bull; Sub-tiers: <code>&lt;name&gt;@&lt;speaker&gt;</code>
+                </span>
+              </div>
               {#if speakers.length < 5}
                 <button
                   type="button"
                   class="btn-add-speaker"
-                  onclick={handleAddSpeaker}
+                  onclick={() => handleAddSpeaker(false)}
                 >
                   <i class="fa-solid fa-user-plus"></i>
                   <span>Add Speaker</span>
@@ -694,21 +755,67 @@
 
             <div class="speakers-list">
               <div class="speakers-header-bar">
+                <span class="spk-th-drag" title="Drag or use arrows to reorder"
+                ></span>
                 <span class="spk-th-color">Color</span>
-                <span class="spk-th-name">Speaker Name</span>
+                <span
+                  class="spk-th-prefix"
+                  title="Optional prefix in ELAN export: <prefix>@<speaker>"
+                >
+                  Tier Prefix
+                </span>
+                <span class="spk-th-name">Speaker / Tier Name</span>
                 <span class="spk-th-init">Initials</span>
+                <span
+                  class="spk-th-transcriber"
+                  title="Transcriber / Annotator name saved in ELAN ANNOTATOR attribute"
+                >
+                  Transcriber
+                </span>
                 <span class="spk-th-elantype">ELAN Tier Type</span>
+                <span
+                  class="spk-th-subtiers"
+                  title="Whether this tier has dependent sub-tiers (uncheck for standalone note tiers)"
+                >
+                  Sub-tiers
+                </span>
                 <span class="spk-th-segs">Segments</span>
-                <span class="spk-th-act"></span>
+                <span class="spk-th-act">Del!</span>
               </div>
-              {#each speakers as spk (spk._uid || spk.id)}
+              {#each speakers as spk, spkIdx (spk._uid || spk.id)}
                 {@const col = SPEAKER_COLORS[spk.id] || SPEAKER_COLORS[1]}
                 {@const segCount =
                   speakerSegmentCounts[spk.originalId ?? spk.id] || 0}
+                {@const cleanPref = (spk.tierPrefix || '')
+                  .trim()
+                  .replace(/@+$/, '')}
+                {@const cleanSpkName = (spk.name || `Speaker ${spk.id}`).trim()}
+                {@const previewElanId = cleanPref
+                  ? `${cleanPref}@${cleanSpkName}`
+                  : cleanSpkName}
                 <div
-                  class="speaker-row"
+                  class="speaker-row {draggedSpeakerIdx === spkIdx
+                    ? 'is-dragging'
+                    : ''} {dragOverSpeakerIdx === spkIdx &&
+                  draggedSpeakerIdx !== spkIdx
+                    ? 'is-drag-over'
+                    : ''}"
                   style="--spk-color: {col.primary}; --spk-bg: {col.bg}; --spk-border: {col.border}"
+                  ondragover={(e) => handleSpeakerDragOver(e, spkIdx)}
+                  ondrop={(e) => handleSpeakerDrop(e, spkIdx)}
+                  role="listitem"
                 >
+                  <div
+                    class="speaker-drag-handle"
+                    draggable="true"
+                    ondragstart={(e) => handleSpeakerDragStart(e, spkIdx)}
+                    ondragend={handleSpeakerDragEnd}
+                    title="Drag to reorder tier (also reorders columns on waveform)"
+                    role="button"
+                    tabindex="-1"
+                  >
+                    <i class="fa-solid fa-grip-vertical"></i>
+                  </div>
                   <div
                     class="speaker-color-picker"
                     role="radiogroup"
@@ -732,7 +839,7 @@
                         onclick={() =>
                           handleSelectSpeakerColor(spk, colorOpt.id)}
                         title={takenBy
-                          ? `${colorOpt.label} (used by ${takenBy.name || 'another speaker'})`
+                          ? `${colorOpt.label} (used by ${takenBy.name || 'another tier'})`
                           : colorOpt.label}
                       >
                         {#if isSelected}
@@ -742,13 +849,27 @@
                     {/each}
                   </div>
 
+                  <div class="speaker-field speaker-prefix-field">
+                    <input
+                      id="spk-prefix-{spk._uid || spk.id}"
+                      type="text"
+                      class="form-input speaker-input"
+                      bind:value={spk.tierPrefix}
+                      placeholder="e.g. BIS"
+                      title="ELAN root tier ID will be: {previewElanId}"
+                    />
+                  </div>
+
                   <div class="speaker-field speaker-name-field">
                     <input
                       id="spk-name-{spk._uid || spk.id}"
                       type="text"
                       class="form-input speaker-input"
                       bind:value={spk.name}
-                      placeholder="Speaker Name"
+                      placeholder={spk.isNoteTier ? 'Notes' : 'Speaker Name'}
+                      title="ELAN root tier ID: {previewElanId}{!spk.isNoteTier
+                        ? ` | Sub-tiers: <name>@${cleanSpkName}`
+                        : ' (no sub-tiers)'}"
                     />
                   </div>
 
@@ -765,6 +886,17 @@
                     />
                   </div>
 
+                  <div class="speaker-field speaker-transcriber-field">
+                    <input
+                      id="spk-transcriber-{spk._uid || spk.id}"
+                      type="text"
+                      class="form-input speaker-input"
+                      bind:value={spk.transcriber}
+                      placeholder="Transcriber"
+                      title="Transcriber / Annotator name for {previewElanId}"
+                    />
+                  </div>
+
                   <div class="speaker-field speaker-elantype-field">
                     <input
                       id="spk-elantype-{spk._uid || spk.id}"
@@ -772,7 +904,25 @@
                       class="form-input speaker-input speaker-elantype-input"
                       bind:value={spk.elanTierType}
                       placeholder="default-lt"
-                      title="ELAN Tier Type (LINGUISTIC_TYPE_REF) for this speaker's root tier"
+                      title="ELAN Tier Type (LINGUISTIC_TYPE_REF) for this root tier"
+                    />
+                  </div>
+
+                  <div
+                    class="speaker-field speaker-subtiers-field"
+                    title={!spk.isNoteTier
+                      ? 'Checked: This tier includes project sub-tiers'
+                      : 'Unchecked: This tier has no sub-tiers (e.g. for notes)'}
+                  >
+                    <input
+                      id="spk-subtiers-{spk._uid || spk.id}"
+                      type="checkbox"
+                      class="speaker-subtiers-checkbox"
+                      checked={!spk.isNoteTier}
+                      onchange={(e) => {
+                        spk.isNoteTier = !e.currentTarget.checked;
+                      }}
+                      aria-label="Has sub-tiers for {spk.name || 'tier'}"
                     />
                   </div>
 
@@ -831,7 +981,8 @@
                   <div class="help-point">
                     <strong>Symbolic Association (Undivided):</strong> Single
                     full-utterance text field per segment for translations,
-                    comments, or notes (1-to-1 ELAN <code>REF_ANNOTATION</code>).
+                    comments, or notes (1-to-1 ELAN
+                    <code>REF_ANNOTATION</code>).
                   </div>
                   <div class="help-point">
                     <strong>Symbolic / Time Subdivision (Divided):</strong>
@@ -843,8 +994,8 @@
                   </div>
                   <div class="help-point">
                     <strong>ELAN Tier Type:</strong> Custom
-                    <code>LINGUISTIC_TYPE_ID</code> name preserved when importing
-                    and exporting ELAN (<code>.eaf</code>) files.
+                    <code>LINGUISTIC_TYPE_ID</code> name preserved when
+                    importing and exporting ELAN (<code>.eaf</code>) files.
                   </div>
                 </div>
               </div>
@@ -934,7 +1085,8 @@
                             class="form-input subtier-input"
                             bind:value={tier.elanTierType}
                             placeholder={isWordTier
-                              ? currentStereotype === ELAN_STEREOTYPE_TIME_SUBDIV
+                              ? currentStereotype ===
+                                ELAN_STEREOTYPE_TIME_SUBDIV
                                 ? 'words-lt'
                                 : 'sym-subdivision-lt'
                               : 'dependent-lt'}
@@ -1558,7 +1710,7 @@
       0 16px 24px -4px rgba(0, 0, 0, 0.15),
       0 6px 8px -4px rgba(0, 0, 0, 0.1);
     width: 100%;
-    max-width: 820px;
+    max-width: 920px;
     display: flex;
     flex-direction: column;
     overflow: hidden;
@@ -1925,65 +2077,158 @@
   }
 
   .speakers-header-bar {
-    display: flex;
+    display: grid;
+    grid-template-columns:
+      16px 115px 82px minmax(115px, 1.3fr) 52px minmax(100px, 1fr)
+      110px 56px 52px 32px;
     align-items: center;
-    gap: 8px;
+    gap: 6px;
     padding: 0 8px;
-    font-size: 0.68rem;
+    font-size: 0.66rem;
     font-weight: 600;
     color: var(--text-muted, #64748b);
     text-transform: uppercase;
     letter-spacing: 0.03em;
   }
 
-  .spk-th-color {
-    width: 118px;
+  .spk-th-drag,
+  .spk-th-color,
+  .spk-th-prefix,
+  .spk-th-name,
+  .spk-th-transcriber,
+  .spk-th-elantype {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
-  .spk-th-name {
-    flex: 1;
+  .section-title-group {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+
+  .elan-naming-hint {
+    font-size: 0.72rem;
+    color: var(--text-muted, #64748b);
+    font-weight: 500;
+  }
+
+  .elan-naming-hint code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+      monospace;
+    font-size: 0.7rem;
+    padding: 1px 5px;
+    border-radius: 4px;
+    background: rgba(148, 163, 184, 0.14);
+    color: var(--text-heading, #0f172a);
+  }
+
+  :global([data-theme='dark']) .elan-naming-hint code {
+    background: rgba(255, 255, 255, 0.08);
+    color: #e2e8f0;
+  }
+
+  .speaker-field {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .speaker-input {
+    width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
+    padding: 3px 6px;
+    font-size: 0.76rem;
+  }
+
+  .spk-th-subtiers {
+    text-align: center;
+    white-space: nowrap;
+  }
+
+  .speaker-subtiers-field {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .speaker-subtiers-checkbox {
+    width: 15px;
+    height: 15px;
+    cursor: pointer;
+    accent-color: var(--primary-color, #0284c7);
+    margin: 0;
   }
 
   .spk-th-init {
-    width: 64px;
     text-align: center;
   }
 
-  .spk-th-elantype {
-    width: 150px;
-  }
-
   .spk-th-segs {
-    width: 68px;
     text-align: center;
   }
 
   .spk-th-act {
-    width: 24px;
+    text-align: center;
   }
 
   .speaker-row {
-    display: flex;
+    display: grid;
+    grid-template-columns:
+      16px 115px 82px minmax(115px, 1.3fr) 52px minmax(100px, 1fr)
+      110px 56px 52px 32px;
     align-items: center;
-    gap: 8px;
+    gap: 6px;
     padding: 3px 8px;
     background: var(--spk-bg, #f8fafc);
     border: 1px solid var(--spk-border, #e2e8f0);
     border-radius: 5px;
     height: 36px;
     box-sizing: border-box;
+    transition:
+      opacity 0.12s ease,
+      border-color 0.12s ease;
+  }
+
+  .speaker-row.is-dragging {
+    opacity: 0.45;
+  }
+
+  .speaker-row.is-drag-over {
+    border-color: var(--primary-color, #0284c7);
+    box-shadow: 0 0 0 2px rgba(2, 132, 199, 0.2);
   }
 
   :global([data-theme='dark']) .speaker-row {
     background: rgba(255, 255, 255, 0.03);
   }
 
+  .speaker-drag-handle {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-muted, #94a3b8);
+    cursor: grab;
+    font-size: 0.72rem;
+    user-select: none;
+  }
+
+  .speaker-drag-handle:hover {
+    color: var(--text-heading, #334155);
+  }
+
+  :global([data-theme='dark']) .speaker-drag-handle:hover {
+    color: #e2e8f0;
+  }
+
   .speaker-color-picker {
     display: inline-flex;
     align-items: center;
-    gap: 4px;
-    width: 118px;
-    flex-shrink: 0;
+    gap: 3px;
+    min-width: 0;
   }
 
   .speaker-color-swatch {
@@ -2026,40 +2271,34 @@
   }
 
   .speaker-name-field {
-    flex: 1;
     min-width: 0;
   }
 
   .speaker-initials-field {
-    width: 64px;
-    flex-shrink: 0;
     display: flex;
     justify-content: center;
   }
 
   .initials-input {
-    width: 52px;
+    width: 100%;
     text-align: center;
     font-weight: 700;
     text-transform: uppercase;
-    padding: 2px 4px;
+    padding: 2px 3px;
   }
 
   .speaker-elantype-field {
-    width: 150px;
-    flex-shrink: 0;
+    min-width: 0;
   }
 
   .speaker-elantype-input {
     width: 100%;
     font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
       monospace;
-    font-size: 0.75rem;
+    font-size: 0.73rem;
   }
 
   .speaker-segs-field {
-    width: 68px;
-    flex-shrink: 0;
     display: flex;
     justify-content: center;
   }
@@ -2087,8 +2326,8 @@
   .speaker-actions {
     display: flex;
     align-items: center;
-    width: 24px;
-    justify-content: center;
+    justify-content: flex-end;
+    gap: 2px;
   }
 
   .btn-delete-speaker {

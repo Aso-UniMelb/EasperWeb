@@ -145,7 +145,9 @@
     const targetSegments =
       onlySelectedSegment && selectedSegment
         ? [selectedSegment]
-        : transcriptState.segments;
+        : transcriptState.segments.filter(
+            (s) => !transcriptState.isNoteSegment(s),
+          );
 
     try {
       const result = autoTagSegments({
@@ -175,9 +177,12 @@
           transcriptState.segments = [...transcriptState.segments];
         }
       } else {
-        transcriptState.segments = result.updatedSegments.map((s) => ({
-          ...s,
-        }));
+        const updatedById = new Map(
+          result.updatedSegments.map((s) => [s.id, { ...s }]),
+        );
+        transcriptState.segments = transcriptState.segments.map(
+          (s) => updatedById.get(s.id) || s,
+        );
       }
 
       if (transcriptState.fullResult?.segments) {

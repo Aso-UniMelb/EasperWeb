@@ -54,6 +54,9 @@
     errorMessage = '';
     isConverting = false;
     convertingMessage = '';
+    if (eafInputEl) eafInputEl.value = '';
+    if (audioInputEl) audioInputEl.value = '';
+    if (comboInputEl) comboInputEl.value = '';
   }
 
   function handleClose() {
@@ -63,8 +66,12 @@
     resetState();
   }
 
+  let wasModalOpen = false;
+
   $effect(() => {
-    if (projectState.isImportElanOpen) {
+    const isOpen = projectState.isImportElanOpen;
+    if (isOpen && !wasModalOpen) {
+      resetState();
       if (!lexiconState.lexicons || lexiconState.lexicons.length === 0) {
         lexiconState.init();
       }
@@ -77,6 +84,7 @@
         }
       }
     }
+    wasModalOpen = isOpen;
   });
 
   async function handleEafSelected(file) {
@@ -252,6 +260,8 @@
         });
       }
 
+      isConverting = false;
+      convertingMessage = '';
       handleClose();
     } catch (err) {
       console.error('[ElanImportModal] Import failed:', err);
@@ -411,8 +421,32 @@
             </div>
             <h4>Importing ELAN Annotations...</h4>
             <p class="converting-subtext">
-              {convertingMessage || 'Building segments and updating project...'}
+              {projectState.convertingMessage ||
+                convertingMessage ||
+                'Building segments and updating project...'}
             </p>
+            {#if !isTargetActiveProject}
+              <div
+                class="converting-progress-wrap"
+                role="progressbar"
+                aria-valuemin="0"
+                aria-valuemax="100"
+                aria-valuenow={projectState.convertingProgress}
+              >
+                <div class="converting-progress-track">
+                  <div
+                    class="converting-progress-fill"
+                    style="width: {Math.max(
+                      3,
+                      projectState.convertingProgress || 0,
+                    )}%;"
+                  ></div>
+                </div>
+                <span class="converting-progress-pct">
+                  {projectState.convertingProgress || 0}%
+                </span>
+              </div>
+            {/if}
           </div>
         {:else}
           {#if errorMessage}
