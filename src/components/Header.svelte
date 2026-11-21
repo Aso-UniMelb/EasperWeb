@@ -28,9 +28,16 @@
   const validationRules = $derived(
     projectState.activeProject?.validationRules || null,
   );
-  const isValidationRuleActive = $derived(isValidationActive(validationRules));
+  const projectSubTiers = $derived(projectState.activeProject?.subTiers || []);
+  const projectSpeakers = $derived(projectState.activeProject?.speakers || []);
+  const isValidationRuleActive = $derived(
+    isValidationActive(validationRules, projectSubTiers),
+  );
   const validationSummary = $derived(
-    scanAllSegmentsValidation(transcriptState.segments, validationRules),
+    scanAllSegmentsValidation(transcriptState.segments, validationRules, {
+      subTiers: projectSubTiers,
+      speakers: projectSpeakers,
+    }),
   );
 
   function toggleProjectMenu(e) {

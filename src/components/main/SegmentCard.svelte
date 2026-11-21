@@ -524,7 +524,7 @@
             role="menuitem"
           >
             <span class="speaker-picker-dot" style="background: {col.primary};">
-              {spk.initials || `S${spk.id}`}
+              {getSpeakerInitials(spk, spk.id)}
             </span>
             <span class="speaker-picker-name"
               >{spk.name || `Speaker ${spk.id}`}</span
@@ -598,9 +598,11 @@
 
       {#if isRowsLayout && col.type === SUB_TIER_TYPE_WORD && !sharesPrevTokens}
         {@const rowTokens = tokenizeWords(seg.text, col.splitters)}
+        {@const tokensLabel =
+          (projectState.activeProject?.tokensTierName || '').trim() || 'Tokens'}
         <div class="tier-cell-item tier-row-line tier-tokens-row">
-          <span class="tier-row-badge badge-tokens" title="Tokens">
-            Tokens
+          <span class="tier-row-badge badge-tokens" title={tokensLabel}>
+            {tokensLabel}
           </span>
           <div class="tier-cell-body">
             {#if rowTokens.length === 0}

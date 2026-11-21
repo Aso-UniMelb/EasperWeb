@@ -1,8 +1,18 @@
 /**
  * Segment Text Validation Engine.
- * Detects formatting, tag, punctuation, acronym, and custom rule violations
+ * Detects formatting, tag, punctuation, acronym, empty segment/sub-tier,
+ * divided sub-tier lexicon tag, and custom rule violations
  * within segment transcriptions and provides quick-fix suggestions.
  */
+
+import {
+  normalizeSubTiers,
+  tokenizeWords,
+  getSubText,
+  getWordAnnotations,
+  SUB_TIER_TYPE_WORD,
+} from './subTiers.js';
+import { isNoteTierSegment } from './speakers.js';
 
 export const DEFAULT_ALLOWED_TAGS = [
   '<hes>',
@@ -31,6 +41,10 @@ export const DEFAULT_VALIDATION_RULES = {
   acronymMode: ACRONYM_MODES.DISABLED,
   validateCustomRules: false,
   customRules: [],
+  validateEmptySegments: false,
+  checkEmptyMainTier: true,
+  checkEmptySubTiers: true,
+  validateSubTierTags: true,
 };
 
 /**
@@ -129,6 +143,23 @@ export function normalizeValidationRules(raw) {
       ? Boolean(raw.validateCustomRules)
       : customRules.length > 0;
 
+  const validateEmptySegments =
+    raw.validateEmptySegments !== undefined
+      ? Boolean(raw.validateEmptySegments)
+      : false;
+  const checkEmptyMainTier =
+    raw.checkEmptyMainTier !== undefined
+      ? Boolean(raw.checkEmptyMainTier)
+      : true;
+  const checkEmptySubTiers =
+    raw.checkEmptySubTiers !== undefined
+      ? Boolean(raw.checkEmptySubTiers)
+      : true;
+  const validateSubTierTags =
+    raw.validateSubTierTags !== undefined
+      ? Boolean(raw.validateSubTierTags)
+      : true;
+
   return {
     validateTags: Boolean(raw.validateTags),
     allowedTags,
@@ -138,16 +169,40 @@ export function normalizeValidationRules(raw) {
     acronymMode,
     validateCustomRules,
     customRules,
+    validateEmptySegments,
+    checkEmptyMainTier,
+    checkEmptySubTiers,
+    validateSubTierTags,
   };
+}
+
+/**
+ * Checks whether any divided (word-level) sub-tier has a configured lexicon of allowed tags.
+ * @param {Array<Object>} [subTiers=[]]
+ * @returns {boolean}
+ */
+export function hasDividedSubTierWithLexicon(subTiers = []) {
+  if (!Array.isArray(subTiers) || subTiers.length === 0) return false;
+  const clean = normalizeSubTiers(subTiers);
+  return clean.some(
+    (t) =>
+      t.type === SUB_TIER_TYPE_WORD &&
+      Array.isArray(t.lexicon) &&
+      t.lexicon.length > 0,
+  );
 }
 
 /**
  * Returns true if any validation rule or check is currently active in the config.
  * @param {Object|null|undefined} rules
+ * @param {Array<Object>} [subTiers=[]]
  * @returns {boolean}
  */
-export function isValidationActive(rules) {
-  if (!rules || typeof rules !== 'object') return false;
+export function isValidationActive(rules, subTiers = []) {
+  const hasDividedLexicon = hasDividedSubTierWithLexicon(subTiers);
+  if (!rules || typeof rules !== 'object') {
+    return hasDividedLexicon;
+  }
   if (rules.validateTags) return true;
   if (rules.fixApostropheBacktick) return true;
   if (rules.fixDoubleSpaces) return true;
@@ -163,6 +218,15 @@ export function isValidationActive(rules) {
     Array.isArray(rules.customRules) &&
     rules.customRules.some((r) => r && r.enabled !== false && r.find?.trim())
   ) {
+    return true;
+  }
+  if (
+    rules.validateEmptySegments &&
+    (rules.checkEmptyMainTier !== false || rules.checkEmptySubTiers !== false)
+  ) {
+    return true;
+  }
+  if (rules.validateSubTierTags !== false && hasDividedLexicon) {
     return true;
   }
   return false;
@@ -618,13 +682,45 @@ export function getValidationIssueAtOffset(issues, offset) {
 }
 
 /**
+ * Ranks allowed lexicon values by similarity to a candidate invalid tag.
+ * @param {string} candidateTag
+ * @param {Array<string>} allowedValues
+ * @returns {Array<string>}
+ */
+function rankLexiconTagSuggestions(candidateTag, allowedValues) {
+  if (!Array.isArray(allowedValues) || allowedValues.length === 0) return [];
+  const cleanCandidate = String(candidateTag || '').trim().toLowerCase();
+  if (!cleanCandidate) return allowedValues.slice(0, 5);
+
+  const entries = allowedValues.map((val) => {
+    const lowerVal = val.toLowerCase();
+    let dist = editDistance(cleanCandidate, lowerVal);
+    if (
+      cleanCandidate.length >= 1 &&
+      (lowerVal.startsWith(cleanCandidate) ||
+        cleanCandidate.startsWith(lowerVal))
+    ) {
+      dist = Math.min(dist, 1);
+    }
+    return { val, distance: dist };
+  });
+
+  entries.sort((a, b) => a.distance - b.distance);
+  const close = entries.filter((e) => e.distance <= 3).map((e) => e.val);
+  return close.length > 0 ? close.slice(0, 5) : allowedValues.slice(0, 5);
+}
+
+/**
  * Scans all segments in the project and returns an aggregated validation summary.
  * @param {Array<Object>} segments
  * @param {Object} rawConfig
+ * @param {Object} [options]
+ * @param {Array<Object>} [options.subTiers=[]]
+ * @param {Array<Object>} [options.speakers=[]]
  * @returns {{
  *   totalIssues: number,
  *   affectedSegmentsCount: number,
- *   categoryCounts: { tag: number, punctuation: number, acronym: number, custom: number },
+ *   categoryCounts: { tag: number, punctuation: number, acronym: number, custom: number, empty: number, subtier_tag: number },
  *   flatIssues: Array<{
  *     issueId: string,
  *     segmentId: string|number,
@@ -638,7 +734,11 @@ export function getValidationIssueAtOffset(issues, offset) {
  *   segmentMap: Map<string|number, Array<Object>>
  * }}
  */
-export function scanAllSegmentsValidation(segments, rawConfig) {
+export function scanAllSegmentsValidation(
+  segments,
+  rawConfig,
+  { subTiers = [], speakers = [] } = {},
+) {
   const result = {
     totalIssues: 0,
     affectedSegmentsCount: 0,
@@ -647,6 +747,8 @@ export function scanAllSegmentsValidation(segments, rawConfig) {
       punctuation: 0,
       acronym: 0,
       custom: 0,
+      empty: 0,
+      subtier_tag: 0,
     },
     flatIssues: [],
     segmentMap: new Map(),
@@ -656,23 +758,186 @@ export function scanAllSegmentsValidation(segments, rawConfig) {
     return result;
   }
 
-  const isConfigActive = isValidationActive(rawConfig);
+  const config = normalizeValidationRules(rawConfig);
+  const cleanSubTiers = normalizeSubTiers(subTiers);
+  const isConfigActive = isValidationActive(config, cleanSubTiers);
   if (!isConfigActive) {
     return result;
   }
 
+  // Precompute lexicon lookup sets for divided (word-level) sub-tiers
+  const wordTierLexicons = new Map();
+  for (const tier of cleanSubTiers) {
+    if (
+      tier.type === SUB_TIER_TYPE_WORD &&
+      Array.isArray(tier.lexicon) &&
+      tier.lexicon.length > 0
+    ) {
+      const allowedValues = tier.lexicon
+        .map((item) =>
+          typeof item === 'object' && item !== null
+            ? String(item.value ?? item.tag ?? '').trim()
+            : String(item || '').trim(),
+        )
+        .filter(Boolean);
+      const allowedLowerSet = new Set(
+        allowedValues.map((v) => v.toLowerCase()),
+      );
+      wordTierLexicons.set(tier.id, { allowedValues, allowedLowerSet });
+    }
+  }
+
   for (let idx = 0; idx < segments.length; idx++) {
     const seg = segments[idx];
-    if (!seg || !seg.text) continue;
+    if (!seg) continue;
 
-    const { issues } = validateSegmentText(seg.text, rawConfig);
-    if (issues.length > 0) {
+    const segIssues = [];
+    const mainText = seg.text ? String(seg.text) : '';
+    const isMainEmpty = !mainText.trim();
+    const isNote = isNoteTierSegment(seg, speakers);
+
+    // 1. Validate main transcription text rules (tags, apostrophes, spaces, acronyms, custom)
+    if (!isMainEmpty) {
+      const { issues: textIssues } = validateSegmentText(mainText, config);
+      for (const iss of textIssues) {
+        segIssues.push({
+          ...iss,
+          tierKey: 'main',
+          tierName: 'Transcription',
+        });
+      }
+    }
+
+    // 2. Empty Segments (Main Transcription or Sub-Tiers)
+    if (config.validateEmptySegments) {
+      if (config.checkEmptyMainTier !== false && isMainEmpty) {
+        segIssues.push({
+          start: 0,
+          end: 0,
+          text: isNote ? '[Empty Note]' : '[Empty Transcription]',
+          type: 'empty',
+          tierKey: 'main',
+          tierName: isNote ? 'Note' : 'Transcription',
+          label: isNote ? 'Empty note segment' : 'Empty main transcription',
+          suggestions: [],
+        });
+      }
+
+      if (
+        config.checkEmptySubTiers !== false &&
+        !isNote &&
+        (!isMainEmpty || config.checkEmptyMainTier === false)
+      ) {
+        for (const tier of cleanSubTiers) {
+          if (tier.type === SUB_TIER_TYPE_WORD) {
+            const words = tokenizeWords(mainText, tier.splitters);
+            if (words.length > 0) {
+              const annotations = getWordAnnotations(
+                seg,
+                tier.id,
+                words.length,
+              );
+              const emptyWordIndices = [];
+              for (let wIdx = 0; wIdx < words.length; wIdx++) {
+                if (!String(annotations[wIdx] || '').trim()) {
+                  emptyWordIndices.push(wIdx);
+                }
+              }
+              if (emptyWordIndices.length === words.length) {
+                segIssues.push({
+                  start: 0,
+                  end: 0,
+                  text: `[Empty ${tier.name}]`,
+                  type: 'empty',
+                  tierKey: String(tier.id),
+                  tierName: tier.name,
+                  wordIndex: 0,
+                  label: `Empty sub-tier "${tier.name}" (${words.length} word${words.length === 1 ? '' : 's'})`,
+                  suggestions: [],
+                });
+              } else if (emptyWordIndices.length > 0) {
+                const firstIdx = emptyWordIndices[0];
+                const preview = emptyWordIndices
+                  .slice(0, 3)
+                  .map((i) => `"${words[i]}"`)
+                  .join(', ');
+                segIssues.push({
+                  start: 0,
+                  end: 0,
+                  text: `Untagged: ${preview}${emptyWordIndices.length > 3 ? '…' : ''}`,
+                  type: 'empty',
+                  tierKey: String(tier.id),
+                  tierName: tier.name,
+                  wordIndex: firstIdx,
+                  label: `Incomplete "${tier.name}" (${emptyWordIndices.length}/${words.length} untagged)`,
+                  suggestions: [],
+                });
+              }
+            }
+          } else {
+            const subVal = getSubText(seg, tier.id).trim();
+            if (!subVal) {
+              segIssues.push({
+                start: 0,
+                end: 0,
+                text: `[Empty ${tier.name}]`,
+                type: 'empty',
+                tierKey: String(tier.id),
+                tierName: tier.name,
+                label: `Empty sub-tier "${tier.name}"`,
+                suggestions: [],
+              });
+            }
+          }
+        }
+      }
+    }
+
+    // 3. Invalid Tags in Divided (Word-Level) Sub-Tiers
+    if (
+      config.validateSubTierTags !== false &&
+      !isNote &&
+      wordTierLexicons.size > 0 &&
+      !isMainEmpty
+    ) {
+      for (const tier of cleanSubTiers) {
+        const lexInfo = wordTierLexicons.get(tier.id);
+        if (!lexInfo) continue;
+
+        const words = tokenizeWords(mainText, tier.splitters);
+        if (words.length === 0) continue;
+
+        const annotations = getWordAnnotations(seg, tier.id, words.length);
+        for (let wIdx = 0; wIdx < words.length; wIdx++) {
+          const rawTag = String(annotations[wIdx] || '').trim();
+          if (rawTag && !lexInfo.allowedLowerSet.has(rawTag.toLowerCase())) {
+            segIssues.push({
+              start: 0,
+              end: 0,
+              text: rawTag,
+              type: 'subtier_tag',
+              tierKey: String(tier.id),
+              tierName: tier.name,
+              wordIndex: wIdx,
+              wordText: words[wIdx],
+              label: `Invalid "${tier.name}" tag for "${words[wIdx]}"`,
+              suggestions: rankLexiconTagSuggestions(
+                rawTag,
+                lexInfo.allowedValues,
+              ),
+            });
+          }
+        }
+      }
+    }
+
+    if (segIssues.length > 0) {
       result.affectedSegmentsCount++;
-      result.totalIssues += issues.length;
-      result.segmentMap.set(seg.id, issues);
+      result.totalIssues += segIssues.length;
+      result.segmentMap.set(seg.id, segIssues);
 
-      for (let issueIdx = 0; issueIdx < issues.length; issueIdx++) {
-        const iss = issues[issueIdx];
+      for (let issueIdx = 0; issueIdx < segIssues.length; issueIdx++) {
+        const iss = segIssues[issueIdx];
         const cat = iss.type || 'custom';
         if (result.categoryCounts[cat] !== undefined) {
           result.categoryCounts[cat]++;
@@ -681,7 +946,7 @@ export function scanAllSegmentsValidation(segments, rawConfig) {
         }
 
         result.flatIssues.push({
-          issueId: `${seg.id}-${iss.start}-${iss.end}-${issueIdx}`,
+          issueId: `${seg.id}-${iss.tierKey || 'main'}-${iss.wordIndex ?? iss.start}-${iss.end}-${issueIdx}`,
           segmentId: seg.id,
           segmentIndex: idx + 1,
           start: seg.start ?? 0,

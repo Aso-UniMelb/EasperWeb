@@ -3802,6 +3802,7 @@ class TranscriptState {
       chunks: validChunks,
       includeWordTier: this.timestampMode === 'word',
       mainTierTitle: projectState.activeProject?.mainTierTitle || '',
+      tokensTierName: projectState.activeProject?.tokensTierName || '',
       transcriber: projectState.activeProject?.transcriber || '',
       speakers: projectState.activeProject?.speakers || [],
       subTiers: buildColumns(projectState.activeProject?.subTiers, {
@@ -3834,12 +3835,10 @@ class TranscriptState {
 
   async exportJson() {
     if (!this.fullResult && (!this.segments || this.segments.length === 0) && !this.transcript) return;
-    const isVadOnly = Boolean(
-      this.fullResult?.isVadOnly || this.fullResult?.task === 'segment',
-    );
-    const validSegments = (this.segments || [])
-      .map((s) => ({ ...s, text: cleanSpeechText(s.text) }))
-      .filter((s) => isVadOnly || s.text.length > 0 || (s.subTiers && Object.keys(s.subTiers).length > 0));
+    const validSegments = (this.segments || []).map((s) => ({
+      ...s,
+      text: cleanSpeechText(s.text),
+    }));
     const validChunks = (this.chunks || [])
       .map((c) => ({ ...c, text: cleanSpeechText(c.text) }))
       .filter((c) => c.text.length > 0);
@@ -3853,6 +3852,8 @@ class TranscriptState {
         numericId: activeProj?.numericId,
         title: activeProj?.title || audioState.getBaseFileName(),
         transcriber: activeProj?.transcriber || 'Transcriber',
+        mainTierTitle: activeProj?.mainTierTitle || '',
+        tokensTierName: activeProj?.tokensTierName || '',
         audioFileName: activeProj?.audioFileName || `${audioState.getBaseFileName()}.wav`,
         audioDuration: activeProj?.audioDuration || audioState.totalAudioDuration || 0,
         audioFormat: activeProj?.audioFormat || 'WAV 16kHz Mono',
@@ -3860,11 +3861,16 @@ class TranscriptState {
         subTiers: activeProj?.subTiers || [],
         columnOrder: activeProj?.columnOrder || [],
         hiddenColumns: activeProj?.hiddenColumns || [],
+        tierLayout: activeProj?.tierLayout || 'columns',
+        lexiconId: activeProj?.lexiconId || null,
+        validationRules: activeProj?.validationRules || null,
         segments: validSegments,
         transcript: cleanSpeechText(this.transcript || this.fullResult?.text || ''),
         chunks: validChunks,
-        textDirection: this.textDirection || 'ltr',
+        textDirection: this.textDirection || activeProj?.textDirection || 'ltr',
         lastSelectedSegmentId: this.selectedSegmentId || activeProj?.lastSelectedSegmentId || null,
+        createdAt: activeProj?.createdAt,
+        updatedAt: activeProj?.updatedAt || new Date().toISOString(),
       },
       ...(this.fullResult || {}),
       text: cleanSpeechText(this.transcript || this.fullResult?.text || ''),
@@ -3977,10 +3983,17 @@ class TranscriptState {
       }
       if (!spkId) spkId = 1;
       const matched = spkIdMap.get(spkId) || defaultSpk;
+      const subTexts =
+        seg.subTexts && typeof seg.subTexts === 'object'
+          ? seg.subTexts
+          : seg.subTiers && typeof seg.subTiers === 'object'
+            ? seg.subTiers
+            : {};
       return {
         ...seg,
         speakerId: Number(matched.id),
         speaker: matched.name || `Speaker ${matched.id}`,
+        subTexts,
       };
     });
     this.transcript = projectDoc.transcript || '';

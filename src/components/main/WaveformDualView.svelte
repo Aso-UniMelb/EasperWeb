@@ -45,9 +45,15 @@
   const validationRules = $derived(
     projectState.activeProject?.validationRules || null,
   );
-  const isValidationRuleActive = $derived(isValidationActive(validationRules));
+  const projectSubTiers = $derived(projectState.activeProject?.subTiers || []);
+  const isValidationRuleActive = $derived(
+    isValidationActive(validationRules, projectSubTiers),
+  );
   const validationSummary = $derived(
-    scanAllSegmentsValidation(transcriptState.segments, validationRules),
+    scanAllSegmentsValidation(transcriptState.segments, validationRules, {
+      subTiers: projectSubTiers,
+      speakers: projectSpeakers,
+    }),
   );
   let validationStepperIndex = $state(0);
 
@@ -64,12 +70,45 @@
           `segment-item-${item.segmentId}`,
         );
         if (!cardEl) return;
-        const textarea = cardEl.querySelector('textarea');
+
+        const iss = item.issue || {};
+        if (
+          iss.wordIndex !== undefined &&
+          iss.tierKey &&
+          iss.tierKey !== 'main'
+        ) {
+          const wordEl = document.getElementById(
+            `word-annot-${item.segmentId}-${iss.tierKey}-${iss.wordIndex}`,
+          );
+          if (wordEl) {
+            wordEl.focus();
+            try {
+              wordEl.select();
+            } catch (_) {}
+            return;
+          }
+        }
+
+        if (iss.tierKey && iss.tierKey !== 'main') {
+          const subTextarea = cardEl.querySelector(
+            `textarea[data-tier="${iss.tierKey}"]`,
+          );
+          if (subTextarea) {
+            subTextarea.focus();
+            return;
+          }
+        }
+
+        const textarea =
+          cardEl.querySelector('textarea[data-tier="main"]') ||
+          cardEl.querySelector('textarea');
         if (textarea) {
           textarea.focus();
-          try {
-            textarea.setSelectionRange(item.issue.start, item.issue.end);
-          } catch (_) {}
+          if (iss.end > iss.start) {
+            try {
+              textarea.setSelectionRange(iss.start, iss.end);
+            } catch (_) {}
+          }
         }
       }, 45);
     }
@@ -974,12 +1013,12 @@
               transcriptState.handleAddFromContextMenu(spk.id);
             }}
             title="Add segment for {spk.name ||
-              'Speaker ' + spk.id} ({spk.initials ||
-              'S' + spk.id}) at {formatTimeSec(
-              transcriptState.contextMenu.time,
-            )}"
+              'Speaker ' + spk.id} ({getSpeakerInitials(
+              spk,
+              spk.id,
+            )}) at {formatTimeSec(transcriptState.contextMenu.time)}"
           >
-            {spk.initials || `S${spk.id}`}
+            {getSpeakerInitials(spk, spk.id)}
           </button>
         {/each}
       </div>

@@ -35,6 +35,7 @@
   let title = $state('');
   let transcriber = $state('');
   let mainTierTitle = $state('');
+  let tokensTierName = $state('tokens');
   let lexiconId = $state('');
   let speakers = $state([]);
   let subTiers = $state([]);
@@ -62,6 +63,10 @@
   let fixDoubleSpaces = $state(false);
   let validateAcronyms = $state(false);
   let acronymMode = $state(ACRONYM_MODES.PLAIN);
+  let validateEmptySegments = $state(false);
+  let checkEmptyMainTier = $state(true);
+  let checkEmptySubTiers = $state(true);
+  let validateSubTierTags = $state(true);
   let validateCustomRules = $state(false);
   let customRules = $state([]);
   let newRuleFind = $state('');
@@ -91,6 +96,9 @@
           title = projectState.activeProject.title || '';
           transcriber = projectState.activeProject.transcriber || '';
           mainTierTitle = projectState.activeProject.mainTierTitle || '';
+          tokensTierName =
+            (projectState.activeProject.tokensTierName || '').trim() ||
+            'tokens';
           lexiconId = projectState.activeProject.lexiconId || '';
           const fallbackPrefix = projectState.activeProject.mainTierTitle || '';
           const fallbackTranscriber =
@@ -143,6 +151,19 @@
             vRules.acronymMode && vRules.acronymMode !== ACRONYM_MODES.DISABLED
               ? vRules.acronymMode
               : ACRONYM_MODES.PLAIN;
+          validateEmptySegments = Boolean(vRules.validateEmptySegments);
+          checkEmptyMainTier =
+            vRules.checkEmptyMainTier !== undefined
+              ? Boolean(vRules.checkEmptyMainTier)
+              : true;
+          checkEmptySubTiers =
+            vRules.checkEmptySubTiers !== undefined
+              ? Boolean(vRules.checkEmptySubTiers)
+              : true;
+          validateSubTierTags =
+            vRules.validateSubTierTags !== undefined
+              ? Boolean(vRules.validateSubTierTags)
+              : true;
           validateCustomRules = Boolean(vRules.validateCustomRules);
           customRules = vRules.customRules.map((r) => ({ ...r }));
           newRuleFind = '';
@@ -160,18 +181,6 @@
     }
     wasOpen = isOpen;
   });
-
-  const selectedLexicon = $derived(
-    lexiconState.lexicons?.find((l) => l.id === lexiconId) || null,
-  );
-
-  const availableLexiconFields = $derived(
-    selectedLexicon?.fields
-      ? selectedLexicon.fields.filter(
-          (f) => (f.name || '').trim().toLowerCase() !== 'headword',
-        )
-      : [],
-  );
 
   const speakerSegmentCounts = $derived.by(() => {
     const counts = {};
@@ -414,7 +423,7 @@
   }
 
   function handleInitialsInput(speaker, val) {
-    speaker.initials = (val || '').toUpperCase().slice(0, 3);
+    speaker.initials = (val || '').replace(/[@\s]/g, '').slice(0, 8);
   }
 
   function handleAllowedTagsInput(val) {
@@ -455,11 +464,26 @@
     customRules = customRules.filter((r) => r.id !== idToRemove);
   }
 
+  const hasDividedLexiconInSettings = $derived(
+    subTiers.some(
+      (t) =>
+        (t.type === SUB_TIER_TYPE_WORD ||
+          t.stereotype === ELAN_STEREOTYPE_SYM_SUBDIV ||
+          t.stereotype === ELAN_STEREOTYPE_TIME_SUBDIV) &&
+        ((Array.isArray(t.lexicon) && t.lexicon.length > 0) ||
+          (t.lexiconInput && t.lexiconInput.trim().length > 0)),
+    ),
+  );
+
   const activeValidationCount = $derived(
     (validateTags ? 1 : 0) +
       (fixApostropheBacktick ? 1 : 0) +
       (fixDoubleSpaces ? 1 : 0) +
       (validateAcronyms ? 1 : 0) +
+      (validateEmptySegments && (checkEmptyMainTier || checkEmptySubTiers)
+        ? 1
+        : 0) +
+      (validateSubTierTags && hasDividedLexiconInSettings ? 1 : 0) +
       (validateCustomRules
         ? customRules.filter((r) => r.enabled !== false && r.find?.trim())
             .length
@@ -495,9 +519,9 @@
         s.name || (isNoteTier ? 'Notes' : `Speaker ${spkId}`)
       ).trim();
       let cleanInitials = (s.initials || '')
-        .toUpperCase()
-        .replace(/[^A-Z0-9]/g, '')
-        .slice(0, 3);
+        .trim()
+        .replace(/[@\s]/g, '')
+        .slice(0, 8);
       if (!cleanInitials) {
         cleanInitials = isNoteTier ? 'NT' : `S${spkId}`;
       }
@@ -577,6 +601,22 @@
       });
     }
 
+    const cleanTokensTierName = (tokensTierName || '')
+      .trim()
+      .replace(/@+$/, '');
+    const firstWordSubTier = sanitizedSubTiers.find(
+      (t) => t.type === SUB_TIER_TYPE_WORD,
+    );
+    if (firstWordSubTier && !cleanTokensTierName) {
+      activeTab = 'subtiers';
+      expandedWordTierIds = {
+        ...expandedWordTierIds,
+        [firstWordSubTier.id]: true,
+      };
+      errorMessage = 'Tokenised Tier Name cannot be empty for tokenised sub-tiers.';
+      return;
+    }
+
     const sanitizedValidationRules = normalizeValidationRules({
       validateTags,
       allowedTags: parseAllowedTags(allowedTagsInput),
@@ -584,6 +624,10 @@
       fixDoubleSpaces,
       validateAcronyms,
       acronymMode: validateAcronyms ? acronymMode : ACRONYM_MODES.DISABLED,
+      validateEmptySegments,
+      checkEmptyMainTier,
+      checkEmptySubTiers,
+      validateSubTierTags,
       validateCustomRules,
       customRules,
     });
@@ -601,6 +645,7 @@
         transcriber:
           primarySpkWithTranscriber?.transcriber || transcriber.trim(),
         mainTierTitle: primarySpkWithPrefix?.tierPrefix || '',
+        tokensTierName: cleanTokensTierName || 'tokens',
         speakers: sanitizedSpeakers,
         speakerIdRemap,
         subTiers: sanitizedSubTiers,
@@ -737,8 +782,8 @@
               <div class="section-title-group">
                 <h4 class="section-title">Speakers / Main Tiers</h4>
                 <span class="elan-naming-hint">
-                  ELAN tier name: <code>&lt;prefix&gt;@&lt;speaker&gt;</code>
-                  &bull; Sub-tiers: <code>&lt;name&gt;@&lt;speaker&gt;</code>
+                  ELAN tier name: <code>&lt;prefix&gt;@&lt;initials&gt;</code>
+                  &bull; Sub-tiers: <code>&lt;name&gt;@&lt;initials&gt;</code>
                 </span>
               </div>
               {#if speakers.length < 5}
@@ -760,12 +805,17 @@
                 <span class="spk-th-color">Color</span>
                 <span
                   class="spk-th-prefix"
-                  title="Optional prefix in ELAN export: <prefix>@<speaker>"
+                  title="Optional prefix in ELAN export: <prefix>@<initials>"
                 >
                   Tier Prefix
                 </span>
                 <span class="spk-th-name">Speaker / Tier Name</span>
-                <span class="spk-th-init">Initials</span>
+                <span
+                  class="spk-th-init"
+                  title="Up to 8 chars (used in ELAN tier names <name>@<initials>; first 3 chars shown in studio)"
+                >
+                  Initials
+                </span>
                 <span
                   class="spk-th-transcriber"
                   title="Transcriber / Annotator name saved in ELAN ANNOTATOR attribute"
@@ -790,9 +840,15 @@
                   .trim()
                   .replace(/@+$/, '')}
                 {@const cleanSpkName = (spk.name || `Speaker ${spk.id}`).trim()}
+                {@const cleanSpkInit = (
+                  (spk.initials || '').trim() ||
+                  (spk.isNoteTier ? 'NT' : `S${spk.id}`)
+                ).slice(0, 8)}
                 {@const previewElanId = cleanPref
-                  ? `${cleanPref}@${cleanSpkName}`
-                  : cleanSpkName}
+                  ? `${cleanPref}@${cleanSpkInit}`
+                  : spk.isNoteTier
+                    ? cleanSpkName
+                    : cleanSpkInit}
                 <div
                   class="speaker-row {draggedSpeakerIdx === spkIdx
                     ? 'is-dragging'
@@ -868,7 +924,7 @@
                       bind:value={spk.name}
                       placeholder={spk.isNoteTier ? 'Notes' : 'Speaker Name'}
                       title="ELAN root tier ID: {previewElanId}{!spk.isNoteTier
-                        ? ` | Sub-tiers: <name>@${cleanSpkName}`
+                        ? ` | Sub-tiers: <name>@${cleanSpkInit}`
                         : ' (no sub-tiers)'}"
                     />
                   </div>
@@ -877,12 +933,12 @@
                     <input
                       id="spk-init-{spk._uid || spk.id}"
                       type="text"
-                      maxlength="3"
+                      maxlength="8"
                       class="form-input speaker-input initials-input"
                       value={spk.initials}
                       oninput={(e) => handleInitialsInput(spk, e.target.value)}
                       placeholder="S{spk.id}"
-                      title="Max 3 initials"
+                      title="Up to 8 chars (used in ELAN tier names <name>@<initials>; first 3 chars shown in studio)"
                     />
                   </div>
 
@@ -963,6 +1019,7 @@
                 <i class="fa-solid fa-circle-question"></i>
                 <span>Help &amp; Types</span>
               </button>
+
               {#if subTiers.length < MAX_SUB_TIERS}
                 <button
                   type="button"
@@ -979,18 +1036,16 @@
               <div class="subtier-help-panel">
                 <div class="help-points">
                   <div class="help-point">
-                    <strong>Symbolic Association (Undivided):</strong> Single
+                    <strong>Symbolic Association (Untokenised):</strong> Single
                     full-utterance text field per segment for translations,
                     comments, or notes (1-to-1 ELAN
                     <code>REF_ANNOTATION</code>).
                   </div>
                   <div class="help-point">
-                    <strong>Symbolic / Time Subdivision (Divided):</strong>
+                    <strong>Symbolic / Time Subdivision (Tokenised):</strong>
                     Token-level annotation split by whitespace and custom
-                    <strong>Splitters</strong> (e.g. <code>-</code>,
-                    <code>=</code>), with autocomplete <strong>Tags</strong>
-                    and optional <strong>Auto-Tag Field</strong> lookup from the
-                    Active Lexicon.
+                    <strong>Token Delimiters</strong> (e.g. <code>-</code>,
+                    <code>=</code>), with autocomplete <strong>Allowed Tags</strong>.
                   </div>
                   <div class="help-point">
                     <strong>ELAN Tier Type:</strong> Custom
@@ -1065,16 +1120,16 @@
                             value={currentStereotype}
                             onchange={(e) =>
                               handleStereotypeChange(tier, e.target.value)}
-                            title="ELAN Constraint Stereotype and Easper division behavior"
+                            title="ELAN Constraint Stereotype and Easper tokenisation behavior"
                           >
                             <option value={ELAN_STEREOTYPE_SYM_ASSOC}>
-                              Symbolic Association (Undivided)
+                              Symbolic Association (Untokenised)
                             </option>
                             <option value={ELAN_STEREOTYPE_SYM_SUBDIV}>
-                              Symbolic Subdivision (Divided)
+                              Symbolic Subdivision (Tokenised)
                             </option>
                             <option value={ELAN_STEREOTYPE_TIME_SUBDIV}>
-                              Time Subdivision (Divided)
+                              Time Subdivision (Tokenised)
                             </option>
                           </select>
                         </td>
@@ -1112,16 +1167,14 @@
                                 : ''}"
                               onclick={() => toggleWordTierConfig(tier.id)}
                               title={isExpanded
-                                ? 'Hide divided tier configuration'
-                                : 'Configure splitters, auto-tag field, and tags'}
+                                ? 'Hide tokenised tier configuration'
+                                : 'Configure dynamic tokenisation, delimiters, and allowed tags'}
                             >
-                              <span>{tier.lexicon.length} tags</span>
-                              {#if tier.lexiconField}
-                                <span class="config-summary-sep">&bull;</span>
-                                <span class="config-summary-field"
-                                  >{tier.lexiconField}</span
-                                >
-                              {/if}
+                              <span>
+                                {tier.lexicon.length > 0
+                                  ? `${tier.lexicon.length} tags`
+                                  : 'Free text'}
+                              </span>
                               <i
                                 class="fa-solid fa-chevron-{isExpanded
                                   ? 'up'
@@ -1131,7 +1184,7 @@
                           {:else}
                             <span
                               class="sentence-config-placeholder"
-                              title="Undivided tier (single text per segment)"
+                              title="Untokenised tier (single text per segment)"
                             >
                               &mdash;
                             </span>
@@ -1153,173 +1206,184 @@
                         <tr class="subtier-expanded-row">
                           <td colspan="7">
                             <div class="subtier-word-panel">
-                              <div class="word-tier-meta-row">
-                                <div class="splitters-col">
-                                  <label
-                                    for="splitters-input-{tier.id}"
-                                    class="sub-label compact-sub-label"
-                                    title="Space-separated characters or strings that divide utterances (space is always a splitter)"
-                                  >
-                                    Splitters
-                                  </label>
+                              <!-- Box 1: Dynamic Tokenisation -->
+                              <div class="word-config-section">
+                                <div class="word-config-section-title">
+                                  Dynamic Tokenisation
+                                </div>
+                                <div class="word-tier-meta-row">
+                                  <div class="tokens-tier-col">
+                                    <label
+                                      for="tokens-tier-input-{tier.id}"
+                                      class="sub-label compact-sub-label"
+                                    >
+                                      Tokenised Tier Name (when exported to
+                                      ELAN)
+                                    </label>
+                                    <input
+                                      id="tokens-tier-input-{tier.id}"
+                                      type="text"
+                                      class="form-input"
+                                      placeholder="e.g. tokens, words, morphemes"
+                                      bind:value={tokensTierName}
+                                    />
+                                  </div>
+
+                                  <div class="splitters-col">
+                                    <label
+                                      for="splitters-input-{tier.id}"
+                                      class="sub-label compact-sub-label"
+                                    >
+                                      Token Delimiters
+                                    </label>
+                                    <input
+                                      id="splitters-input-{tier.id}"
+                                      type="text"
+                                      class="form-input splitters-input"
+                                      placeholder="e.g. - = <overlap>"
+                                      bind:value={tier.splitters}
+                                    />
+                                    <span class="field-caption">
+                                      Space always separates words. Add
+                                      <code>-</code> <code>=</code> to split
+                                      morphemes, or <code>&lt;overlap&gt;</code>
+                                      to skip tags.
+                                    </span>
+                                  </div>
+                                </div>
+                              </div>
+
+                              <!-- Box 2: Controlled Vocabulary / Allowed Tags (Optional) -->
+                              <div class="word-config-section">
+                                <div class="lexicon-header">
+                                  <div class="lexicon-title-area">
+                                    <label
+                                      for="lexicon-input-{tier.id}"
+                                      class="sub-label"
+                                    >
+                                      Allowed Tags / Controlled Vocabulary
+                                      (Optional)
+                                    </label>
+                                    {#if tier.lexicon.length > 0}
+                                      <span class="lexicon-badge">
+                                        {tier.lexicon.length}
+                                      </span>
+                                    {/if}
+                                  </div>
+                                  <div class="lexicon-presets-bar">
+                                    <span class="preset-label">Presets:</span>
+                                    <button
+                                      type="button"
+                                      class="btn-preset"
+                                      onclick={() =>
+                                        applyPresetLexicon(
+                                          tier,
+                                          COMMON_POS_LEXICON,
+                                        )}
+                                      title="Insert common POS tags (prop, n, v, adj, adv...)"
+                                    >
+                                      Common POS
+                                    </button>
+                                    <button
+                                      type="button"
+                                      class="btn-preset"
+                                      onclick={() =>
+                                        applyPresetLexicon(
+                                          tier,
+                                          UNIVERSAL_POS_LEXICON,
+                                        )}
+                                      title="Universal Dependencies POS (NOUN, VERB, ADJ...)"
+                                    >
+                                      Universal POS
+                                    </button>
+                                    <button
+                                      type="button"
+                                      class="btn-preset"
+                                      onclick={() =>
+                                        applyPresetLexicon(
+                                          tier,
+                                          LEIPZIG_GLOSS_LEXICON,
+                                        )}
+                                      title="Leipzig Glossing tags (1SG, 2SG, NOM, PAST...)"
+                                    >
+                                      Leipzig Gloss
+                                    </button>
+                                    {#if tier.lexicon.length > 0}
+                                      <button
+                                        type="button"
+                                        class="btn-preset btn-preset-clear"
+                                        onclick={() =>
+                                          applyPresetLexicon(tier, [])}
+                                        title="Clear all tags"
+                                      >
+                                        Clear
+                                      </button>
+                                    {/if}
+                                  </div>
+                                </div>
+
+                                <div class="lexicon-input-group">
                                   <input
-                                    id="splitters-input-{tier.id}"
+                                    id="lexicon-input-{tier.id}"
                                     type="text"
-                                    class="form-input splitters-input"
-                                    placeholder="e.g. - = ((E ))"
-                                    bind:value={tier.splitters}
+                                    class="form-input lexicon-input-sm"
+                                    placeholder="e.g. n {'{'}Noun{'}'}, v {'{'}Verb{'}'}, adj {'{'}Adjective{'}'}"
+                                    value={tier.lexiconInput}
+                                    oninput={(e) =>
+                                      handleLexiconInput(tier, e.target.value)}
                                   />
                                 </div>
 
-                                <div class="lexfield-col">
-                                  <label
-                                    for="lexfield-select-{tier.id}"
-                                    class="sub-label compact-sub-label"
-                                    title="Field in active lexicon to grab values from during Auto Tagging"
-                                  >
-                                    Auto-Tag Field
-                                  </label>
-                                  <select
-                                    id="lexfield-select-{tier.id}"
-                                    class="form-input lexfield-select-sm"
-                                    bind:value={tier.lexiconField}
-                                    disabled={!selectedLexicon}
-                                    title={selectedLexicon
-                                      ? `Active Lexicon: ${selectedLexicon.title || selectedLexicon.name}`
-                                      : 'Select an Active Lexicon in Main Settings to enable Auto Tagging'}
-                                  >
-                                    <option value="">
-                                      {selectedLexicon
-                                        ? 'None (Disabled)'
-                                        : 'No active lexicon'}
-                                    </option>
-                                    {#each availableLexiconFields as field (field.id)}
-                                      <option value={field.name}
-                                        >{field.name}</option
-                                      >
-                                    {/each}
-                                    {#if tier.lexiconField && !availableLexiconFields.some((f) => f.name === tier.lexiconField)}
-                                      <option value={tier.lexiconField}>
-                                        {tier.lexiconField} (Custom)
-                                      </option>
-                                    {/if}
-                                  </select>
-                                </div>
-                              </div>
-
-                              <div class="lexicon-header">
-                                <div class="lexicon-title-area">
-                                  <label
-                                    for="lexicon-input-{tier.id}"
-                                    class="sub-label"
-                                  >
-                                    Tags ({tier.lexicon.length})
-                                  </label>
-                                </div>
-                                <div class="lexicon-presets-bar">
-                                  <span class="preset-label">Presets:</span>
-                                  <button
-                                    type="button"
-                                    class="btn-preset"
-                                    onclick={() =>
-                                      applyPresetLexicon(
-                                        tier,
-                                        COMMON_POS_LEXICON,
-                                      )}
-                                    title="Insert common POS tags (prop, n, v, adj, adv...)"
-                                  >
-                                    Common POS
-                                  </button>
-                                  <button
-                                    type="button"
-                                    class="btn-preset"
-                                    onclick={() =>
-                                      applyPresetLexicon(
-                                        tier,
-                                        UNIVERSAL_POS_LEXICON,
-                                      )}
-                                    title="Universal Dependencies POS (NOUN, VERB, ADJ...)"
-                                  >
-                                    Universal POS
-                                  </button>
-                                  <button
-                                    type="button"
-                                    class="btn-preset"
-                                    onclick={() =>
-                                      applyPresetLexicon(
-                                        tier,
-                                        LEIPZIG_GLOSS_LEXICON,
-                                      )}
-                                    title="Leipzig Glossing tags (1SG, 2SG, NOM, PAST...)"
-                                  >
-                                    Leipzig Gloss
-                                  </button>
-                                  {#if tier.lexicon.length > 0}
-                                    <button
-                                      type="button"
-                                      class="btn-preset btn-preset-clear"
-                                      onclick={() =>
-                                        applyPresetLexicon(tier, [])}
-                                      title="Clear all tags"
-                                    >
-                                      Clear
-                                    </button>
-                                  {/if}
-                                </div>
-                              </div>
-
-                              <div class="lexicon-input-group">
-                                <input
-                                  id="lexicon-input-{tier.id}"
-                                  type="text"
-                                  class="form-input lexicon-input-sm"
-                                  placeholder="Comma/space-separated tags, optional label in braces: n {'{'}Noun{'}'}, v {'{'}Verb{'}'}"
-                                  value={tier.lexiconInput}
-                                  oninput={(e) =>
-                                    handleLexiconInput(tier, e.target.value)}
-                                />
-                              </div>
-
-                              {#if tier.lexicon.length > 0}
-                                <div class="lexicon-chips-wrapper">
-                                  <div class="lexicon-chips-list">
-                                    {#each tier.lexicon as tag}
-                                      {@const tagVal =
-                                        typeof tag === 'object' && tag !== null
-                                          ? tag.value
-                                          : tag}
-                                      {@const tagLabel =
-                                        typeof tag === 'object' && tag !== null
-                                          ? tag.label
-                                          : ''}
-                                      <span
-                                        class="lexicon-chip"
-                                        title={tagLabel
-                                          ? `${tagVal}: ${tagLabel}`
-                                          : tagVal}
-                                      >
-                                        <span class="lexicon-chip-text"
-                                          >{tagVal}</span
+                                {#if tier.lexicon.length > 0}
+                                  <div class="lexicon-chips-wrapper">
+                                    <div class="lexicon-chips-list">
+                                      {#each tier.lexicon as tag}
+                                        {@const tagVal =
+                                          typeof tag === 'object' &&
+                                          tag !== null
+                                            ? tag.value
+                                            : tag}
+                                        {@const tagLabel =
+                                          typeof tag === 'object' &&
+                                          tag !== null
+                                            ? tag.label
+                                            : ''}
+                                        <span
+                                          class="lexicon-chip"
+                                          title={tagLabel
+                                            ? `${tagVal}: ${tagLabel}`
+                                            : tagVal}
                                         >
-                                        {#if tagLabel}
-                                          <span class="lexicon-chip-label"
-                                            >{tagLabel}</span
+                                          <span class="lexicon-chip-text"
+                                            >{tagVal}</span
                                           >
-                                        {/if}
-                                        <button
-                                          type="button"
-                                          class="btn-chip-remove"
-                                          onclick={() =>
-                                            removeLexiconItem(tier, tag)}
-                                          title="Remove '{tagVal}'"
-                                        >
-                                          &times;
-                                        </button>
-                                      </span>
-                                    {/each}
+                                          {#if tagLabel}
+                                            <span class="lexicon-chip-label"
+                                              >{tagLabel}</span
+                                            >
+                                          {/if}
+                                          <button
+                                            type="button"
+                                            class="btn-chip-remove"
+                                            onclick={() =>
+                                              removeLexiconItem(tier, tag)}
+                                            title="Remove '{tagVal}'"
+                                          >
+                                            &times;
+                                          </button>
+                                        </span>
+                                      {/each}
+                                    </div>
                                   </div>
-                                </div>
-                              {/if}
+                                {/if}
+                                <span class="field-caption">
+                                  Leave empty for free-text glossing, or define
+                                  allowed tags for autocomplete &amp; validation
+                                  (optional description in braces:
+                                  <code>n {'{'}Noun{'}'}, v {'{'}Verb{'}'}</code
+                                  >).
+                                </span>
+                              </div>
                             </div>
                           </td>
                         </tr>
@@ -1522,7 +1586,57 @@
                   {/if}
                 </div>
 
-                <!-- 5. Custom Validation Rules -->
+                <!-- 5. Empty Segments (Main Transcription or Sub-Tiers) -->
+                <div class="validation-rule-group">
+                  <label
+                    class="validation-check-item"
+                    title="Flag empty segments in main transcription tiers or sub-tiers"
+                  >
+                    <input
+                      type="checkbox"
+                      bind:checked={validateEmptySegments}
+                    />
+                    <div class="validation-check-text">
+                      <span class="validation-check-title">
+                        Empty Segments (Main Transcription or Sub-Tiers)
+                      </span>
+                    </div>
+                  </label>
+
+                  {#if validateEmptySegments}
+                    <div class="validation-subpanel empty-scope-subpanel">
+                      <label class="empty-scope-option">
+                        <input
+                          type="checkbox"
+                          bind:checked={checkEmptyMainTier}
+                        />
+                        <span>Main transcription tiers</span>
+                      </label>
+                      <label class="empty-scope-option">
+                        <input
+                          type="checkbox"
+                          bind:checked={checkEmptySubTiers}
+                        />
+                        <span>Sub-tiers (untokenised &amp; tokenised)</span>
+                      </label>
+                    </div>
+                  {/if}
+                </div>
+
+                <!-- 6. Invalid Tags in Tokenised Sub-Tiers -->
+                <label
+                  class="validation-check-item"
+                  title="Report word/morpheme annotations in tokenised sub-tiers that do not match the sub-tier's allowed lexicon tags"
+                >
+                  <input type="checkbox" bind:checked={validateSubTierTags} />
+                  <div class="validation-check-text">
+                    <span class="validation-check-title">
+                      Invalid Tags in Tokenised Sub-Tiers
+                    </span>
+                  </div>
+                </label>
+
+                <!-- 7. Custom Validation Rules -->
                 <div class="validation-rule-group">
                   <label
                     class="validation-check-item"
@@ -2079,8 +2193,8 @@
   .speakers-header-bar {
     display: grid;
     grid-template-columns:
-      16px 115px 82px minmax(115px, 1.3fr) 52px minmax(100px, 1fr)
-      110px 56px 52px 32px;
+      16px 115px 82px minmax(110px, 1.25fr) 76px minmax(96px, 1fr)
+      106px 56px 52px 32px;
     align-items: center;
     gap: 6px;
     padding: 0 8px;
@@ -2178,8 +2292,8 @@
   .speaker-row {
     display: grid;
     grid-template-columns:
-      16px 115px 82px minmax(115px, 1.3fr) 52px minmax(100px, 1fr)
-      110px 56px 52px 32px;
+      16px 115px 82px minmax(110px, 1.25fr) 76px minmax(96px, 1fr)
+      106px 56px 52px 32px;
     align-items: center;
     gap: 6px;
     padding: 3px 8px;
@@ -2283,8 +2397,7 @@
     width: 100%;
     text-align: center;
     font-weight: 700;
-    text-transform: uppercase;
-    padding: 2px 3px;
+    padding: 2px 4px;
   }
 
   .speaker-elantype-field {
@@ -2517,17 +2630,6 @@
     color: #38bdf8;
   }
 
-  .config-summary-sep {
-    opacity: 0.55;
-  }
-
-  .config-summary-field {
-    font-weight: 700;
-    max-width: 70px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
   .config-caret {
     font-size: 0.62rem;
     margin-left: 2px;
@@ -2543,8 +2645,8 @@
   .subtier-word-panel {
     display: flex;
     flex-direction: column;
-    gap: 6px;
-    padding: 8px 10px;
+    gap: 8px;
+    padding: 8px;
     background: var(--bg-hover, #f8fafc);
     border: 1px solid var(--border-color, #cbd5e1);
     border-radius: 6px;
@@ -2555,15 +2657,70 @@
     border-color: #334155;
   }
 
-  .word-tier-meta-row {
+  .word-config-section {
     display: flex;
-    gap: 8px;
-    align-items: flex-end;
+    flex-direction: column;
+    gap: 6px;
+    padding: 8px 10px;
+    background: var(--bg-card, #ffffff);
+    border: 1px solid var(--border-color, #e2e8f0);
+    border-radius: 5px;
   }
 
+  :global([data-theme='dark']) .word-config-section {
+    background: #0f172a;
+    border-color: #334155;
+  }
+
+  .word-config-section-title {
+    font-size: 0.72rem;
+    font-weight: 700;
+    color: var(--primary-color, #0284c7);
+  }
+
+  :global([data-theme='dark']) .word-config-section-title {
+    color: #38bdf8;
+  }
+
+  .word-tier-meta-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    align-items: start;
+  }
+
+  .tokens-tier-col,
   .splitters-col {
-    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
     min-width: 0;
+  }
+
+  .tokens-tier-col .form-input,
+  .splitters-col .form-input {
+    width: 100%;
+  }
+
+  .field-caption {
+    font-size: 0.69rem;
+    color: var(--text-muted, #64748b);
+    line-height: 1.35;
+  }
+
+  .field-caption code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+      monospace;
+    font-size: 0.66rem;
+    padding: 0 4px;
+    border-radius: 3px;
+    background: rgba(148, 163, 184, 0.14);
+    color: var(--text-heading, #0f172a);
+  }
+
+  :global([data-theme='dark']) .field-caption code {
+    background: rgba(255, 255, 255, 0.08);
+    color: #e2e8f0;
   }
 
   .splitters-input {
@@ -2571,21 +2728,6 @@
       monospace;
     font-size: 0.78rem;
     font-weight: 600;
-  }
-
-  .lexfield-col {
-    flex: 1.3;
-    min-width: 0;
-  }
-
-  .lexfield-select-sm {
-    font-weight: 600;
-    width: 100%;
-  }
-
-  .lexfield-select-sm:disabled {
-    opacity: 0.6;
-    cursor: not-allowed;
   }
 
   .lexicon-header {
@@ -2925,6 +3067,33 @@
   :global([data-theme='dark']) .validation-subpanel {
     background: rgba(56, 189, 248, 0.04);
     border-color: rgba(56, 189, 248, 0.18);
+  }
+
+  .empty-scope-subpanel {
+    flex-direction: row;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 14px;
+    padding: 6px 12px;
+  }
+
+  .empty-scope-option {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.74rem;
+    font-weight: 600;
+    color: var(--text-base, #334155);
+    cursor: pointer;
+  }
+
+  :global([data-theme='dark']) .empty-scope-option {
+    color: #cbd5e1;
+  }
+
+  .empty-scope-option input[type='checkbox'] {
+    margin: 0;
+    cursor: pointer;
   }
 
   .col-rule-active {

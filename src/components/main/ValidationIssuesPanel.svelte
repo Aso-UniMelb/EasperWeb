@@ -12,7 +12,7 @@
 
   let { onClose = () => {} } = $props();
 
-  let activeCategory = $state('all'); // 'all' | 'tag' | 'punctuation' | 'acronym' | 'custom'
+  let activeCategory = $state('all'); // 'all' | 'empty' | 'subtier_tag' | 'tag' | 'punctuation' | 'acronym' | 'custom'
   let activeIssueIndex = $state(0);
   let feedbackMessage = $state('');
   let feedbackType = $state('info'); // 'info' | 'success' | 'warning'
@@ -20,12 +20,19 @@
   const validationRules = $derived(
     projectState.activeProject?.validationRules || null,
   );
+  const projectSubTiers = $derived(projectState.activeProject?.subTiers || []);
+  const projectSpeakers = $derived(projectState.activeProject?.speakers || []);
 
-  const isConfigActive = $derived(isValidationActive(validationRules));
+  const isConfigActive = $derived(
+    isValidationActive(validationRules, projectSubTiers),
+  );
 
   // Compute live summary across all segments
   const summary = $derived(
-    scanAllSegmentsValidation(transcriptState.segments, validationRules),
+    scanAllSegmentsValidation(transcriptState.segments, validationRules, {
+      subTiers: projectSubTiers,
+      speakers: projectSpeakers,
+    }),
   );
 
   const filteredIssues = $derived.by(() => {
@@ -52,12 +59,44 @@
       const cardEl = document.getElementById(`segment-item-${item.segmentId}`);
       if (!cardEl) return;
 
-      const textarea = cardEl.querySelector('textarea');
+      const iss = item.issue || {};
+      if (
+        iss.wordIndex !== undefined &&
+        iss.tierKey &&
+        iss.tierKey !== 'main'
+      ) {
+        const wordEl = document.getElementById(
+          `word-annot-${item.segmentId}-${iss.tierKey}-${iss.wordIndex}`,
+        );
+        if (wordEl) {
+          wordEl.focus();
+          try {
+            wordEl.select();
+          } catch (_) {}
+          return;
+        }
+      }
+
+      if (iss.tierKey && iss.tierKey !== 'main') {
+        const subTextarea = cardEl.querySelector(
+          `textarea[data-tier="${iss.tierKey}"]`,
+        );
+        if (subTextarea) {
+          subTextarea.focus();
+          return;
+        }
+      }
+
+      const textarea =
+        cardEl.querySelector('textarea[data-tier="main"]') ||
+        cardEl.querySelector('textarea');
       if (textarea) {
         textarea.focus();
-        try {
-          textarea.setSelectionRange(item.issue.start, item.issue.end);
-        } catch (_) {}
+        if (iss.end > iss.start) {
+          try {
+            textarea.setSelectionRange(iss.start, iss.end);
+          } catch (_) {}
+        }
       }
     }, 45);
   }
@@ -88,14 +127,30 @@
     const seg = transcriptState.segments.find((s) => s.id === item.segmentId);
     if (!seg) return;
 
-    transcriptState.pushUndo('Fix validation issue');
-    const newText = applySingleValidationFix(
-      seg.text || '',
-      item.issue,
-      suggestion,
-    );
-    transcriptState.updateSegmentText(seg.id, newText);
-    projectState.saveCurrentProjectDebounced();
+    const iss = item.issue || {};
+    if (
+      iss.type === 'subtier_tag' &&
+      iss.tierKey &&
+      iss.wordIndex !== undefined
+    ) {
+      transcriptState.pushUndo('Fix sub-tier tag');
+      transcriptState.updateSegmentWordAnnotation(
+        seg.id,
+        iss.tierKey,
+        iss.wordIndex,
+        suggestion,
+      );
+      projectState.saveCurrentProjectDebounced();
+    } else {
+      transcriptState.pushUndo('Fix validation issue');
+      const newText = applySingleValidationFix(
+        seg.text || '',
+        iss,
+        suggestion,
+      );
+      transcriptState.updateSegmentText(seg.id, newText);
+      projectState.saveCurrentProjectDebounced();
+    }
 
     feedbackMessage = `Fixed issue in segment #${item.segmentIndex}`;
     feedbackType = 'success';
@@ -278,6 +333,30 @@
         >
           All ({summary.totalIssues})
         </button>
+        {#if summary.categoryCounts.empty > 0}
+          <button
+            type="button"
+            class="cat-tab {activeCategory === 'empty' ? 'active' : ''}"
+            onclick={() => {
+              activeCategory = 'empty';
+              activeIssueIndex = 0;
+            }}
+          >
+            Empty ({summary.categoryCounts.empty})
+          </button>
+        {/if}
+        {#if summary.categoryCounts.subtier_tag > 0}
+          <button
+            type="button"
+            class="cat-tab {activeCategory === 'subtier_tag' ? 'active' : ''}"
+            onclick={() => {
+              activeCategory = 'subtier_tag';
+              activeIssueIndex = 0;
+            }}
+          >
+            Sub-Tier Tags ({summary.categoryCounts.subtier_tag})
+          </button>
+        {/if}
         {#if summary.categoryCounts.tag > 0}
           <button
             type="button"
@@ -381,18 +460,32 @@
             <div class="issue-card-body">
               <div class="issue-type-row">
                 <span class="issue-kind-tag {item.issue.type || 'custom'}">
-                  {item.issue.type || 'rule'}
+                  {item.issue.type === 'subtier_tag'
+                    ? item.issue.tierName || 'sub-tier'
+                    : item.issue.type === 'empty'
+                      ? 'empty'
+                      : item.issue.type || 'rule'}
                 </span>
                 <span class="issue-label">{item.issue.label}</span>
               </div>
 
               <div class="issue-snippet-box">
-                <span class="offending-token">
-                  {item.issue.text === '  ' ||
-                  (item.issue.text && /^ +$/.test(item.issue.text))
-                    ? `[${item.issue.text.length} spaces]`
-                    : item.issue.text}
-                </span>
+                {#if item.issue.type === 'subtier_tag'}
+                  {#if item.issue.wordText}
+                    <span class="word-context-pill">{item.issue.wordText}</span>
+                    <span class="word-context-arrow">&rarr;</span>
+                  {/if}
+                  <span class="offending-token">{item.issue.text}</span>
+                {:else if item.issue.type === 'empty'}
+                  <span class="empty-issue-token">{item.issue.text}</span>
+                {:else}
+                  <span class="offending-token">
+                    {item.issue.text === '  ' ||
+                    (item.issue.text && /^ +$/.test(item.issue.text))
+                      ? `[${item.issue.text.length} spaces]`
+                      : item.issue.text}
+                  </span>
+                {/if}
               </div>
 
               {#if item.issue.suggestions && item.issue.suggestions.length > 0}
@@ -872,6 +965,16 @@
     color: #5b21b6;
   }
 
+  .issue-kind-tag.empty {
+    background: #e0f2fe;
+    color: #0369a1;
+  }
+
+  .issue-kind-tag.subtier_tag {
+    background: #ffedd5;
+    color: #c2410c;
+  }
+
   .issue-label {
     font-size: 0.78rem;
     font-weight: 600;
@@ -881,9 +984,42 @@
   .issue-snippet-box {
     display: flex;
     align-items: center;
+    gap: 5px;
+    flex-wrap: wrap;
     background: rgba(0, 0, 0, 0.04);
     border-radius: 4px;
     padding: 3px 6px;
+  }
+
+  .word-context-pill {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.74rem;
+    font-weight: 600;
+    color: var(--text-base, #334155);
+    background: rgba(148, 163, 184, 0.18);
+    padding: 1px 5px;
+    border-radius: 3px;
+  }
+
+  :global([data-theme='dark']) .word-context-pill {
+    color: #e2e8f0;
+    background: rgba(148, 163, 184, 0.22);
+  }
+
+  .word-context-arrow {
+    font-size: 0.72rem;
+    color: var(--text-muted, #64748b);
+  }
+
+  .empty-issue-token {
+    font-size: 0.76rem;
+    font-style: italic;
+    font-weight: 500;
+    color: var(--text-muted, #64748b);
+  }
+
+  :global([data-theme='dark']) .empty-issue-token {
+    color: #94a3b8;
   }
 
   .offending-token {

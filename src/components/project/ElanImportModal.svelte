@@ -21,6 +21,7 @@
   let title = $state('');
   let lexiconId = $state('');
   let mainTierTitle = $state('');
+  let tokensTierName = $state('');
   let transcriber = $state(
     typeof window !== 'undefined'
       ? localStorage.getItem('easper_last_transcriber') || ''
@@ -48,6 +49,7 @@
     title = '';
     lexiconId = '';
     mainTierTitle = '';
+    tokensTierName = '';
     speakers = [];
     subTiers = [];
     tierConfigs = [];
@@ -103,6 +105,9 @@
       }
       if (detected.suggestedMainTierTitle) {
         mainTierTitle = detected.suggestedMainTierTitle;
+      }
+      if (detected.suggestedTokensTierName) {
+        tokensTierName = detected.suggestedTokensTierName;
       }
       speakers = detected.speakers;
       subTiers = detected.subTiers;
@@ -235,6 +240,7 @@
           'Importing speakers, sub-tiers, and segments into active project...';
         await projectState.importElanToActiveProject({
           mainTierTitle: mainTierTitle.trim(),
+          tokensTierName: tokensTierName.trim(),
           transcriber: transcriber.trim() || 'Transcriber',
           speakers: compiled.speakers,
           subTiers: compiled.subTiers,
@@ -250,6 +256,7 @@
           title: title.trim() || eafFile.name.replace(/\.[^/.]+$/, ''),
           transcriber: transcriber.trim() || 'Transcriber',
           mainTierTitle: mainTierTitle.trim(),
+          tokensTierName: tokensTierName.trim(),
           audioFileOrBlob: audioFile,
           audioFileName: audioFile.name,
           speakers: compiled.speakers,

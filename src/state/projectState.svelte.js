@@ -242,6 +242,7 @@ class ProjectState {
         title: cleanTitle,
         transcriber: cleanTranscriber,
         mainTierTitle: '',
+        tokensTierName: '',
         audioFileName: audioFileName || 'recording-16khz.wav',
         audioDuration: Number(duration.toFixed(2)),
         audioFormat: 'WAV 16kHz Mono',
@@ -300,6 +301,7 @@ class ProjectState {
     title,
     transcriber,
     mainTierTitle = '',
+    tokensTierName = '',
     audioFileOrBlob,
     audioFileName,
     speakers,
@@ -355,6 +357,7 @@ class ProjectState {
         title: cleanTitle,
         transcriber: cleanTranscriber,
         mainTierTitle: mainTierTitle || '',
+        tokensTierName: (tokensTierName || '').trim().replace(/@+$/, ''),
         audioFileName: audioFileName || 'recording-16khz.wav',
         audioDuration: Number(duration.toFixed(2)),
         audioFormat: 'WAV 16kHz Mono',
@@ -578,6 +581,7 @@ class ProjectState {
       title,
       transcriber,
       mainTierTitle,
+      tokensTierName,
       speakers,
       speakerIdRemap,
       subTiers,
@@ -674,6 +678,10 @@ class ProjectState {
           mainTierTitle !== undefined
             ? mainTierTitle.trim()
             : (proj.mainTierTitle || ''),
+        tokensTierName:
+          tokensTierName !== undefined
+            ? String(tokensTierName).trim().replace(/@+$/, '')
+            : (proj.tokensTierName || ''),
         speakers: newSpeakers,
         subTiers: newSubTiers,
         lexiconId: cleanLexId,
@@ -919,6 +927,8 @@ class ProjectState {
               numericId: proj.numericId,
               title: proj.title,
               transcriber: proj.transcriber || 'Transcriber',
+              mainTierTitle: proj.mainTierTitle || '',
+              tokensTierName: proj.tokensTierName || '',
               audioFileName: proj.audioFileName || 'recording-16khz.wav',
               audioDuration: proj.audioDuration || 0,
               audioFormat: proj.audioFormat || 'WAV 16kHz Mono',
@@ -932,6 +942,8 @@ class ProjectState {
               columnOrder: proj.columnOrder || [],
               hiddenColumns: proj.hiddenColumns || [],
               tierLayout: proj.tierLayout || 'columns',
+              lexiconId: proj.lexiconId || null,
+              validationRules: proj.validationRules || null,
               segments: currentSegments,
               transcript:
                 (this.activeProjectId === proj.id
@@ -1012,52 +1024,17 @@ class ProjectState {
       let audioFileName = 'recording-16khz.wav';
 
       if (fileName.endsWith('.json')) {
-        // Plain JSON file
+        // If user already has an active project open in workspace, import annotations directly
+        if (this.activeProject && this.activeProjectId) {
+          return await this.importJsonToActiveProject(file);
+        }
+
+        // Plain JSON file without an active project open
         const text = await file.text();
         const parsed = JSON.parse(text);
         projectData = parsed.project || parsed;
         if (projectData.audioFileName) {
           audioFileName = projectData.audioFileName;
-        }
-
-        // If user already has an active project open in workspace, import annotations directly
-        if (this.activeProject && this.activeProjectId) {
-          if (Array.isArray(projectData.speakers) && projectData.speakers.length > 0) {
-            this.activeProject.speakers = projectData.speakers;
-          }
-          if (Array.isArray(projectData.subTiers)) {
-            this.activeProject.subTiers = projectData.subTiers;
-          }
-          if (Array.isArray(projectData.columnOrder)) {
-            this.activeProject.columnOrder = projectData.columnOrder;
-          }
-          if (Array.isArray(projectData.hiddenColumns)) {
-            this.activeProject.hiddenColumns = projectData.hiddenColumns;
-          }
-          if (Array.isArray(projectData.segments)) {
-            transcriptState.segments = projectData.segments;
-            this.activeProject.segments = projectData.segments;
-          }
-          if (projectData.transcript) {
-            transcriptState.transcript = projectData.transcript;
-            this.activeProject.transcript = projectData.transcript;
-          }
-          if (projectData.textDirection) {
-            transcriptState.textDirection = projectData.textDirection;
-            this.activeProject.textDirection = projectData.textDirection;
-          }
-          if (projectData.lastSelectedSegmentId) {
-            this.activeProject.lastSelectedSegmentId = projectData.lastSelectedSegmentId;
-            transcriptState.selectedSegmentId = projectData.lastSelectedSegmentId;
-            transcriptState.pendingInitialScrollSegmentId = projectData.lastSelectedSegmentId;
-          }
-
-          await this.persistActiveProjectNow();
-          transcriptState.notifySegmentsChange();
-          requestAnimationFrame(() => transcriptState.drawVerticalWaveform());
-
-          appState.statusMessage = `Imported annotations from "${file.name}" into current project!`;
-          return this.activeProject;
         }
       } else {
         // Assume zip archive (.easper or .zip)
@@ -1141,6 +1118,8 @@ class ProjectState {
         numericId: newNumericId,
         title: projectTitle,
         transcriber: projectData.transcriber || 'Transcriber',
+        mainTierTitle: projectData.mainTierTitle || '',
+        tokensTierName: (projectData.tokensTierName || '').trim().replace(/@+$/, ''),
         audioFileName: audioFileName,
         audioDuration: audioDuration,
         audioFormat: 'WAV 16kHz Mono',
@@ -1149,14 +1128,29 @@ class ProjectState {
           Array.isArray(projectData.speakers) && projectData.speakers.length > 0
             ? projectData.speakers
             : [{ id: 1, name: 'Speaker 1', initials: 'S1' }],
-        subTiers: Array.isArray(projectData.subTiers) ? projectData.subTiers : [],
+        subTiers: Array.isArray(projectData.subTiers)
+          ? normalizeSubTiers(projectData.subTiers, { sort: false })
+          : [],
         columnOrder: Array.isArray(projectData.columnOrder)
           ? projectData.columnOrder
           : [],
         hiddenColumns: Array.isArray(projectData.hiddenColumns)
           ? projectData.hiddenColumns
           : [],
-        segments: Array.isArray(projectData.segments) ? projectData.segments : [],
+        tierLayout: projectData.tierLayout === 'rows' ? 'rows' : 'columns',
+        lexiconId: projectData.lexiconId || null,
+        validationRules: normalizeValidationRules(projectData.validationRules),
+        segments: Array.isArray(projectData.segments)
+          ? projectData.segments.map((s) => ({
+              ...s,
+              subTexts:
+                s?.subTexts && typeof s.subTexts === 'object'
+                  ? s.subTexts
+                  : s?.subTiers && typeof s.subTiers === 'object'
+                    ? s.subTiers
+                    : {},
+            }))
+          : [],
         transcript: projectData.transcript || '',
         textDirection: projectData.textDirection || 'ltr',
         lastSelectedSegmentId: projectData.lastSelectedSegmentId || (Array.isArray(projectData.segments) && projectData.segments.length > 0 ? projectData.segments[0].id : null),
@@ -1239,17 +1233,37 @@ class ProjectState {
       );
     }
 
-    // 1. Update speakers if present
+    // 1. Update speakers & project metadata if present
+    if (
+      projectData.title &&
+      typeof projectData.title === 'string' &&
+      projectData.title.trim()
+    ) {
+      this.activeProject.title = projectData.title.trim();
+    }
+    if (projectData.transcriber && typeof projectData.transcriber === 'string') {
+      this.activeProject.transcriber = projectData.transcriber.trim();
+    }
+    if (typeof projectData.mainTierTitle === 'string') {
+      this.activeProject.mainTierTitle = projectData.mainTierTitle.trim();
+    }
+    if (typeof projectData.tokensTierName === 'string') {
+      this.activeProject.tokensTierName = projectData.tokensTierName
+        .trim()
+        .replace(/@+$/, '');
+    }
     if (Array.isArray(projectData.speakers) && projectData.speakers.length > 0) {
       this.activeProject.speakers = projectData.speakers;
     }
 
     // 2. Update subTiers if present
     if (Array.isArray(projectData.subTiers)) {
-      this.activeProject.subTiers = normalizeSubTiers(projectData.subTiers);
+      this.activeProject.subTiers = normalizeSubTiers(projectData.subTiers, {
+        sort: false,
+      });
     }
 
-    // 3. Update column orders if present
+    // 3. Update column orders, tier layout, lexicon, and validation rules if present
     if (Array.isArray(projectData.columnOrder)) {
       this.activeProject.columnOrder = projectData.columnOrder;
     }
@@ -1260,13 +1274,35 @@ class ProjectState {
       this.activeProject.tierLayout =
         projectData.tierLayout === 'rows' ? 'rows' : 'columns';
     }
+    if (projectData.lexiconId !== undefined) {
+      const cleanLexId = projectData.lexiconId || null;
+      this.activeProject.lexiconId = cleanLexId;
+      await this.syncProjectLexiconToHunspell(cleanLexId);
+    }
+    if (projectData.validationRules !== undefined) {
+      this.activeProject.validationRules = normalizeValidationRules(
+        projectData.validationRules,
+      );
+    }
 
     // 4. Update segments if present
     if (Array.isArray(candidateSegments)) {
+      if (
+        Array.isArray(transcriptState.segments) &&
+        transcriptState.segments.length > 0
+      ) {
+        transcriptState.pushUndo('Import JSON');
+      }
+
       const spkList = this.activeProject.speakers || [
         { id: 1, name: 'Speaker 1', initials: 'S1' },
       ];
       const spkMap = new Map(spkList.map((s) => [Number(s.id), s]));
+      const spkNameMap = new Map(
+        spkList
+          .filter((s) => s && s.name)
+          .map((s) => [String(s.name).trim().toLowerCase(), s]),
+      );
       const defaultSpk = spkList[0] || {
         id: 1,
         name: 'Speaker 1',
@@ -1277,22 +1313,38 @@ class ProjectState {
         const segStart = Number(s.start) || 0;
         const segEnd = Number(s.end) || segStart + 1;
         let spkId = Number(s.speakerId);
-        if (!spkId && s.speaker) {
-          const m = String(s.speaker).match(/^(?:speaker|spk)?[_\s]*([1-5])$/i);
-          if (m) spkId = Number(m[1]);
+        let matchedSpk = spkId ? spkMap.get(spkId) : null;
+        if (!matchedSpk && s.speaker) {
+          const byName = spkNameMap.get(String(s.speaker).trim().toLowerCase());
+          if (byName) {
+            matchedSpk = byName;
+          } else {
+            const m = String(s.speaker).match(/^(?:speaker|spk)?[_\s]*(\d+)$/i);
+            if (m) matchedSpk = spkMap.get(Number(m[1])) || null;
+          }
         }
-        if (!spkId) spkId = 1;
-        const matchedSpk = spkMap.get(spkId) || defaultSpk;
+        if (!matchedSpk) matchedSpk = defaultSpk;
+
+        const rawSubTexts =
+          s.subTexts && typeof s.subTexts === 'object'
+            ? s.subTexts
+            : s.subTiers && typeof s.subTiers === 'object'
+              ? s.subTiers
+              : {};
+        const subTextsCopy = {};
+        for (const [k, v] of Object.entries(rawSubTexts)) {
+          subTextsCopy[k] = Array.isArray(v) ? v.slice() : v;
+        }
 
         return {
-          id: s.id || `seg_${idx + 1}`,
+          id: s.id ?? idx + 1,
           start: Number(segStart.toFixed(3)),
           end: Number(segEnd.toFixed(3)),
+          duration: Number(Math.max(0, segEnd - segStart).toFixed(3)),
           text: s.text ? String(s.text).trim() : '',
           speakerId: Number(matchedSpk.id),
           speaker: matchedSpk.name || `Speaker ${matchedSpk.id}`,
-          subTiers:
-            s.subTiers && typeof s.subTiers === 'object' ? s.subTiers : {},
+          subTexts: subTextsCopy,
         };
       });
 
@@ -1387,6 +1439,7 @@ class ProjectState {
    */
   async importElanToActiveProject({
     mainTierTitle = '',
+    tokensTierName,
     transcriber,
     speakers,
     subTiers,
@@ -1414,6 +1467,11 @@ class ProjectState {
       mainTierTitle !== undefined
         ? mainTierTitle.trim()
         : this.activeProject.mainTierTitle || '';
+    if (tokensTierName !== undefined) {
+      this.activeProject.tokensTierName = String(tokensTierName || '')
+        .trim()
+        .replace(/@+$/, '');
+    }
     this.activeProject.transcriber = cleanTranscriber;
     this.activeProject.speakers = cleanSpeakers;
     this.activeProject.subTiers = cleanSubTiers;

@@ -492,7 +492,7 @@
               <div class="clean-steps-grid">
                 <div class="clean-step-card">
                   <h4 class="step-card-title">
-                    Sentence Sub-Tiers (Undivided)
+                    Sentence Sub-Tiers (Untokenised)
                   </h4>
                   <p class="step-card-text">
                     Provides a single text field per utterance (ELAN
@@ -503,7 +503,7 @@
                 </div>
                 <div class="clean-step-card">
                   <h4 class="step-card-title">
-                    Word / Morpheme Sub-Tiers (Divided)
+                    Word / Morpheme Sub-Tiers (Tokenised)
                   </h4>
                   <p class="step-card-text">
                     Tokenizes the main transcription by whitespace and custom

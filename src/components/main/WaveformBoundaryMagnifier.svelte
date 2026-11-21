@@ -174,7 +174,10 @@
         const spkObj = (projectSpeakers || []).find(
           (sp) => Number(sp.id) === spkId,
         );
-        const spkInitials = spkObj?.initials || `S${spkId}`;
+        const spkInitials = (spkObj?.initials || `S${spkId}`)
+          .trim()
+          .slice(0, 3)
+          .toUpperCase();
 
         const sStart =
           isCurrent && boundaryHandle === 'start'

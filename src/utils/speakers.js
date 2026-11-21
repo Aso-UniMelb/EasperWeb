@@ -82,8 +82,11 @@ export function getSpeakerColor(speakerId) {
   return SPEAKER_COLORS[numId] || DEFAULT_SPEAKER_COLOR;
 }
 
+export const MAX_SPEAKER_INITIALS_LEN = 8;
+export const STUDIO_INITIALS_LEN = 3;
+
 /**
- * Returns clean initials (up to 3 uppercase chars) for a speaker object or name.
+ * Returns clean initials (up to 3 uppercase chars) for displaying in the transcription studio.
  * @param {Object|string} speaker
  * @param {number} [fallbackId=1]
  * @returns {string}
@@ -91,14 +94,16 @@ export function getSpeakerColor(speakerId) {
 export function getSpeakerInitials(speaker, fallbackId = 1) {
   if (speaker && typeof speaker === 'object') {
     if (speaker.initials && speaker.initials.trim()) {
-      return speaker.initials.trim().slice(0, 3).toUpperCase();
+      return speaker.initials.trim().slice(0, STUDIO_INITIALS_LEN).toUpperCase();
     }
     if (speaker.name && speaker.name.trim()) {
       const parts = speaker.name.trim().split(/\s+/);
       if (parts.length >= 2) {
-        return (parts[0][0] + parts[1][0]).slice(0, 3).toUpperCase();
+        return (parts[0][0] + parts[1][0])
+          .slice(0, STUDIO_INITIALS_LEN)
+          .toUpperCase();
       }
-      return speaker.name.trim().slice(0, 3).toUpperCase();
+      return speaker.name.trim().slice(0, STUDIO_INITIALS_LEN).toUpperCase();
     }
     return `S${speaker.id || fallbackId}`;
   }
@@ -106,12 +111,33 @@ export function getSpeakerInitials(speaker, fallbackId = 1) {
   if (typeof speaker === 'string' && speaker.trim()) {
     const parts = speaker.trim().split(/\s+/);
     if (parts.length >= 2) {
-      return (parts[0][0] + parts[1][0]).slice(0, 3).toUpperCase();
+      return (parts[0][0] + parts[1][0])
+        .slice(0, STUDIO_INITIALS_LEN)
+        .toUpperCase();
     }
-    return speaker.trim().slice(0, 3).toUpperCase();
+    return speaker.trim().slice(0, STUDIO_INITIALS_LEN).toUpperCase();
   }
 
   return `S${fallbackId}`;
+}
+
+/**
+ * Returns the full speaker initials (up to 8 chars) used for ELAN tier names (<name>@<speakerInitials>).
+ * @param {Object|string} speaker
+ * @param {number} [fallbackId=1]
+ * @returns {string}
+ */
+export function getSpeakerElanInitials(speaker, fallbackId = 1) {
+  if (speaker && typeof speaker === 'object') {
+    if (speaker.initials && String(speaker.initials).trim()) {
+      return String(speaker.initials)
+        .trim()
+        .replace(/[@\s]/g, '')
+        .slice(0, MAX_SPEAKER_INITIALS_LEN);
+    }
+    return getSpeakerInitials(speaker, speaker.id || fallbackId);
+  }
+  return getSpeakerInitials(speaker, fallbackId);
 }
 
 /**

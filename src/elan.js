@@ -22,6 +22,7 @@ import {
   SUB_TIER_TYPE_SENTENCE,
   DEFAULT_SPLITTERS,
 } from './utils/subTiers.js';
+import { getSpeakerElanInitials } from './utils/speakers.js';
 
 function cleanSpeechText(str) {
   if (!str) return '';
@@ -628,6 +629,7 @@ export function exportToEaf({
   chunks = [],
   includeWordTier = false,
   mainTierTitle = '',
+  tokensTierName = '',
   transcriber = '',
   speakers = [],
   subTiers = [],
@@ -677,11 +679,21 @@ export function exportToEaf({
   const cleanSubTiers = normalizeSubTiers(subTiers, { sort: false });
 
   // Build token tier descriptors for divided ('word') sub-tiers.
-  // Word sub-tiers sharing the same stereotype and splitters share a single Tokens@<speaker> tier.
+  // Word sub-tiers sharing the same stereotype and splitters share a single <tokensTierName>@<speakerInitials> tier.
+  const customTokensBase = String(tokensTierName || '')
+    .trim()
+    .replace(/@+$/, '');
+  const candidateTokensBase = customTokensBase || 'tokens';
   const hasTokensNameCollision = cleanSubTiers.some(
-    (st) => (st.name || '').trim().toLowerCase() === 'tokens',
+    (st) =>
+      (st.name || '').trim().toLowerCase() ===
+      candidateTokensBase.toLowerCase(),
   );
-  const defaultTokenTierBase = hasTokensNameCollision ? 'Words' : 'Tokens';
+  const defaultTokenTierBase = hasTokensNameCollision
+    ? customTokensBase
+      ? `${customTokensBase}_tokens`
+      : 'words'
+    : candidateTokensBase;
   const tokenGroupMap = new Map(); // groupKey -> { baseName, stereotype, splitters, typeRef }
   const subTierToTokenGroup = new Map(); // st.id -> group descriptor
 
@@ -739,7 +751,14 @@ export function exportToEaf({
 
   const cleanMainTier = (mainTierTitle || '').trim().replace(/@+$/, '');
 
-  const getSpeakerRootTierId = (spkName, spkObj = null) => {
+  const getSpeakerSuffix = (spkObj = null, fallbackLabel = 'S1') => {
+    if (spkObj) {
+      return getSpeakerElanInitials(spkObj, spkObj.id || 1);
+    }
+    return getSpeakerElanInitials(fallbackLabel, 1);
+  };
+
+  const getSpeakerRootTierId = (spkSuffix, spkObj = null) => {
     const isNoteTier = Boolean(spkObj?.isNoteTier);
     const rawPrefix =
       spkObj && spkObj.tierPrefix !== undefined
@@ -750,9 +769,14 @@ export function exportToEaf({
     const prefix = String(rawPrefix || '')
       .trim()
       .replace(/@+$/, '');
-    if (!prefix) return spkName;
-    if (spkName.startsWith(`${prefix}@`)) return spkName;
-    return `${prefix}@${spkName}`;
+    if (!prefix) {
+      if (isNoteTier && spkObj?.name && spkObj.name.trim()) {
+        return spkObj.name.trim();
+      }
+      return spkSuffix;
+    }
+    if (spkSuffix.startsWith(`${prefix}@`)) return spkSuffix;
+    return `${prefix}@${spkSuffix}`;
   };
 
   const getSpeakerAnnotator = (spkObj = null) => {
@@ -762,26 +786,27 @@ export function exportToEaf({
     return mainAnnotator;
   };
 
-  // ELAN convention: a dependent tier is named `<layer>@<participant>` so the same
+  // ELAN convention: a dependent tier is named `<layer>@<speakerInitials>` so the same
   // layer can hang off every speaker tier without id collisions.
-  const dependentTierId = (subTierName, spkName) =>
-    `${subTierName}@${spkName}`;
+  const dependentTierId = (subTierName, spkSuffix) =>
+    `${subTierName}@${spkSuffix}`;
 
   // Pre-create tiers for all configured speakers in the project, plus dependent
   // sub-tiers per speaker (excluding Note tiers, which have no sub-tiers).
   if (Array.isArray(speakers) && speakers.length > 0) {
     for (const spk of speakers) {
       const isNote = Boolean(spk.isNoteTier);
-      const spkLabel = spk.name
+      const spkName = spk.name
         ? spk.name.trim()
         : isNote
           ? 'Notes'
           : `Speaker ${spk.id}`;
-      const rootTierId = getSpeakerRootTierId(spkLabel, spk);
+      const spkSuffix = getSpeakerSuffix(spk, spkName);
+      const rootTierId = getSpeakerRootTierId(spkSuffix, spk);
       const spkAnnotator = getSpeakerAnnotator(spk);
       const spkTypeRef =
         (spk.elanTierType || '').trim() || (isNote ? NOTE_TYPE : ALIGNED_TYPE);
-      eaf.addTier(rootTierId, isNote ? '' : spk.name || `Speaker ${spk.id}`, {
+      eaf.addTier(rootTierId, isNote ? '' : spkName, {
         typeRef: spkTypeRef,
         stereotype: 'None',
         annotator: spkAnnotator,
@@ -789,9 +814,9 @@ export function exportToEaf({
 
       if (isNote) continue;
 
-      // Pre-create token subdivision tiers (e.g. Tokens@Speaker1) for divided sub-tiers
+      // Pre-create token subdivision tiers (e.g. Tokens@S1) for divided sub-tiers
       for (const group of tokenGroupMap.values()) {
-        eaf.addTier(dependentTierId(group.baseName, spkLabel), '', {
+        eaf.addTier(dependentTierId(group.baseName, spkSuffix), '', {
           parentRef: rootTierId,
           typeRef: group.typeRef,
           stereotype: group.stereotype,
@@ -806,16 +831,16 @@ export function exportToEaf({
           const tokenGroup = subTierToTokenGroup.get(st.id);
           const tokenTierId = dependentTierId(
             tokenGroup?.baseName || defaultTokenTierBase,
-            spkLabel,
+            spkSuffix,
           );
-          eaf.addTier(dependentTierId(st.name, spkLabel), '', {
+          eaf.addTier(dependentTierId(st.name, spkSuffix), '', {
             parentRef: tokenTierId,
             typeRef: subTypeRef,
             stereotype: 'Symbolic_Association',
             annotator: subTierAnnotator,
           });
         } else {
-          eaf.addTier(dependentTierId(st.name, spkLabel), '', {
+          eaf.addTier(dependentTierId(st.name, spkSuffix), '', {
             parentRef: rootTierId,
             typeRef: subTypeRef,
             stereotype: 'Symbolic_Association',
@@ -857,23 +882,24 @@ export function exportToEaf({
       }
 
       const isNote = Boolean(speakerObj?.isNoteTier);
-      let spkLabel = '';
+      let spkName = '';
       let participant = '';
       if (speakerObj) {
-        spkLabel = speakerObj.name
+        spkName = speakerObj.name
           ? speakerObj.name.trim()
           : isNote
             ? 'Notes'
             : `Speaker ${speakerObj.id}`;
-        participant = isNote ? '' : speakerObj.name || spkLabel;
+        participant = isNote ? '' : spkName;
       } else if (seg.speaker) {
-        spkLabel = seg.speaker.trim();
-        participant = spkLabel;
+        spkName = seg.speaker.trim();
+        participant = spkName;
       } else {
-        spkLabel = 'Speaker 1';
+        spkName = 'Speaker 1';
         participant = 'Speaker 1';
       }
-      const rootTierId = getSpeakerRootTierId(spkLabel, speakerObj);
+      const spkSuffix = getSpeakerSuffix(speakerObj, spkName);
+      const rootTierId = getSpeakerRootTierId(spkSuffix, speakerObj);
       const spkAnnotator = getSpeakerAnnotator(speakerObj);
       const spkTypeRef =
         (speakerObj?.elanTierType || '').trim() ||
@@ -893,11 +919,11 @@ export function exportToEaf({
       );
       if (!parentLocalId || isNote) continue;
 
-      // Create subdivided token annotations on Tokens@<speaker> for each distinct token group
+      // Create subdivided token annotations on <tokensTierName>@<speakerInitials> for each distinct token group
       const tokenGroupLocalIds = new Map(); // groupKey -> { tokenTierId, words, localIds }
       for (const group of tokenGroupMap.values()) {
         const words = tokenizeWords(seg.text, group.splitters);
-        const tokenTierId = dependentTierId(group.baseName, spkLabel);
+        const tokenTierId = dependentTierId(group.baseName, spkSuffix);
         let localIds = [];
         if (words.length > 0) {
           if (group.stereotype === 'Time_Subdivision') {
@@ -951,7 +977,7 @@ export function exportToEaf({
           if (tokenData && tokenData.localIds.length > 0) {
             const { tokenTierId, words, localIds } = tokenData;
             const tags = getWordAnnotations(seg, st.id, words.length);
-            const subTierId = dependentTierId(st.name, spkLabel);
+            const subTierId = dependentTierId(st.name, spkSuffix);
             for (let i = 0; i < words.length; i++) {
               const tagVal = tags[i] ? String(tags[i]).trim() : '';
               if (localIds[i]) {
@@ -973,7 +999,7 @@ export function exportToEaf({
           const subText = getSubText(seg, st.id);
           if (subText && subText.trim()) {
             eaf.addRefAnnotation(
-              dependentTierId(st.name, spkLabel),
+              dependentTierId(st.name, spkSuffix),
               rootTierId,
               parentLocalId,
               subText,
@@ -985,10 +1011,11 @@ export function exportToEaf({
     }
   } else if (chunks && chunks.length > 0) {
     const fallbackSpkObj = speakers && speakers[0] ? speakers[0] : null;
-    const fallbackSpk =
+    const fallbackSpkName =
       fallbackSpkObj?.name ? fallbackSpkObj.name.trim() : 'Speaker 1';
-    const fallbackTier = getSpeakerRootTierId(fallbackSpk);
-    const fallbackParticipant = fallbackSpk;
+    const fallbackSpkSuffix = getSpeakerSuffix(fallbackSpkObj, fallbackSpkName);
+    const fallbackTier = getSpeakerRootTierId(fallbackSpkSuffix, fallbackSpkObj);
+    const fallbackParticipant = fallbackSpkName;
     const fallbackTypeRef =
       (fallbackSpkObj?.elanTierType || '').trim() || ALIGNED_TYPE;
     for (const chunk of chunks) {

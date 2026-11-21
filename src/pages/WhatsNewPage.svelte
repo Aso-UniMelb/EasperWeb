@@ -47,11 +47,11 @@
           <strong>Columns / Rows Sub-Tier Layout:</strong> Added a toggle in the
           tier legend to switch segment cards between side-by-side Columns and
           stacked Rows, including a dedicated <strong>Tokens</strong> row above
-          divided sub-tiers.
+          tokenised sub-tiers.
         </li>
         <li>
-          <strong>ELAN Token Hierarchy:</strong> Divided sub-tiers now export to
-          ELAN under an intermediate <code>Tokens@&lt;speaker&gt;</code> subdivision
+          <strong>ELAN Token Hierarchy:</strong> Tokenised sub-tiers now export to
+          ELAN under an intermediate <code>&lt;tokensTierName&gt;@&lt;initials&gt;</code> subdivision
           tier with 1-to-1 <em>Symbolic Association</em> child tiers, with full
           round-trip support on import.
         </li>

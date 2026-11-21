@@ -106,21 +106,38 @@ export function detectTierDefaults(eafData) {
         ));
     const isNoteTier = !hasChildren && isNoteLike && rootTiers.length > 1;
 
-    // If tierId is like "BIS@Speaker1", extract prefix and strip it if participant is empty
+    // If tierId is like "BIS@NS", extract prefix and suffix
     const atMatch = t.tierId.match(/^([^@]+)@(.*)$/);
     const tierPrefix = atMatch ? atMatch[1].trim() : '';
+    const tierSuffix = atMatch ? atMatch[2].trim() : '';
     const tierTranscriber = (t.annotator || '').trim();
     let rawName = t.participant?.trim();
     if (!rawName) {
-      rawName =
-        atMatch && atMatch[2].trim() ? atMatch[2].trim() : t.tierId.trim();
+      rawName = tierSuffix ? tierSuffix : t.tierId.trim();
     }
     if (!rawName) {
       rawName = isNoteTier ? 'Notes' : `Speaker ${nextSpeakerId}`;
     }
-    const initials = isNoteTier
-      ? getSpeakerInitials(rawName, nextSpeakerId) || 'NT'
-      : getSpeakerInitials(rawName, nextSpeakerId);
+
+    // Check if @<suffix> on the root tier or any direct child tier provides speaker initials (up to 8 chars)
+    let detectedInitials = '';
+    if (tierSuffix && !/\s/.test(tierSuffix) && tierSuffix.length <= 8) {
+      detectedInitials = tierSuffix;
+    } else {
+      const childWithAt = dependentTiers.find(
+        (d) => d.parentRef === t.tierId && /^[^@]+@([^@\s]{1,8})$/.test(d.tierId),
+      );
+      if (childWithAt) {
+        const cm = childWithAt.tierId.match(/^[^@]+@([^@\s]{1,8})$/);
+        if (cm) detectedInitials = cm[1].trim();
+      }
+    }
+
+    const initials =
+      detectedInitials ||
+      (isNoteTier
+        ? getSpeakerInitials(rawName, nextSpeakerId) || 'NT'
+        : getSpeakerInitials(rawName, nextSpeakerId));
 
     speakers.push({
       id: nextSpeakerId,
@@ -209,6 +226,7 @@ export function detectTierDefaults(eafData) {
   // Identify intermediary subdivision tiers (subdivision tiers that have child tiers hanging off them)
   const intermediaryTierIds = new Set();
   const intermediarySubNames = new Set();
+  let suggestedTokensTierName = '';
   for (const t of dependentTiers) {
     if (
       isSubdivisionStereotype(t.stereotype) &&
@@ -216,9 +234,13 @@ export function detectTierDefaults(eafData) {
     ) {
       intermediaryTierIds.add(t.tierId);
       const atMatch = t.tierId.match(/^([^@]+)@/);
-      const subName = (atMatch ? atMatch[1].trim() : t.tierId.trim()).toLowerCase();
+      const rawSubName = atMatch ? atMatch[1].trim() : t.tierId.trim();
+      const subName = rawSubName.toLowerCase();
       if (subName) {
         intermediarySubNames.add(subName);
+        if (!suggestedTokensTierName) {
+          suggestedTokensTierName = rawSubName;
+        }
       }
     }
   }
@@ -388,6 +410,7 @@ export function detectTierDefaults(eafData) {
     suggestedTitle,
     suggestedTranscriber,
     suggestedMainTierTitle,
+    suggestedTokensTierName,
     speakers,
     subTiers,
     tierConfigs,
