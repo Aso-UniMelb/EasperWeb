@@ -184,7 +184,7 @@
   }
 
   function openProjectSettings() {
-    projectState.openProjectSettings();
+    projectState.openProjectSettings('validation');
   }
 </script>
 

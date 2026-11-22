@@ -170,7 +170,12 @@
           newRuleReplace = '';
           newRuleIsRegex = false;
         }
-        activeTab = 'main';
+        activeTab =
+          projectState.projectSettingsInitialTab === 'subtiers' ||
+          projectState.projectSettingsInitialTab === 'validation'
+            ? projectState.projectSettingsInitialTab
+            : 'main';
+        projectState.projectSettingsInitialTab = 'main';
         showSubTierHelp = false;
         showValidationHelp = false;
         expandedWordTierIds = {};

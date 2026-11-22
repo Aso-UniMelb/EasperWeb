@@ -47,9 +47,16 @@ class ProjectState {
   isProjectManagerOpen = $state(false);
   isNewProjectOpen = $state(false);
   isProjectSettingsOpen = $state(false);
+  projectSettingsInitialTab = $state('main'); // 'main' | 'subtiers' | 'validation'
   isImportElanOpen = $state(false);
   elanImportTarget = $state('new'); // 'new' | 'active'
   isElanOverwriteWarningOpen = $state(false);
+
+  openProjectSettings(tab = 'main') {
+    this.projectSettingsInitialTab =
+      tab === 'subtiers' || tab === 'validation' ? tab : 'main';
+    this.isProjectSettingsOpen = true;
+  }
 
   // Auto-save state
   saveStatus = $state('saved'); // 'saved' | 'saving' | 'unsaved'

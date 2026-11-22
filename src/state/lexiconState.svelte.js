@@ -192,7 +192,13 @@ class LexiconState {
    * @param {Array} [data.fields]
    * @returns {Promise<Object>}
    */
-  async createLexicon({ title, languageVariety, description = '', fields = null }) {
+  async createLexicon({
+    title,
+    languageVariety = '',
+    description = '',
+    fields = null,
+    navigate = true,
+  }) {
     const id = generateId('lexicon');
     const now = new Date().toISOString();
 
@@ -211,10 +217,12 @@ class LexiconState {
 
     const saved = await saveLexicon(newLexicon);
     this.lexicons = [saved, ...this.lexicons];
-    this.activeLexiconId = saved.id;
     this.isNewLexiconModalOpen = false;
     this.showStatus(`Created lexicon "${saved.title}"`);
-    router.navigate(`/lexicon/${saved.id}`);
+    if (navigate) {
+      this.activeLexiconId = saved.id;
+      router.navigate(`/lexicon/${saved.id}`);
+    }
     return saved;
   }
 
@@ -470,6 +478,165 @@ class LexiconState {
     await hunspellState.rebuildFromLexicon(updatedLex);
     this.showStatus(`Added "${cleanWord}" to ${updatedLex.title || updatedLex.name || 'lexicon'}.`);
     return true;
+  }
+
+  /**
+   * Batch-imports extracted Word & Tag List rows into an existing lexicon.
+   * Safely skips duplicate (Headword + mapped tags) pairs, fills empty mapped fields
+   * on existing entries when applicable, and adds new entries for new words or new tag senses.
+   *
+   * @param {string} lexiconId
+   * @param {Array<{ token: string, tags?: Object<string, string> }>} rows
+   * @param {Object<string, string>} [tierToFieldMap={}] Map of subTierId -> lexicon field.id
+   * @returns {Promise<{ addedCount: number, updatedCount: number, skippedCount: number, lexicon: Object|null }>}
+   */
+  async importWordTagRows(lexiconId, rows = [], tierToFieldMap = {}) {
+    if (!this.isInitialized && (!this.lexicons || this.lexicons.length === 0)) {
+      await this.init();
+    }
+
+    const index = this.lexicons.findIndex((l) => l.id === lexiconId);
+    if (index === -1 || !Array.isArray(rows) || rows.length === 0) {
+      return { addedCount: 0, updatedCount: 0, skippedCount: 0, lexicon: null };
+    }
+
+    const lex = { ...this.lexicons[index] };
+    const fields = ensureHeadwordField(lex.fields);
+    const headwordField = fields.find(
+      (f) => (f.name || '').trim().toLowerCase() === 'headword',
+    );
+    if (!headwordField) {
+      return { addedCount: 0, updatedCount: 0, skippedCount: 0, lexicon: null };
+    }
+
+    const fieldById = new Map(fields.map((f) => [f.id, f]));
+    const now = new Date().toISOString();
+    const entries = (lex.entries || []).map((e) => ({
+      ...e,
+      fields: { ...(e.fields || {}) },
+    }));
+
+    // Index entries by lowercase headword for O(1) lookup
+    const byHeadword = new Map();
+    for (const entry of entries) {
+      const hw = getEntryFieldValue(entry, headwordField).trim().toLowerCase();
+      if (!hw) continue;
+      if (!byHeadword.has(hw)) byHeadword.set(hw, []);
+      byHeadword.get(hw).push(entry);
+    }
+
+    let addedCount = 0;
+    let updatedCount = 0;
+    let skippedCount = 0;
+    const newEntries = [];
+
+    for (const row of rows) {
+      const cleanToken = String(row?.token || '').trim();
+      if (!cleanToken) continue;
+      const hwLower = cleanToken.toLowerCase();
+
+      // Collect non-empty mapped field values for this row
+      const mappedPairs = []; // Array<{ field, value }>
+      if (row.tags && tierToFieldMap) {
+        for (const [tierId, fieldId] of Object.entries(tierToFieldMap)) {
+          if (!fieldId) continue;
+          const targetField = fieldById.get(fieldId);
+          if (!targetField) continue;
+          const tagVal = String(row.tags[String(tierId)] ?? '').trim();
+          if (tagVal) {
+            mappedPairs.push({ field: targetField, value: tagVal });
+          }
+        }
+      }
+
+      const existingList = byHeadword.get(hwLower) || [];
+
+      if (existingList.length === 0) {
+        // Brand-new headword
+        const newEntry = {
+          id: generateId('entry'),
+          fields: { [headwordField.id]: cleanToken },
+          createdAt: now,
+          updatedAt: now,
+        };
+        for (const { field, value } of mappedPairs) {
+          newEntry.fields[field.id] = value;
+        }
+        newEntries.push(newEntry);
+        byHeadword.set(hwLower, [newEntry]);
+        addedCount++;
+        continue;
+      }
+
+      // If no tags are mapped/non-empty and headword already exists, skip duplicate
+      if (mappedPairs.length === 0) {
+        skippedCount++;
+        continue;
+      }
+
+      // 1. Check if an existing entry already matches all mappedPairs
+      const exactMatch = existingList.some((entry) =>
+        mappedPairs.every(
+          ({ field, value }) =>
+            getEntryFieldValue(entry, field).trim().toLowerCase() ===
+            value.toLowerCase(),
+        ),
+      );
+      if (exactMatch) {
+        skippedCount++;
+        continue;
+      }
+
+      // 2. Check if an existing entry has empty slots (or identical values) for all mappedPairs
+      const fillableEntry = existingList.find((entry) =>
+        mappedPairs.every(({ field, value }) => {
+          const cur = getEntryFieldValue(entry, field).trim();
+          return !cur || cur.toLowerCase() === value.toLowerCase();
+        }),
+      );
+      if (fillableEntry) {
+        for (const { field, value } of mappedPairs) {
+          setEntryFieldValue(fillableEntry, field, value);
+        }
+        fillableEntry.updatedAt = now;
+        updatedCount++;
+        continue;
+      }
+
+      // 3. Same headword with a distinct tag combination (e.g. homograph sense): add new entry
+      const senseEntry = {
+        id: generateId('entry'),
+        fields: { [headwordField.id]: cleanToken },
+        createdAt: now,
+        updatedAt: now,
+      };
+      for (const { field, value } of mappedPairs) {
+        senseEntry.fields[field.id] = value;
+      }
+      newEntries.push(senseEntry);
+      existingList.push(senseEntry);
+      addedCount++;
+    }
+
+    if (addedCount === 0 && updatedCount === 0) {
+      return { addedCount: 0, updatedCount: 0, skippedCount, lexicon: lex };
+    }
+
+    lex.fields = fields;
+    lex.entries = [...newEntries, ...entries];
+    lex.updatedAt = now;
+
+    const saved = await saveLexicon(lex);
+    this.lexicons[index] = saved;
+
+    if (
+      this.activeLexiconId === lexiconId ||
+      hunspellState.activeLexiconId === lexiconId
+    ) {
+      await hunspellState.rebuildFromLexicon(saved);
+    }
+
+    return { addedCount, updatedCount, skippedCount, lexicon: saved };
   }
 
   /**

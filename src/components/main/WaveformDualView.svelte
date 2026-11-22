@@ -19,6 +19,7 @@
   import AutoTaggingSettingsPanel from './AutoTaggingSettingsPanel.svelte';
   import FindAndReplacePanel from './FindAndReplacePanel.svelte';
   import ValidationIssuesPanel from './ValidationIssuesPanel.svelte';
+  import WordTagListPanel from './WordTagListPanel.svelte';
   import WaveformBoundaryMagnifier from './WaveformBoundaryMagnifier.svelte';
   import {
     scanAllSegmentsValidation,
@@ -40,6 +41,18 @@
   let isResizingSidebar = $state(false);
   let resizeStartX = 0;
   let resizeStartWidth = 0;
+
+  // Automation Side Panel Resizing state
+  let customAutomationPanelWidth = $state(
+    (() => {
+      if (typeof localStorage === 'undefined') return null;
+      const saved = Number(localStorage.getItem('easper_automation_panel_width'));
+      return Number.isFinite(saved) && saved >= 280 ? saved : null;
+    })(),
+  );
+  let isResizingAutomationPanel = $state(false);
+  let panelResizeStartX = 0;
+  let panelResizeStartWidth = 0;
 
   // Validation Summary & Stepper state
   const validationRules = $derived(
@@ -179,6 +192,74 @@
     e.preventDefault();
     e.stopPropagation();
     customSidebarWidth = null;
+    requestAnimationFrame(() => transcriptState.drawVerticalWaveform());
+  }
+
+  let defaultAutomationPanelWidth = $derived(
+    transcriptState.activeDrawer === 'word-tag-list' ? 430 : 390,
+  );
+  let automationPanelWidth = $derived(
+    customAutomationPanelWidth !== null
+      ? customAutomationPanelWidth
+      : defaultAutomationPanelWidth,
+  );
+
+  function handlePanelResizePointerDown(e) {
+    if (e.button !== 0) return;
+    isResizingAutomationPanel = true;
+    panelResizeStartX = e.clientX;
+    panelResizeStartWidth = automationPanelWidth;
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch (_) {}
+    e.preventDefault();
+    e.stopPropagation();
+  }
+
+  function handlePanelResizePointerMove(e) {
+    if (!isResizingAutomationPanel) return;
+    const deltaX = panelResizeStartX - e.clientX;
+    const minW = 280;
+    const wrapperW =
+      waveformDualWrapperEl?.clientWidth ||
+      (typeof window !== 'undefined' ? window.innerWidth : 1280);
+    const maxW = Math.max(360, Math.min(920, wrapperW - sidebarWidth - 240));
+    customAutomationPanelWidth = Math.max(
+      minW,
+      Math.min(maxW, Math.round(panelResizeStartWidth + deltaX)),
+    );
+    requestAnimationFrame(() => transcriptState.drawVerticalWaveform());
+  }
+
+  function handlePanelResizePointerUp(e) {
+    if (!isResizingAutomationPanel) return;
+    isResizingAutomationPanel = false;
+    try {
+      if (
+        e.currentTarget.hasPointerCapture &&
+        e.currentTarget.hasPointerCapture(e.pointerId)
+      ) {
+        e.currentTarget.releasePointerCapture(e.pointerId);
+      }
+    } catch (_) {}
+    if (customAutomationPanelWidth !== null) {
+      try {
+        localStorage.setItem(
+          'easper_automation_panel_width',
+          String(customAutomationPanelWidth),
+        );
+      } catch (_) {}
+    }
+    requestAnimationFrame(() => transcriptState.drawVerticalWaveform());
+  }
+
+  function handlePanelResizeDoubleClick(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    customAutomationPanelWidth = null;
+    try {
+      localStorage.removeItem('easper_automation_panel_width');
+    } catch (_) {}
     requestAnimationFrame(() => transcriptState.drawVerticalWaveform());
   }
 
@@ -453,7 +534,12 @@
 <div
   class="waveform-dual-wrapper {transcriptState.activeDrawer
     ? 'has-automation-panel'
+    : ''} {transcriptState.activeDrawer === 'word-tag-list'
+    ? 'has-wide-automation-panel'
     : ''}"
+  style={transcriptState.activeDrawer
+    ? `--automation-panel-width: ${automationPanelWidth}px;`
+    : ''}
   bind:this={waveformDualWrapperEl}
 >
   <div class="waveform-dual-header-bar">
@@ -477,28 +563,50 @@
       ></i>
     </button>
 
-    <!-- Play / Pause Selected Time Frame Button -->
+    <!-- Play / Pause & Loop Selected Time Frame Buttons -->
     <div class="interval-play-group">
       <button
         type="button"
-        class="btn-header-tool btn-waveform-interval-play {audioState.isPlayingInterval
+        class="btn-header-tool btn-waveform-interval-play {audioState.isPlayingInterval &&
+        !audioState.isLoopingInterval
           ? 'is-playing'
           : ''}"
-        onclick={() => transcriptState.toggleIntervalPlayback()}
+        onclick={() => transcriptState.toggleIntervalPlayback(false)}
         disabled={!transcriptState.waveformState ||
           !audioState.isIntervalSelected}
         title={audioState.isIntervalSelected
-          ? `${audioState.isPlayingInterval ? 'Pause' : 'Play'} selected time frame [${formatTimeSec2(audioState.audioRangeStart)} – ${formatTimeSec2(audioState.audioRangeEnd)}] (Shift+Space)`
+          ? `${audioState.isPlayingInterval && !audioState.isLoopingInterval ? 'Pause' : 'Play'} selected time frame [${formatTimeSec2(audioState.audioRangeStart)} – ${formatTimeSec2(audioState.audioRangeEnd)}] (Shift+Space)`
           : 'Drag on the wave column to select a time frame (Shift+Space)'}
-        aria-label={audioState.isPlayingInterval
+        aria-label={audioState.isPlayingInterval &&
+        !audioState.isLoopingInterval
           ? 'Pause selected range'
           : 'Play selected range'}
       >
         <i
-          class="fa-solid {audioState.isPlayingInterval
+          class="fa-solid {audioState.isPlayingInterval &&
+          !audioState.isLoopingInterval
             ? 'fa-pause'
             : 'fa-arrows-left-right-to-line'}"
         ></i>
+      </button>
+
+      <button
+        type="button"
+        class="btn-header-tool btn-waveform-interval-loop {audioState.isPlayingInterval &&
+        audioState.isLoopingInterval
+          ? 'is-playing'
+          : ''}"
+        onclick={() => transcriptState.toggleIntervalPlayback(true)}
+        disabled={!transcriptState.waveformState ||
+          !audioState.isIntervalSelected}
+        title={audioState.isIntervalSelected
+          ? `${audioState.isPlayingInterval && audioState.isLoopingInterval ? 'Stop loop for' : 'Loop'} selected time frame [${formatTimeSec2(audioState.audioRangeStart)} – ${formatTimeSec2(audioState.audioRangeEnd)}]`
+          : 'Drag on the wave column to select a time frame to loop'}
+        aria-label={audioState.isPlayingInterval && audioState.isLoopingInterval
+          ? 'Stop looping selected range'
+          : 'Loop selected range'}
+      >
+        <i class="fa-solid fa-repeat"></i>
       </button>
       {#if audioState.isIntervalSelected}
         <button
@@ -718,29 +826,52 @@
   <!-- Settings Panel Drawer: opens as a side panel on wide screens, or inline above transcript on narrower screens -->
   {#if transcriptState.activeDrawer}
     <aside class="automation-panel-slot" aria-label="Automation Tool Settings">
-      {#if transcriptState.activeDrawer === 'segmentation'}
-        <SegmentationSettingsPanel
-          onClose={() => (transcriptState.activeDrawer = null)}
-          {onWorkerReset}
-        />
-      {:else if transcriptState.activeDrawer === 'recognition'}
-        <SpeechRecognitionSettingsPanel
-          onClose={() => (transcriptState.activeDrawer = null)}
-          {onWorkerReset}
-        />
-      {:else if transcriptState.activeDrawer === 'tagging'}
-        <AutoTaggingSettingsPanel
-          onClose={() => (transcriptState.activeDrawer = null)}
-        />
-      {:else if transcriptState.activeDrawer === 'find-replace'}
-        <FindAndReplacePanel
-          onClose={() => (transcriptState.activeDrawer = null)}
-        />
-      {:else if transcriptState.activeDrawer === 'validation'}
-        <ValidationIssuesPanel
-          onClose={() => (transcriptState.activeDrawer = null)}
-        />
-      {/if}
+      <!-- Left Boundary Resizer Handle -->
+      <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+      <div
+        class="automation-panel-resizer {isResizingAutomationPanel
+          ? 'is-resizing'
+          : ''}"
+        onpointerdown={handlePanelResizePointerDown}
+        onpointermove={handlePanelResizePointerMove}
+        onpointerup={handlePanelResizePointerUp}
+        onpointercancel={handlePanelResizePointerUp}
+        ondblclick={handlePanelResizeDoubleClick}
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize automation side panel width"
+        title="Drag to resize side panel width (Double-click to reset)"
+      ></div>
+
+      <div class="automation-panel-inner">
+        {#if transcriptState.activeDrawer === 'segmentation'}
+          <SegmentationSettingsPanel
+            onClose={() => (transcriptState.activeDrawer = null)}
+            {onWorkerReset}
+          />
+        {:else if transcriptState.activeDrawer === 'recognition'}
+          <SpeechRecognitionSettingsPanel
+            onClose={() => (transcriptState.activeDrawer = null)}
+            {onWorkerReset}
+          />
+        {:else if transcriptState.activeDrawer === 'tagging'}
+          <AutoTaggingSettingsPanel
+            onClose={() => (transcriptState.activeDrawer = null)}
+          />
+        {:else if transcriptState.activeDrawer === 'find-replace'}
+          <FindAndReplacePanel
+            onClose={() => (transcriptState.activeDrawer = null)}
+          />
+        {:else if transcriptState.activeDrawer === 'validation'}
+          <ValidationIssuesPanel
+            onClose={() => (transcriptState.activeDrawer = null)}
+          />
+        {:else if transcriptState.activeDrawer === 'word-tag-list'}
+          <WordTagListPanel
+            onClose={() => (transcriptState.activeDrawer = null)}
+          />
+        {/if}
+      </div>
     </aside>
   {/if}
 
@@ -1615,6 +1746,78 @@
     background-color: #38bdf8;
   }
 
+  .automation-panel-inner {
+    flex: 1;
+    min-height: 0;
+    height: 100%;
+    max-height: 100%;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .automation-panel-resizer {
+    display: none;
+  }
+
+  @media (min-width: 1081px) {
+    .automation-panel-resizer {
+      display: block;
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      left: -10px;
+      width: 10px;
+      cursor: col-resize;
+      z-index: 35;
+      touch-action: none;
+    }
+
+    .automation-panel-resizer::before {
+      content: '';
+      position: absolute;
+      top: 50%;
+      left: 3px;
+      transform: translateY(-50%);
+      width: 4px;
+      height: 32px;
+      border-radius: 999px;
+      background-color: rgba(148, 163, 184, 0.45);
+      transition: background-color 0.15s ease, height 0.15s ease;
+    }
+
+    .automation-panel-resizer::after {
+      content: '';
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      left: 4px;
+      width: 2px;
+      background-color: transparent;
+      transition: background-color 0.15s ease;
+    }
+
+    .automation-panel-resizer:hover::before,
+    .automation-panel-resizer.is-resizing::before {
+      background-color: #0284c7;
+      height: 44px;
+    }
+
+    .automation-panel-resizer:hover::after,
+    .automation-panel-resizer.is-resizing::after {
+      background-color: #38bdf8;
+    }
+
+    :global([data-theme='dark']) .automation-panel-resizer::before {
+      background-color: rgba(148, 163, 184, 0.3);
+    }
+
+    :global([data-theme='dark']) .automation-panel-resizer:hover::before,
+    :global([data-theme='dark']) .automation-panel-resizer.is-resizing::before {
+      background-color: #38bdf8;
+    }
+  }
+
   .interval-play-group {
     display: inline-flex;
     align-items: center;
@@ -1630,7 +1833,8 @@
     justify-content: center;
   }
 
-  .btn-waveform-interval-play {
+  .btn-waveform-interval-play,
+  .btn-waveform-interval-loop {
     min-width: 30px;
     width: 30px;
     height: 30px;
@@ -1638,13 +1842,15 @@
     justify-content: center;
   }
 
-  .btn-waveform-interval-play.is-playing {
+  .btn-waveform-interval-play.is-playing,
+  .btn-waveform-interval-loop.is-playing {
     background-color: #fef3c7;
     border-color: #f59e0b;
     color: #b45309;
   }
 
-  :global([data-theme='dark']) .btn-waveform-interval-play.is-playing {
+  :global([data-theme='dark']) .btn-waveform-interval-play.is-playing,
+  :global([data-theme='dark']) .btn-waveform-interval-loop.is-playing {
     background-color: rgba(245, 158, 11, 0.2);
     border-color: #f59e0b;
     color: #fbbf24;

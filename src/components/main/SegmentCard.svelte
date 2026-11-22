@@ -365,6 +365,42 @@
       visibleColumns.length > 1,
   );
 
+  // In horizontal/rows layout, group consecutive tokenised sub-tiers sharing
+  // the same delimiters so their token header and inputs share one locked
+  // horizontal scroll track and stay pixel-aligned.
+  let rowRenderItems = $derived.by(() => {
+    if (!isRowsLayout) {
+      return visibleColumns.map((col) => ({
+        kind: 'column',
+        id: col.key,
+        col,
+      }));
+    }
+    const items = [];
+    for (const col of visibleColumns) {
+      if (col.type === SUB_TIER_TYPE_WORD) {
+        const last = items[items.length - 1];
+        if (
+          last &&
+          last.kind === 'word-group' &&
+          (last.splitters ?? '') === (col.splitters ?? '')
+        ) {
+          last.tiers.push(col);
+          continue;
+        }
+        items.push({
+          kind: 'word-group',
+          id: `wg-${col.key}`,
+          splitters: col.splitters ?? '',
+          tiers: [col],
+        });
+      } else {
+        items.push({ kind: 'column', id: col.key, col });
+      }
+    }
+    return items;
+  });
+
   // The transcription keeps a little more room than the dependent columns, which
   // usually hold shorter glosses or translations.
   let columnTemplate = $derived(
@@ -588,57 +624,81 @@
     class:segment-content-rows={isRowsLayout}
     style="grid-template-columns: {columnTemplate};"
   >
-    {#each visibleColumns as col, colIdx (col.key)}
-      {@const prevCol = colIdx > 0 ? visibleColumns[colIdx - 1] : null}
-      {@const sharesPrevTokens =
-        isRowsLayout &&
-        col.type === SUB_TIER_TYPE_WORD &&
-        prevCol?.type === SUB_TIER_TYPE_WORD &&
-        (prevCol?.splitters ?? '') === (col.splitters ?? '')}
-
-      {#if isRowsLayout && col.type === SUB_TIER_TYPE_WORD && !sharesPrevTokens}
-        {@const rowTokens = tokenizeWords(seg.text, col.splitters)}
+    {#each rowRenderItems as item (item.id)}
+      {#if item.kind === 'word-group'}
+        {@const rowTokens = tokenizeWords(seg.text, item.splitters)}
         {@const tokensLabel =
           (projectState.activeProject?.tokensTierName || '').trim() || 'Tokens'}
-        <div class="tier-cell-item tier-row-line tier-tokens-row">
-          <span class="tier-row-badge badge-tokens" title={tokensLabel}>
-            {tokensLabel}
-          </span>
-          <div class="tier-cell-body">
-            {#if rowTokens.length === 0}
-              <div class="tokens-row-empty">
-                <span class="empty-bullet">&bull;</span>
-                <span class="empty-text">No words to annotate</span>
+        <div class="tier-cell-item tier-row-line tier-interlinear-group">
+          <div class="tier-interlinear-badges">
+            <div class="tier-interlinear-badge-row is-tokens-row">
+              <span class="tier-row-badge badge-tokens" title={tokensLabel}>
+                {tokensLabel}
+              </span>
+            </div>
+            {#each item.tiers as tier (tier.key)}
+              <div class="tier-interlinear-badge-row">
+                <span class="tier-row-badge" title={tier.name}>
+                  {tier.name}
+                </span>
               </div>
-            {:else}
-              <div class="tokens-row-list" dir={transcriptState.textDirection}>
-                {#each rowTokens as token, tIdx (tIdx)}
-                  <span
-                    class="tokens-row-item"
-                    title="Token {tIdx + 1}: {token}"
-                  >
-                    {token}
-                  </span>
-                {/each}
+            {/each}
+          </div>
+
+          <div
+            class="tier-cell-body tier-cell-body-scroll"
+            dir={transcriptState.textDirection}
+          >
+            <div class="tier-interlinear-tracks">
+              <div class="tier-interlinear-track is-tokens-track">
+                {#if rowTokens.length === 0}
+                  <div class="tokens-row-empty">
+                    <span class="empty-bullet">&bull;</span>
+                    <span class="empty-text">No words to annotate</span>
+                  </div>
+                {:else}
+                  <div class="tokens-row-list">
+                    {#each rowTokens as token, tIdx (tIdx)}
+                      <span
+                        class="tokens-row-item"
+                        title="Token {tIdx + 1}: {token}"
+                      >
+                        {token}
+                      </span>
+                    {/each}
+                  </div>
+                {/if}
               </div>
-            {/if}
+
+              {#each item.tiers as tier (tier.key)}
+                <div class="tier-interlinear-track">
+                  <WordSubTierEditor
+                    {seg}
+                    col={tier}
+                    hideWordHeader={true}
+                    horizontal={true}
+                    textDirection={transcriptState.textDirection}
+                  />
+                </div>
+              {/each}
+            </div>
           </div>
         </div>
-      {/if}
+      {:else}
+        {@const col = item.col}
+        <div class="tier-cell-item" class:tier-row-line={isRowsLayout}>
+          {#if isRowsLayout}
+            <span
+              class="tier-row-badge"
+              class:badge-main={col.isMain}
+              title={col.name}
+            >
+              {col.name}
+            </span>
+          {/if}
 
-      <div class="tier-cell-item" class:tier-row-line={isRowsLayout}>
-        {#if isRowsLayout}
-          <span
-            class="tier-row-badge"
-            class:badge-main={col.isMain}
-            title={col.name}
-          >
-            {col.name}
-          </span>
-        {/if}
-
-        <div class="tier-cell-body">
-          {#if col.isMain}
+          <div class="tier-cell-body">
+            {#if col.isMain}
             <div class="main-tier-cell" bind:this={cellEl}>
               {#if (hasSpellcheck && hasMisspelledWords) || (hasValidation && hasValidationIssues)}
                 <div
@@ -803,6 +863,7 @@
           {/if}
         </div>
       </div>
+      {/if}
     {/each}
   </div>
 </div>
@@ -1037,18 +1098,106 @@
     background: rgba(255, 255, 255, 0.08);
   }
 
+  .tier-interlinear-group {
+    align-items: flex-start;
+  }
+
+  .tier-interlinear-badges {
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+  }
+
+  .tier-interlinear-badge-row {
+    display: flex;
+    align-items: center;
+    height: 28px;
+    box-sizing: border-box;
+  }
+
+  .tier-interlinear-badge-row.is-tokens-row {
+    height: 24px;
+  }
+
+  .tier-interlinear-badge-row + .tier-interlinear-badge-row {
+    border-top: 1px dashed rgba(148, 163, 184, 0.25);
+  }
+
+  :global([data-theme='dark'])
+    .tier-interlinear-badge-row
+    + .tier-interlinear-badge-row {
+    border-top-color: rgba(148, 163, 184, 0.16);
+  }
+
+  .tier-cell-body-scroll {
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(148, 163, 184, 0.45) transparent;
+    padding-bottom: 2px;
+  }
+
+  .tier-cell-body-scroll::-webkit-scrollbar {
+    height: 5px;
+  }
+
+  .tier-cell-body-scroll::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .tier-cell-body-scroll::-webkit-scrollbar-thumb {
+    background: rgba(148, 163, 184, 0.45);
+    border-radius: 999px;
+  }
+
+  .tier-cell-body-scroll::-webkit-scrollbar-thumb:hover {
+    background: rgba(100, 116, 139, 0.7);
+  }
+
+  .tier-interlinear-tracks {
+    display: flex;
+    flex-direction: column;
+    width: max-content;
+    min-width: 100%;
+  }
+
+  .tier-interlinear-track {
+    display: flex;
+    align-items: center;
+    min-height: 28px;
+    box-sizing: border-box;
+  }
+
+  .tier-interlinear-track.is-tokens-track {
+    min-height: 24px;
+    height: 24px;
+  }
+
+  .tier-interlinear-track + .tier-interlinear-track {
+    border-top: 1px dashed rgba(148, 163, 184, 0.25);
+  }
+
+  :global([data-theme='dark'])
+    .tier-interlinear-track
+    + .tier-interlinear-track {
+    border-top-color: rgba(148, 163, 184, 0.16);
+  }
+
   .tokens-row-list {
     display: flex;
     flex-direction: row;
-    flex-wrap: wrap;
-    column-gap: 8px;
-    row-gap: 4px;
+    flex-wrap: nowrap;
+    column-gap: 6px;
     align-items: center;
-    width: 100%;
-    padding: 1px 0;
+    width: max-content;
+    min-width: 100%;
+    height: 24px;
+    padding: 0;
+    box-sizing: border-box;
   }
 
   .tokens-row-item {
+    flex: 0 0 68px;
     width: 68px;
     min-width: 68px;
     max-width: 68px;
@@ -1073,7 +1222,8 @@
     display: inline-flex;
     align-items: center;
     gap: 5px;
-    padding: 2px 6px;
+    height: 24px;
+    padding: 0 6px;
     font-size: 0.72rem;
     font-style: italic;
     color: var(--text-muted, #94a3b8);

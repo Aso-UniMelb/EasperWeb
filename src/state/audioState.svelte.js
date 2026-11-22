@@ -233,6 +233,7 @@ class AudioState {
   audioRangeEnd = $state(0);
   playerCurrentTime = $state(0);
   isPlayingInterval = $state(false);
+  isLoopingInterval = $state(false);
   intervalPlayCleanup = null;
   activeThumb = $state('start');
 
@@ -550,9 +551,11 @@ class AudioState {
     }
   }
 
-  togglePlayInterval() {
+  togglePlayInterval(loop = false) {
     if (!this.audioElement && !this._cachedDecodedAudio) return;
+    const wantLoop = Boolean(loop);
     if (this.isPlayingInterval) {
+      const wasLooping = Boolean(this.isLoopingInterval);
       this.stopWebAudioRange(true);
       if (this.audioElement && !this.audioElement.paused) {
         this.audioElement.pause();
@@ -562,7 +565,10 @@ class AudioState {
         this.intervalPlayCleanup = null;
       }
       this.isPlayingInterval = false;
-      return;
+      this.isLoopingInterval = false;
+      if (wasLooping === wantLoop) {
+        return;
+      }
     }
 
     const start = Math.max(0, this.audioRangeStart || 0);
@@ -570,19 +576,22 @@ class AudioState {
 
     // Prefer sample-accurate Web Audio API playback when available at 1.0x speed
     const stopWebAudio = this.playWebAudioRange(start, end, {
-      loop: false,
+      loop: wantLoop,
       onEnded: () => {
         this.intervalPlayCleanup = null;
         this.isPlayingInterval = false;
+        this.isLoopingInterval = false;
       },
     });
 
     if (stopWebAudio) {
       this.isPlayingInterval = true;
+      this.isLoopingInterval = wantLoop;
       this.intervalPlayCleanup = () => {
         stopWebAudio(false);
         this.intervalPlayCleanup = null;
         this.isPlayingInterval = false;
+        this.isLoopingInterval = false;
       };
       return;
     }
@@ -592,6 +601,7 @@ class AudioState {
     this.audioElement.currentTime = start;
     this.playerCurrentTime = start;
     this.isPlayingInterval = true;
+    this.isLoopingInterval = wantLoop;
 
     let stopped = false;
     let rafId = null;
@@ -621,6 +631,7 @@ class AudioState {
       }
       this.intervalPlayCleanup = null;
       this.isPlayingInterval = false;
+      this.isLoopingInterval = false;
     };
 
     const onPause = () => {
@@ -630,15 +641,24 @@ class AudioState {
     const checkFrame = () => {
       if (stopped || !this.audioElement) return;
       const cur = this.audioElement.currentTime;
-      const curEnd = Math.max(start + 0.05, this.audioRangeEnd || end);
+      const curStart = Math.max(0, this.audioRangeStart || start);
+      const curEnd = Math.max(curStart + 0.05, this.audioRangeEnd || end);
       if (cur >= curEnd) {
+        if (wantLoop) {
+          this.audioElement.currentTime = curStart;
+          this.playerCurrentTime = curStart;
+          rafId = requestAnimationFrame(checkFrame);
+          return;
+        }
         stopIntervalPlayback(true);
         return;
       }
-      const rate = this.audioElement.playbackRate || 1;
-      const remainingMs = ((curEnd - cur) / rate) * 1000;
-      if (remainingMs <= 35 && remainingMs >= 0 && !stopTimer) {
-        stopTimer = setTimeout(() => stopIntervalPlayback(true), Math.max(0, remainingMs));
+      if (!wantLoop) {
+        const rate = this.audioElement.playbackRate || 1;
+        const remainingMs = ((curEnd - cur) / rate) * 1000;
+        if (remainingMs <= 35 && remainingMs >= 0 && !stopTimer) {
+          stopTimer = setTimeout(() => stopIntervalPlayback(true), Math.max(0, remainingMs));
+        }
       }
       rafId = requestAnimationFrame(checkFrame);
     };
@@ -646,8 +666,14 @@ class AudioState {
     const onTimeUpdate = () => {
       if (stopped || !this.audioElement) return;
       const cur = this.audioElement.currentTime;
-      const curEnd = Math.max(start + 0.05, this.audioRangeEnd || end);
+      const curStart = Math.max(0, this.audioRangeStart || start);
+      const curEnd = Math.max(curStart + 0.05, this.audioRangeEnd || end);
       if (cur >= curEnd) {
+        if (wantLoop) {
+          this.audioElement.currentTime = curStart;
+          this.playerCurrentTime = curStart;
+          return;
+        }
         stopIntervalPlayback(true);
       }
     };
@@ -678,6 +704,7 @@ class AudioState {
         this.intervalPlayCleanup = null;
       }
       this.isPlayingInterval = false;
+      this.isLoopingInterval = false;
     }
   }
 }

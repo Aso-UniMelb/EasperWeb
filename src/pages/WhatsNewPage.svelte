@@ -27,6 +27,58 @@
   </div>
 
   <div class="updates-list">
+    <!-- November 21, 2026 -->
+    <section class="update-section">
+      <h2 class="update-date">
+        <span>November 21, 2026</span>
+        <span class="sub-app-badge badge-transcriber">
+          <i class="fa-solid fa-microphone"></i> Transcriber
+        </span>
+      </h2>
+      <ul class="update-bullets">
+        <li>
+          <strong>Word &amp; Tag List (Automation Tool):</strong> Added a new
+          <strong>Word &amp; Tag List</strong> panel under
+          <em>Automation Tools</em> to inspect word frequencies and annotations
+          across multiple tokenised sub-tiers side-by-side (or check word
+          consistency even without tokenised sub-tiers). Includes sortable
+          columns, <em>Multi-tag</em>, <em>Untagged</em>, and
+          <em>Not in Lexicon</em> filters, occurrence stepping to jump directly
+          to each token in the transcript, <strong>Export to TSV</strong>, and
+          <strong>Add to Lexicon</strong> with field mapping.
+        </li>
+        <li>
+          <strong>Expanded Validation Rules:</strong> Added checks for
+          <strong>Empty Segments</strong> and
+          <strong>Invalid Tags in Tokenised Sub-Tiers</strong> (validated
+          against each sub-tier's Allowed Tags), plus a direct button in the
+          Validation Issues panel to open Project Settings on the Validation
+          Rules tab.
+        </li>
+        <li>
+          <strong>Loop Selected Interval:</strong> Added a dedicated loop button
+          next to the interval play button in the waveform toolbar to repeat any
+          selected time range continuously.
+        </li>
+        <li>
+          <strong>Resizable Side Panels &amp; Horizontal Interlinear Scroll:</strong>
+          Made automation side panels horizontally resizable by dragging their
+          left border (double-click to reset), and redesigned the horizontal
+          <strong>Rows</strong> sub-tier view so the <strong>Tokens</strong> row
+          and dependent annotation inputs share identical token widths with
+          synchronized horizontal scrolling.
+        </li>
+        <li>
+          <strong>Tokenised Sub-Tier Settings &amp; Export Fidelity:</strong>
+          Streamlined tokenised sub-tier settings (<em>Dynamic Tokenisation</em>,
+          <em>Token Delimiter</em>, default <code>tokens</code> ELAN tier name,
+          and <em>Tokenised / Untokenised</em> terminology) and improved
+          round-trip preservation of sub-tiers and project settings in JSON and
+          <code>.easper</code> exports.
+        </li>
+      </ul>
+    </section>
+
     <!-- November 17, 2026 -->
     <section class="update-section">
       <h2 class="update-date">

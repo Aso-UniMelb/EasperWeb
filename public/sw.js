@@ -4,7 +4,7 @@
  * and automatic Cross-Origin-Isolation (COOP/COEP) header injection for multi-threaded CPU execution.
  */
 
-const CACHE_NAME = 'easper-web-v4';
+const CACHE_NAME = 'easper-web-v5';
 
 // Static entry assets and webfonts to pre-cache immediately upon installation
 const PRECACHE_URLS = [
@@ -137,7 +137,13 @@ self.addEventListener('fetch', (event) => {
   }
 
   // In local development, bypass Service Worker caching completely so Vite HMR and dynamic modules are untouched
-  if (url.hostname === 'localhost' || url.hostname === '127.0.0.1') {
+  if (
+    url.hostname === 'localhost' ||
+    url.hostname === '127.0.0.1' ||
+    url.hostname === '[::1]' ||
+    url.pathname.startsWith('/src/') ||
+    url.pathname.startsWith('/@')
+  ) {
     return;
   }
 

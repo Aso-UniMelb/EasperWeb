@@ -2,13 +2,20 @@
   import { transcriptState } from '../../state/transcriptState.svelte.js';
   import { tokenizeWords, getWordAnnotations } from '../../utils/subTiers.js';
 
-  let { seg, col, textDirection = 'ltr', hideWordHeader = false } = $props();
+  let {
+    seg,
+    col,
+    textDirection = 'ltr',
+    hideWordHeader = false,
+    horizontal = false,
+  } = $props();
 
   let words = $derived(tokenizeWords(seg.text, col.splitters));
   let annotations = $derived(getWordAnnotations(seg, col.key, words.length));
 
   let activeWordIndex = $state(null);
   let activeSuggestionIndex = $state(0);
+  let dropdownStyle = $state('');
   let blurTimer = null;
 
   let currentVal = $derived(
@@ -66,13 +73,34 @@
     return !validLexiconSet.has(trimmed);
   }
 
-  function handleFocus(idx) {
+  function updateDropdownPosition(el) {
+    if (!el || typeof window === 'undefined') {
+      dropdownStyle = '';
+      return;
+    }
+    const rect = el.getBoundingClientRect();
+    const spaceBelow = window.innerHeight - rect.bottom;
+    const openUpward = spaceBelow < 185 && rect.top > 185;
+    const topPart = openUpward
+      ? `bottom: ${Math.round(window.innerHeight - rect.top + 3)}px; top: auto;`
+      : `top: ${Math.round(rect.bottom + 3)}px; bottom: auto;`;
+    const horizPart =
+      textDirection === 'rtl'
+        ? `right: ${Math.round(Math.max(8, window.innerWidth - rect.right))}px; left: auto;`
+        : `left: ${Math.round(Math.max(8, Math.min(rect.left, window.innerWidth - 228)))}px; right: auto;`;
+    dropdownStyle = `${topPart} ${horizPart}`;
+  }
+
+  function handleFocus(idx, e) {
     if (blurTimer) {
       clearTimeout(blurTimer);
       blurTimer = null;
     }
     activeWordIndex = idx;
     activeSuggestionIndex = 0;
+    if (e?.currentTarget) {
+      updateDropdownPosition(e.currentTarget);
+    }
     transcriptState.selectSegment(seg.id, false);
   }
 
@@ -182,7 +210,7 @@
 </script>
 
 <div
-  class="word-subtier-column"
+  class="word-subtier-column {horizontal ? 'is-horizontal' : ''}"
   dir={textDirection}
   role="region"
   aria-label="{col.name} word annotations"
@@ -193,7 +221,7 @@
       <span class="empty-text">No words to annotate</span>
     </div>
   {:else}
-    <div class="word-annotations-list">
+    <div class="word-annotations-list {horizontal ? 'is-horizontal' : ''}">
       {#each words as word, idx (idx)}
         {@const val = annotations[idx] || ''}
         {@const isWarning = isInvalidTag(val)}
@@ -218,7 +246,7 @@
                 class="word-annotation-textarea {isWarning ? 'is-warning' : ''}"
                 placeholder={col.lexicon && col.lexicon.length > 0 ? 'tag' : ''}
                 value={val}
-                onfocus={() => handleFocus(idx)}
+                onfocus={(e) => handleFocus(idx, e)}
                 onblur={() => handleBlur(idx)}
                 oninput={(e) => handleInput(idx, e.target.value)}
                 onkeydown={(e) => handleKeyDown(e, idx)}
@@ -229,7 +257,11 @@
                   : `${col.name} for ${word}`}></textarea>
 
               {#if activeWordIndex === idx && filteredSuggestions.length > 0}
-                <div class="word-autocomplete-dropdown" role="listbox">
+                <div
+                  class="word-autocomplete-dropdown {horizontal ? 'is-fixed' : ''}"
+                  style={horizontal ? dropdownStyle : ''}
+                  role="listbox"
+                >
                   <div class="autocomplete-header">
                     <span>{col.name} Lexicon</span>
                     <span class="suggestions-count">
@@ -276,11 +308,18 @@
     min-width: 0;
   }
 
+  .word-subtier-column.is-horizontal {
+    width: max-content;
+    min-width: 100%;
+  }
+
   .word-subtier-empty {
     display: inline-flex;
     align-items: center;
     gap: 5px;
     padding: 3px 6px;
+    height: 28px;
+    box-sizing: border-box;
     font-size: 0.72rem;
     font-style: italic;
     color: var(--text-muted, #94a3b8);
@@ -296,11 +335,21 @@
     display: flex;
     flex-direction: row;
     flex-wrap: wrap;
-    column-gap: 5px;
+    column-gap: 6px;
     row-gap: 5px;
     align-items: flex-start;
     width: 100%;
     padding: 2px 0;
+    box-sizing: border-box;
+  }
+
+  .word-annotations-list.is-horizontal {
+    flex-wrap: nowrap;
+    width: max-content;
+    min-width: 100%;
+    height: 28px;
+    padding: 3px 0;
+    align-items: center;
   }
 
   .word-annotation-item {
@@ -308,9 +357,11 @@
     flex-direction: column;
     align-items: stretch;
     gap: 3px;
+    flex: 0 0 68px;
     width: 68px;
     min-width: 68px;
     max-width: 68px;
+    box-sizing: border-box;
   }
 
   .word-annotation-label {
@@ -351,7 +402,7 @@
 
   .word-annotation-textarea {
     width: 100%;
-    min-width: 64px;
+    min-width: 0;
     height: 22px;
     min-height: 22px;
     box-sizing: border-box;
@@ -457,6 +508,11 @@
     flex-direction: column;
     padding: 3px;
     animation: dropDownPop 0.1s ease-out;
+  }
+
+  .word-autocomplete-dropdown.is-fixed {
+    position: fixed;
+    z-index: 1200;
   }
 
   :global([data-theme='dark']) .word-autocomplete-dropdown {

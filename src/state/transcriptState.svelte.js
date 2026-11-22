@@ -178,7 +178,7 @@ class TranscriptState {
   // Transcript view mode: 'segments' | 'chunks' | 'plain' | 'stats'
   transcriptView = $state('segments');
 
-  // Active automation panel drawer: 'segmentation' | 'recognition' | 'tagging' | 'find-replace' | 'validation' | null
+  // Active automation panel drawer: 'segmentation' | 'recognition' | 'tagging' | 'find-replace' | 'validation' | 'word-tag-list' | null
   activeDrawer = $state(null);
 
   toggleDrawer(name) {
@@ -1207,7 +1207,7 @@ class TranscriptState {
     requestAnimationFrame(() => this.drawVerticalWaveform());
   }
 
-  toggleIntervalPlayback() {
+  toggleIntervalPlayback(loop = false) {
     const audioEl = audioState.audioElement;
     if ((!audioEl && !audioState.cachedDecodedAudio) || !audioState.isIntervalSelected) return;
 
@@ -1220,7 +1220,7 @@ class TranscriptState {
     this.currentPlayheadSegmentId = null;
 
     if (audioState.isPlayingInterval) {
-      audioState.togglePlayInterval();
+      audioState.togglePlayInterval(loop);
       this.isAudioPlaying = false;
     } else {
       if (this.isAudioPlaying) {
@@ -1230,7 +1230,7 @@ class TranscriptState {
         }
         this.isAudioPlaying = false;
       }
-      audioState.togglePlayInterval();
+      audioState.togglePlayInterval(loop);
     }
     requestAnimationFrame(() => this.drawVerticalWaveform());
   }

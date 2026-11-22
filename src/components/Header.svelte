@@ -589,7 +589,7 @@
             : ''} {transcriptState.activeDrawer ? 'drawer-active' : ''}"
           onclick={toggleAutomationMenu}
           aria-expanded={isAutomationMenuOpen}
-          title="Automation tools: Auto Segmentation, Speech Recognition, Auto Tagging, and Find & Replace"
+          title="Automation tools: Auto Segmentation, Speech Recognition, Auto Tagging, Find & Replace, Validation Issues, and Word & Tag List"
         >
           <i class="fa-solid fa-wand-magic-sparkles"></i>
           <span>Automation Tools</span>
@@ -736,6 +736,30 @@
                     <span class="item-status-pill pill-clean">0</span>
                   {/if}
                   {#if transcriptState.activeDrawer === 'validation'}
+                    <span class="item-status-pill">Active</span>
+                  {/if}
+                </div>
+              </div>
+            </button>
+
+            <!-- Word & Tag List -->
+            <button
+              type="button"
+              class="automation-menu-item {transcriptState.activeDrawer ===
+              'word-tag-list'
+                ? 'active-item'
+                : ''}"
+              role="menuitem"
+              onclick={() => selectAutomationTool('word-tag-list')}
+              title="Extract word & tag frequencies, check tagging consistency, export TSV, or sync to a lexicon"
+            >
+              <div class="item-icon-box icon-wordlist">
+                <i class="fa-solid fa-table-list"></i>
+              </div>
+              <div class="item-text-box">
+                <div class="item-title-row">
+                  <span class="item-title">Word &amp; Tag List</span>
+                  {#if transcriptState.activeDrawer === 'word-tag-list'}
                     <span class="item-status-pill">Active</span>
                   {/if}
                 </div>
