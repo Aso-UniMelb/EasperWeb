@@ -8,6 +8,10 @@
 
 import { tokenizeWords, getWordAnnotations } from './subTiers.js';
 import { getEntryFieldValue } from './lexiconTsv.js';
+import {
+  buildTagSuggestionIndex,
+  getRankedTagSuggestions,
+} from './tagSuggestions.js';
 
 /**
  * Resolves a field within a lexicon matching a target identifier (by field ID or field name).
@@ -180,18 +184,40 @@ export function lookupWordTag(
 export function autoTagSegments({
   segments,
   tier,
-  lexicon,
+  lexicon = null,
   targetFieldNameOrId = null,
   overwrite = false,
   caseInsensitive = true,
   stripPunctuation = true,
+  includeLexicon = true,
+  includeCurrentProject = false,
+  includeOtherProjects = false,
+  otherProjects = [],
+  activeProjectId = null,
+  currentSpeakers = [],
+  allProjectSegments = null,
+  useContext = true,
+  useFuzzy = false,
+  useContextFallback = false,
 }) {
+  const emptyStats = {
+    totalWords: 0,
+    newlyTaggedCount: 0,
+    alreadyTaggedCount: 0,
+    unmatchedCount: 0,
+    modifiedSegmentsCount: 0,
+    totalSegmentsCount: Array.isArray(segments) ? segments.length : 0,
+    exactMatchedCount: 0,
+    fuzzyMatchedCount: 0,
+    contextMatchedCount: 0,
+  };
+
   if (!Array.isArray(segments)) {
     return {
       success: false,
       error: 'Segments must be an array.',
       updatedSegments: [],
-      stats: { totalWords: 0, newlyTaggedCount: 0, alreadyTaggedCount: 0, unmatchedCount: 0, modifiedSegmentsCount: 0, totalSegmentsCount: 0 },
+      stats: { ...emptyStats, totalSegmentsCount: 0 },
     };
   }
 
@@ -200,7 +226,7 @@ export function autoTagSegments({
       success: false,
       error: 'A target sub-tier must be specified.',
       updatedSegments: segments,
-      stats: { totalWords: 0, newlyTaggedCount: 0, alreadyTaggedCount: 0, unmatchedCount: 0, modifiedSegmentsCount: 0, totalSegmentsCount: segments.length },
+      stats: emptyStats,
     };
   }
 
@@ -209,40 +235,57 @@ export function autoTagSegments({
       success: false,
       error: `Sub-tier "${tier.name || tier.id}" is a sentence-level tier. Auto Tagging only applies to word/morpheme-level sub-tiers.`,
       updatedSegments: segments,
-      stats: { totalWords: 0, newlyTaggedCount: 0, alreadyTaggedCount: 0, unmatchedCount: 0, modifiedSegmentsCount: 0, totalSegmentsCount: segments.length },
+      stats: emptyStats,
     };
   }
 
-  if (!lexicon) {
+  const useLex = Boolean(includeLexicon && lexicon);
+  if (!useLex && !includeCurrentProject && !includeOtherProjects) {
     return {
       success: false,
-      error: 'No active lexicon provided.',
+      error:
+        'Select at least one tag source (Active Lexicon, Current Project, or Other Saved Projects).',
       updatedSegments: segments,
-      stats: { totalWords: 0, newlyTaggedCount: 0, alreadyTaggedCount: 0, unmatchedCount: 0, modifiedSegmentsCount: 0, totalSegmentsCount: segments.length },
+      stats: emptyStats,
     };
   }
 
-  const fieldKey = targetFieldNameOrId || tier.lexiconField;
-  if (!fieldKey) {
-    return {
-      success: false,
-      error: `Sub-tier "${tier.name || tier.id}" does not have an active lexicon field configured. Specify a field (such as POS or Gloss) in Project Settings or in the Auto Tagging panel.`,
-      updatedSegments: segments,
-      stats: { totalWords: 0, newlyTaggedCount: 0, alreadyTaggedCount: 0, unmatchedCount: 0, modifiedSegmentsCount: 0, totalSegmentsCount: segments.length },
-    };
+  let targetField = null;
+  if (useLex) {
+    const fieldKey = targetFieldNameOrId || tier.lexiconField || tier.name;
+    if (!fieldKey) {
+      return {
+        success: false,
+        error: `Sub-tier "${tier.name || tier.id}" does not have an active lexicon field configured. Specify a field (such as POS or Gloss) in Project Settings or in the Auto Tagging panel.`,
+        updatedSegments: segments,
+        stats: emptyStats,
+      };
+    }
+
+    targetField = resolveLexiconField(lexicon, fieldKey);
+    if (!targetField && !includeCurrentProject && !includeOtherProjects) {
+      return {
+        success: false,
+        error: `Field "${fieldKey}" was not found in lexicon "${lexicon.title || lexicon.name || 'Untitled'}".`,
+        updatedSegments: segments,
+        stats: emptyStats,
+      };
+    }
   }
 
-  const targetField = resolveLexiconField(lexicon, fieldKey);
-  if (!targetField) {
-    return {
-      success: false,
-      error: `Field "${fieldKey}" was not found in lexicon "${lexicon.title || lexicon.name || 'Untitled'}".`,
-      updatedSegments: segments,
-      stats: { totalWords: 0, newlyTaggedCount: 0, alreadyTaggedCount: 0, unmatchedCount: 0, modifiedSegmentsCount: 0, totalSegmentsCount: segments.length },
-    };
-  }
+  const index = buildTagSuggestionIndex({
+    tier,
+    currentSegments: allProjectSegments || segments,
+    currentSpeakers,
+    otherProjects,
+    activeProjectId,
+    lexicon: useLex && targetField ? lexicon : null,
+    lexiconField: targetField ? targetField.id : null,
+    includeCurrentProject,
+    includeOtherProjects,
+    includeLexicon: Boolean(useLex && targetField),
+  });
 
-  const { exactMap, lowerMap } = buildLexiconLookupMap(lexicon, targetField);
   const tierKey = String(tier.id);
 
   let totalWords = 0;
@@ -250,6 +293,9 @@ export function autoTagSegments({
   let alreadyTaggedCount = 0;
   let unmatchedCount = 0;
   let modifiedSegmentsCount = 0;
+  let exactMatchedCount = 0;
+  let fuzzyMatchedCount = 0;
+  let contextMatchedCount = 0;
 
   const updatedSegments = segments.map((seg) => {
     const words = tokenizeWords(seg.text, tier.splitters);
@@ -269,14 +315,48 @@ export function autoTagSegments({
         continue;
       }
 
-      const tag = lookupWordTag(w, exactMap, lowerMap, {
-        caseInsensitive,
-        stripPunctuation,
-      });
+      const ranked = getRankedTagSuggestions(
+        index,
+        {
+          word: w,
+          prevWord: i > 0 ? words[i - 1] : '',
+          nextWord: i < words.length - 1 ? words[i + 1] : '',
+          prevTag: i > 0 ? nextAnn[i - 1] || '' : '',
+          prev2Tag: i > 1 ? nextAnn[i - 2] || '' : '',
+          nextTag: i < words.length - 1 ? nextAnn[i + 1] || '' : '',
+          currentTag: curVal,
+          isFirst: i === 0,
+          isSecond: i === 1,
+          isLast: i === words.length - 1,
+        },
+        {
+          limit: 1,
+          useContext,
+          useFuzzy,
+          includeAllowedFallback: false,
+          excludeExactQueryMatch: false,
+        },
+      );
 
-      if (tag) {
-        if (tag !== curVal) {
-          nextAnn[i] = tag;
+      const best = ranked[0] || null;
+      let chosenTag = null;
+
+      if (best) {
+        if (best.source === 'exact' || best.source === 'lexicon') {
+          chosenTag = best.value;
+          exactMatchedCount++;
+        } else if (best.source === 'fuzzy' && useFuzzy) {
+          chosenTag = best.value;
+          fuzzyMatchedCount++;
+        } else if (best.source === 'context' && useContextFallback) {
+          chosenTag = best.value;
+          contextMatchedCount++;
+        }
+      }
+
+      if (chosenTag) {
+        if (chosenTag !== curVal) {
+          nextAnn[i] = chosenTag;
           segChanged = true;
         }
         newlyTaggedCount++;
@@ -309,6 +389,9 @@ export function autoTagSegments({
       unmatchedCount,
       modifiedSegmentsCount,
       totalSegmentsCount: segments.length,
+      exactMatchedCount,
+      fuzzyMatchedCount,
+      contextMatchedCount,
     },
   };
 }

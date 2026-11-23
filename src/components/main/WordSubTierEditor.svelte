@@ -1,5 +1,6 @@
 <script>
   import { transcriptState } from '../../state/transcriptState.svelte.js';
+  import { tagSuggestionState } from '../../state/tagSuggestionState.svelte.js';
   import { tokenizeWords, getWordAnnotations } from '../../utils/subTiers.js';
 
   let {
@@ -14,6 +15,7 @@
   let annotations = $derived(getWordAnnotations(seg, col.key, words.length));
 
   let activeWordIndex = $state(null);
+  let activeInputEl = $state(null);
   let activeSuggestionIndex = $state(0);
   let dropdownStyle = $state('');
   let blurTimer = null;
@@ -35,25 +37,17 @@
   }
 
   let filteredSuggestions = $derived.by(() => {
-    if (activeWordIndex === null || !col.lexicon || col.lexicon.length === 0) {
+    if (activeWordIndex === null) {
       return [];
     }
-    const q = currentVal.toLowerCase();
-    if (!q) {
-      return col.lexicon.slice(0, 16);
-    }
-    const starts = [];
-    const contains = [];
-    for (const item of col.lexicon) {
-      const val = getItemVal(item).toLowerCase();
-      if (val === q) continue; // exact match already typed
-      if (val.startsWith(q)) {
-        starts.push(item);
-      } else if (val.includes(q)) {
-        contains.push(item);
-      }
-    }
-    return [...starts, ...contains].slice(0, 16);
+    return tagSuggestionState.getSuggestions({
+      tier: col,
+      words,
+      annotations,
+      wordIndex: activeWordIndex,
+      query: currentVal,
+      limit: 16,
+    });
   });
 
   let validLexiconSet = $derived.by(() => {
@@ -79,17 +73,36 @@
       return;
     }
     const rect = el.getBoundingClientRect();
-    const spaceBelow = window.innerHeight - rect.bottom;
-    const openUpward = spaceBelow < 185 && rect.top > 185;
+    const margin = 8;
+    const desiredHeight = 200;
+    const spaceBelow = Math.max(0, window.innerHeight - rect.bottom - margin);
+    const spaceAbove = Math.max(0, rect.top - margin);
+    const openUpward = spaceBelow < desiredHeight && spaceAbove > spaceBelow;
+    const maxH = Math.min(
+      180,
+      Math.max(88, Math.floor((openUpward ? spaceAbove : spaceBelow) - 4)),
+    );
     const topPart = openUpward
-      ? `bottom: ${Math.round(window.innerHeight - rect.top + 3)}px; top: auto;`
-      : `top: ${Math.round(rect.bottom + 3)}px; bottom: auto;`;
+      ? `bottom: ${Math.round(window.innerHeight - rect.top + 4)}px; top: auto;`
+      : `top: ${Math.round(rect.bottom + 4)}px; bottom: auto;`;
     const horizPart =
       textDirection === 'rtl'
-        ? `right: ${Math.round(Math.max(8, window.innerWidth - rect.right))}px; left: auto;`
-        : `left: ${Math.round(Math.max(8, Math.min(rect.left, window.innerWidth - 228)))}px; right: auto;`;
-    dropdownStyle = `${topPart} ${horizPart}`;
+        ? `right: ${Math.round(Math.max(margin, Math.min(window.innerWidth - rect.right, window.innerWidth - 228)))}px; left: auto;`
+        : `left: ${Math.round(Math.max(margin, Math.min(rect.left, window.innerWidth - 228)))}px; right: auto;`;
+    dropdownStyle = `${topPart} ${horizPart} max-height: ${maxH}px;`;
   }
+
+  $effect(() => {
+    if (activeWordIndex === null || !activeInputEl) return;
+    const el = activeInputEl;
+    const reposition = () => updateDropdownPosition(el);
+    window.addEventListener('scroll', reposition, true);
+    window.addEventListener('resize', reposition);
+    return () => {
+      window.removeEventListener('scroll', reposition, true);
+      window.removeEventListener('resize', reposition);
+    };
+  });
 
   function handleFocus(idx, e) {
     if (blurTimer) {
@@ -99,6 +112,7 @@
     activeWordIndex = idx;
     activeSuggestionIndex = 0;
     if (e?.currentTarget) {
+      activeInputEl = e.currentTarget;
       updateDropdownPosition(e.currentTarget);
     }
     transcriptState.selectSegment(seg.id, false);
@@ -108,6 +122,7 @@
     blurTimer = setTimeout(() => {
       if (activeWordIndex === idx) {
         activeWordIndex = null;
+        activeInputEl = null;
       }
     }, 160);
   }
@@ -258,12 +273,12 @@
 
               {#if activeWordIndex === idx && filteredSuggestions.length > 0}
                 <div
-                  class="word-autocomplete-dropdown {horizontal ? 'is-fixed' : ''}"
-                  style={horizontal ? dropdownStyle : ''}
+                  class="word-autocomplete-dropdown is-fixed"
+                  style={dropdownStyle}
                   role="listbox"
                 >
                   <div class="autocomplete-header">
-                    <span>{col.name} Lexicon</span>
+                    <span>{col.name} Suggestions</span>
                     <span class="suggestions-count">
                       {filteredSuggestions.length}
                     </span>
@@ -288,6 +303,39 @@
                       {#if sLabel}
                         <span class="suggestion-label">{sLabel}</span>
                       {/if}
+                      <span class="suggestion-meta">
+                        {#if suggestion.source === 'fuzzy' && suggestion.fuzzyMatch}
+                          <span
+                            class="sugg-badge badge-fuzzy"
+                            title="Similar word (edit distance 1): {suggestion.fuzzyMatch}"
+                          >
+                            &approx; {suggestion.fuzzyMatch}
+                          </span>
+                        {:else if suggestion.source === 'exact' && suggestion.count > 0}
+                          <span
+                            class="sugg-badge badge-freq"
+                            title="Seen {suggestion.count} time{suggestion.count === 1 ? '' : 's'} for this word"
+                          >
+                            &times;{suggestion.count}
+                          </span>
+                        {/if}
+                        {#if suggestion.inLexicon}
+                          <span
+                            class="sugg-badge badge-lex"
+                            title="Matches active Lexicon"
+                          >
+                            Lex
+                          </span>
+                        {/if}
+                        {#if suggestion.hasContextBoost && suggestion.source !== 'allowed'}
+                          <span
+                            class="sugg-badge badge-ctx"
+                            title="Boosted by surrounding words/tags context"
+                          >
+                            ctx
+                          </span>
+                        {/if}
+                      </span>
                     </button>
                   {/each}
                 </div>
@@ -630,5 +678,65 @@
   :global([data-theme='dark']) .word-autocomplete-item.active .suggestion-label,
   :global([data-theme='dark']) .word-autocomplete-item:hover .suggestion-label {
     color: #f1f5f9;
+  }
+
+  .suggestion-meta {
+    margin-left: auto;
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    flex-shrink: 0;
+  }
+
+  .sugg-badge {
+    font-size: 0.62rem;
+    font-weight: 600;
+    padding: 0 4px;
+    border-radius: 3px;
+    line-height: 1.45;
+    white-space: nowrap;
+  }
+
+  .badge-freq {
+    background: rgba(148, 163, 184, 0.18);
+    color: var(--text-muted, #475569);
+  }
+
+  .badge-lex {
+    background: rgba(16, 185, 129, 0.14);
+    color: #059669;
+  }
+
+  .badge-fuzzy {
+    background: rgba(245, 158, 11, 0.16);
+    color: #b45309;
+    max-width: 84px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .badge-ctx {
+    background: rgba(124, 58, 237, 0.12);
+    color: #7c3aed;
+  }
+
+  :global([data-theme='dark']) .badge-freq {
+    background: rgba(148, 163, 184, 0.22);
+    color: #cbd5e1;
+  }
+
+  :global([data-theme='dark']) .badge-lex {
+    background: rgba(16, 185, 129, 0.22);
+    color: #34d399;
+  }
+
+  :global([data-theme='dark']) .badge-fuzzy {
+    background: rgba(245, 158, 11, 0.22);
+    color: #fbbf24;
+  }
+
+  :global([data-theme='dark']) .badge-ctx {
+    background: rgba(167, 139, 250, 0.22);
+    color: #c4b5fd;
   }
 </style>

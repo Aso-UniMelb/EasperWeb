@@ -3,6 +3,7 @@
   import { projectState } from '../../state/projectState.svelte.js';
   import { lexiconState } from '../../state/lexiconState.svelte.js';
   import { transcriptState } from '../../state/transcriptState.svelte.js';
+  import { tagSuggestionState } from '../../state/tagSuggestionState.svelte.js';
   import { autoTagSegments } from '../../utils/autoTagging.js';
 
   let { onClose = () => {} } = $props();
@@ -36,6 +37,12 @@
   let selectedTierId = $state(null);
   let selectedFieldName = $state('');
   let overwriteExisting = $state(false);
+  let useLexiconSource = $state(true);
+  let useCurrentProjectSource = $state(true);
+  let useOtherProjectsSource = $state(true);
+  let useContextMatching = $state(true);
+  let useFuzzyMatching = $state(true);
+  let useContextFallback = $state(false);
   let isTagging = $state(false);
   let lastTagStats = $state(null);
   let tagFeedbackMessage = $state('');
@@ -119,45 +126,76 @@
     transcriptState.segments.find((s) => s.id === selectedSegmentId) || null,
   );
 
-  async function handleAutoTag(onlySelectedSegment = false) {
-    if (!activeLexicon) {
-      tagFeedbackType = 'error';
-      tagFeedbackMessage = 'No active lexicon selected for this project.';
-      return;
+  const matchingOtherProjectsCount = $derived.by(() => {
+    const tierName = (selectedTier?.name || '').trim().toLowerCase();
+    const activeId = projectState.activeProjectId;
+    if (!tierName) return 0;
+    let count = 0;
+    for (const p of projectState.projects || []) {
+      if (!p || p.id === activeId || !Array.isArray(p.segments) || p.segments.length === 0) {
+        continue;
+      }
+      const hasMatch = (p.subTiers || []).some(
+        (st) =>
+          (st.type === 'word' || st.type === 'morpheme') &&
+          (st.name || '').trim().toLowerCase() === tierName,
+      );
+      if (hasMatch) count++;
     }
+    return count;
+  });
 
+  const effectiveUseLexicon = $derived(
+    useLexiconSource && hasLexicon && Boolean(selectedFieldName) && lexiconEntriesCount > 0,
+  );
+  const hasAnyTagSource = $derived(
+    effectiveUseLexicon || useCurrentProjectSource || useOtherProjectsSource,
+  );
+
+  async function handleAutoTag(onlySelectedSegment = false) {
     if (!selectedTier) {
       tagFeedbackType = 'error';
-      tagFeedbackMessage = 'Please select a target word-level sub-tier.';
+      tagFeedbackMessage = 'Please select a target tokenised sub-tier.';
       return;
     }
 
-    if (!selectedFieldName) {
+    if (!hasAnyTagSource) {
       tagFeedbackType = 'error';
       tagFeedbackMessage =
-        'Please select a field in the lexicon to grab tags from.';
+        'Enable at least one tag source (Active Lexicon, Current Project, or Other Saved Projects).';
       return;
     }
 
     isTagging = true;
     tagFeedbackMessage = '';
 
+    const allDialogueSegments = transcriptState.segments.filter(
+      (s) => !transcriptState.isNoteSegment(s),
+    );
     const targetSegments =
       onlySelectedSegment && selectedSegment
         ? [selectedSegment]
-        : transcriptState.segments.filter(
-            (s) => !transcriptState.isNoteSegment(s),
-          );
+        : allDialogueSegments;
 
     try {
       const result = autoTagSegments({
         segments: targetSegments,
         tier: selectedTier,
-        lexicon: activeLexicon,
-        targetFieldNameOrId: selectedFieldName,
+        lexicon: effectiveUseLexicon ? activeLexicon : null,
+        targetFieldNameOrId: effectiveUseLexicon ? selectedFieldName : null,
         overwrite: overwriteExisting,
         caseInsensitive: true,
         stripPunctuation: true,
+        includeLexicon: effectiveUseLexicon,
+        includeCurrentProject: useCurrentProjectSource,
+        includeOtherProjects: useOtherProjectsSource,
+        otherProjects: projectState.projects || [],
+        activeProjectId: projectState.activeProjectId || null,
+        currentSpeakers: projectState.activeProject?.speakers || [],
+        allProjectSegments: allDialogueSegments,
+        useContext: useContextMatching,
+        useFuzzy: useFuzzyMatching,
+        useContextFallback,
       });
 
       if (!result.success) {
@@ -189,11 +227,13 @@
         transcriptState.fullResult.segments = transcriptState.segments;
       }
 
-      // Notify and persist changes
+      // Notify, refresh suggestion cache, and persist changes
+      tagSuggestionState.invalidateAll();
       transcriptState.notifySegmentsChange();
 
       // If user selected a field different from current tier.lexiconField, update project settings
       if (
+        effectiveUseLexicon &&
         selectedTier &&
         projectState.activeProject &&
         selectedTier.lexiconField !== selectedFieldName
@@ -222,7 +262,8 @@
         tagFeedbackMessage = `All words in the ${onlySelectedSegment ? 'selected segment' : 'segments'} already had tags. Change mode to "Overwrite All Tags" to replace existing tags.`;
       } else {
         tagFeedbackType = 'warning';
-        tagFeedbackMessage = `No matching words were found in field "${selectedFieldName}" of lexicon "${activeLexicon.title}".`;
+        tagFeedbackMessage =
+          'No matching tags were found in the selected sources.';
       }
     } catch (err) {
       console.error('[AutoTagging] Tagging failed:', err);
@@ -253,50 +294,15 @@
 
   <!-- Panel Body -->
   <div class="panel-body">
-    {#if !hasLexicon}
-      <div class="empty-state-panel">
-        <div class="empty-state-info">
-          <i class="fa-solid fa-book-open empty-icon"></i>
-          <div>
-            <h5 class="empty-title">No Active Lexicon Configured</h5>
-            <p class="empty-desc">
-              To automatically grab tags (like POS or gloss) for words, link an
-              Active Lexicon in Project Settings.
-            </p>
-          </div>
-        </div>
-
-        <div class="empty-state-actions">
-          <button
-            type="button"
-            class="panel-tool-btn btn-settings-prominent"
-            onclick={() => (projectState.isProjectSettingsOpen = true)}
-            title="Open Project Settings to configure an active lexicon"
-          >
-            <i class="fa-solid fa-sliders"></i>
-            <span>Project Settings</span>
-          </button>
-
-          <button
-            type="button"
-            class="panel-close-btn"
-            onclick={onClose}
-            title="Close auto tagging panel"
-            aria-label="Close"
-          >
-            <i class="fa-solid fa-xmark"></i>
-          </button>
-        </div>
-      </div>
-    {:else if !hasWordSubTiers}
+    {#if !hasWordSubTiers}
       <div class="empty-state-panel">
         <div class="empty-state-info">
           <i class="fa-solid fa-layer-group empty-icon"></i>
           <div>
-            <h5 class="empty-title">No Word-Level Sub-tiers Found</h5>
+            <h5 class="empty-title">No Tokenised Sub-tiers Found</h5>
             <p class="empty-desc">
-              Auto Tagging operates on word/morpheme-level sub-tiers (e.g. POS
-              or Gloss). Add one in Project Settings.
+              Auto Tagging operates on tokenised sub-tiers (e.g. POS or Gloss).
+              Add one in Project Settings.
             </p>
           </div>
         </div>
@@ -305,11 +311,11 @@
           <button
             type="button"
             class="panel-tool-btn btn-settings-prominent"
-            onclick={() => (projectState.isProjectSettingsOpen = true)}
-            title="Open Project Settings to add a word-level sub-tier"
+            onclick={() => projectState.openProjectSettings('subtiers')}
+            title="Open Project Settings to add a tokenised sub-tier"
           >
             <i class="fa-solid fa-plus"></i>
-            <span>Add Word Sub-tier</span>
+            <span>Add Tokenised Sub-tier</span>
           </button>
 
           <button
@@ -339,7 +345,7 @@
             class="tagging-select-input"
             bind:value={selectedTierId}
             disabled={isTagging}
-            title="Select which word-level sub-tier to tag"
+            title="Select which tokenised sub-tier to tag"
           >
             {#each wordSubTiers as tier (tier.id)}
               <option value={tier.id}>
@@ -349,44 +355,144 @@
           </select>
         </div>
 
-        <!-- 2. Active Lexicon & Source Field Selection -->
-        <div class="lexfield-select-container">
+        <!-- 2. Tag Sources -->
+        <div class="sources-card">
           <div class="field-label-row">
-            <label for="auto-tag-field-select" class="field-label"
-              >Lexicon Source Field</label
-            >
-            <span
-              class="lex-badge"
-              title="Active Lexicon: {activeLexicon.title ||
-                activeLexicon.name ||
-                'Untitled'}"
-            >
-              <i class="fa-solid fa-book-bookmark"></i>
-              {activeLexicon.title || activeLexicon.name || 'Lexicon'} ({lexiconEntriesCount}
-              entries)
-            </span>
+            <span class="field-label">Tag Sources</span>
           </div>
 
-          <select
-            id="auto-tag-field-select"
-            class="tagging-select-input"
-            bind:value={selectedFieldName}
-            disabled={isTagging || availableFields.length === 0}
-            title="Select the field in the active lexicon to grab values from"
-          >
-            {#if availableFields.length === 0}
-              <option value="">No custom fields in lexicon</option>
-            {:else}
-              {#each availableFields as f (f.id)}
-                <option value={f.name}>
-                  {f.name}
-                </option>
-              {/each}
-            {/if}
-          </select>
+          <!-- Source A: Active Lexicon -->
+          <label class="source-check-row {!hasLexicon ? 'is-muted' : ''}">
+            <input
+              type="checkbox"
+              bind:checked={useLexiconSource}
+              disabled={isTagging || !hasLexicon}
+            />
+            <span class="source-check-text">
+              Active Lexicon
+              {#if hasLexicon}
+                <span class="source-sub-pill">
+                  {activeLexicon.title || activeLexicon.name || 'Lexicon'} ({lexiconEntriesCount})
+                </span>
+              {:else}
+                <button
+                  type="button"
+                  class="btn-link-inline"
+                  onclick={() => projectState.openProjectSettings('main')}
+                >
+                  Link in Settings
+                </button>
+              {/if}
+            </span>
+          </label>
+
+          {#if useLexiconSource && hasLexicon}
+            <div class="lexfield-nested">
+              <label for="auto-tag-field-select" class="nested-field-label"
+                >Source Field:</label
+              >
+              <select
+                id="auto-tag-field-select"
+                class="tagging-select-input"
+                bind:value={selectedFieldName}
+                disabled={isTagging || availableFields.length === 0}
+                title="Select the field in the active lexicon to grab values from"
+              >
+                {#if availableFields.length === 0}
+                  <option value="">No custom fields in lexicon</option>
+                {:else}
+                  {#each availableFields as f (f.id)}
+                    <option value={f.name}>
+                      {f.name}
+                    </option>
+                  {/each}
+                {/if}
+              </select>
+            </div>
+          {/if}
+
+          <!-- Source B: Current Project -->
+          <label class="source-check-row">
+            <input
+              type="checkbox"
+              bind:checked={useCurrentProjectSource}
+              disabled={isTagging}
+            />
+            <span class="source-check-text">
+              Current Project
+              <span class="source-sub-pill">existing tags</span>
+            </span>
+          </label>
+
+          <!-- Source C: Cross-Project -->
+          <label class="source-check-row">
+            <input
+              type="checkbox"
+              bind:checked={useOtherProjectsSource}
+              disabled={isTagging}
+            />
+            <span class="source-check-text">
+              Other Saved Projects
+              <span
+                class="source-sub-pill"
+                title="Other saved projects with a tokenised sub-tier named '{selectedTier?.name}'"
+              >
+                {matchingOtherProjectsCount} matching
+              </span>
+            </span>
+          </label>
         </div>
 
-        <!-- 3. Overwrite Mode Selection -->
+        <!-- 3. Matching & Ranking Options -->
+        <div class="sources-card">
+          <div class="field-label-row">
+            <span class="field-label">Matching &amp; Ranking</span>
+          </div>
+
+          <label
+            class="source-check-row"
+            title="Rank ambiguous/homograph tags using surrounding words and tags"
+          >
+            <input
+              type="checkbox"
+              bind:checked={useContextMatching}
+              disabled={isTagging}
+            />
+            <span class="source-check-text">
+              Use context (words &amp; tags)
+            </span>
+          </label>
+
+          <label
+            class="source-check-row"
+            title="For unknown words (length >= 3), match similar words with edit distance 1 via SymSpell"
+          >
+            <input
+              type="checkbox"
+              bind:checked={useFuzzyMatching}
+              disabled={isTagging}
+            />
+            <span class="source-check-text">
+              Fuzzy match unknown words (edit dist &lt; 2)
+            </span>
+          </label>
+
+          <label
+            class="source-check-row"
+            title="If a word has no exact or fuzzy match, predict its tag purely from surrounding context"
+          >
+            <input
+              type="checkbox"
+              bind:checked={useContextFallback}
+              disabled={isTagging || !useContextMatching}
+            />
+            <span class="source-check-text">
+              Predict unseen words from context
+            </span>
+          </label>
+        </div>
+
+        <!-- 4. Overwrite Mode Selection -->
         <div class="mode-select-container">
           <div class="field-label-row">
             <label for="auto-tag-mode-select" class="field-label">Mode</label>
@@ -406,7 +512,7 @@
           </select>
         </div>
 
-        <!-- 4. Action & Live Status -->
+        <!-- 5. Action & Live Status -->
         <div class="action-container">
           <div class="status-box">
             {#if segmentsCount === 0}
@@ -414,10 +520,10 @@
                 <i class="fa-solid fa-circle-info"></i>
                 <span>No segments in project</span>
               </span>
-            {:else if lexiconEntriesCount === 0}
+            {:else if !hasAnyTagSource}
               <span class="status-chip chip-warning">
                 <i class="fa-solid fa-triangle-exclamation"></i>
-                <span>Lexicon has 0 entries</span>
+                <span>Select at least one source</span>
               </span>
             {:else if lastTagStats}
               <span class="status-chip chip-success">
@@ -443,11 +549,8 @@
               type="button"
               class="btn-run-action"
               onclick={() => handleAutoTag(false)}
-              disabled={isTagging ||
-                segmentsCount === 0 ||
-                lexiconEntriesCount === 0 ||
-                !selectedFieldName}
-              title="Auto tag words in all segments from the lexicon"
+              disabled={isTagging || segmentsCount === 0 || !hasAnyTagSource}
+              title="Auto tag words in all segments using selected sources"
             >
               {#if isTagging}
                 <i class="fa-solid fa-spinner fa-spin"></i>
@@ -463,9 +566,7 @@
                 type="button"
                 class="btn-run-single"
                 onclick={() => handleAutoTag(true)}
-                disabled={isTagging ||
-                  lexiconEntriesCount === 0 ||
-                  !selectedFieldName}
+                disabled={isTagging || !hasAnyTagSource}
                 title="Auto tag words in the selected segment only"
               >
                 <i class="fa-solid fa-tag"></i>
@@ -512,6 +613,16 @@
           <span class="stats-pill pill-tagged">
             Tagged: {lastTagStats.newlyTaggedCount}
           </span>
+          {#if lastTagStats.fuzzyMatchedCount > 0}
+            <span class="stats-pill pill-fuzzy">
+              Fuzzy: {lastTagStats.fuzzyMatchedCount}
+            </span>
+          {/if}
+          {#if lastTagStats.contextMatchedCount > 0}
+            <span class="stats-pill pill-context">
+              Context: {lastTagStats.contextMatchedCount}
+            </span>
+          {/if}
           {#if lastTagStats.alreadyTaggedCount > 0}
             <span class="stats-pill pill-skipped">
               Kept: {lastTagStats.alreadyTaggedCount}
@@ -561,6 +672,117 @@
 
   .panel-body {
     padding: 8px 12px;
+  }
+
+  .sources-card {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    padding: 7px 9px;
+    border-radius: 6px;
+    border: 1px solid var(--border-color, #e2e8f0);
+    background: var(--bg-card, #ffffff);
+  }
+
+  :global([data-theme='dark']) .sources-card {
+    background: #1e293b;
+    border-color: #334155;
+  }
+
+  .source-check-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.76rem;
+    color: var(--text-base, #334155);
+    cursor: pointer;
+    user-select: none;
+  }
+
+  .source-check-row.is-muted {
+    color: var(--text-muted, #64748b);
+  }
+
+  :global([data-theme='dark']) .source-check-row {
+    color: #e2e8f0;
+  }
+
+  .source-check-row input[type='checkbox'] {
+    margin: 0;
+    cursor: pointer;
+    accent-color: #0284c7;
+  }
+
+  .source-check-text {
+    display: inline-flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 5px;
+    line-height: 1.25;
+  }
+
+  .source-sub-pill {
+    font-size: 0.67rem;
+    font-weight: 600;
+    padding: 0 5px;
+    border-radius: 4px;
+    background: rgba(148, 163, 184, 0.16);
+    color: var(--text-muted, #475569);
+  }
+
+  :global([data-theme='dark']) .source-sub-pill {
+    background: rgba(148, 163, 184, 0.2);
+    color: #cbd5e1;
+  }
+
+  .btn-link-inline {
+    border: none;
+    background: transparent;
+    padding: 0;
+    font-size: 0.72rem;
+    font-weight: 600;
+    color: var(--primary-color, #0284c7);
+    text-decoration: underline;
+    cursor: pointer;
+  }
+
+  :global([data-theme='dark']) .btn-link-inline {
+    color: #38bdf8;
+  }
+
+  .lexfield-nested {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding-left: 20px;
+    margin-bottom: 2px;
+  }
+
+  .nested-field-label {
+    font-size: 0.71rem;
+    font-weight: 600;
+    color: var(--text-muted, #64748b);
+    white-space: nowrap;
+  }
+
+  .stats-pill.pill-fuzzy {
+    background: rgba(245, 158, 11, 0.18);
+    color: #b45309;
+  }
+
+  .stats-pill.pill-context {
+    background: rgba(124, 58, 237, 0.15);
+    color: #6d28d9;
+  }
+
+  :global([data-theme='dark']) .stats-pill.pill-fuzzy {
+    background: rgba(245, 158, 11, 0.24);
+    color: #fbbf24;
+  }
+
+  :global([data-theme='dark']) .stats-pill.pill-context {
+    background: rgba(167, 139, 250, 0.24);
+    color: #c4b5fd;
   }
 
   .empty-state-panel {
